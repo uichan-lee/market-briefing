@@ -1,0 +1,50 @@
+# Directional rating. SPEC §2.2⑥.
+#
+# The briefing states an opinion — 강한 매수 through 강한 매도 — and this file is
+# where that opinion is defined. It is computed, not written: a weighted sum of
+# z-scores, bucketed by the cut points below. No LLM is involved in producing
+# the rating or its rationale.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# THESE NUMBERS ARE STARTING VALUES, NOT MEASURED ONES.
+#
+# Nobody has calibrated them — no data has been collected yet. Calibrating them
+# is MANUAL-TASKS.md §6, and it is Ricky's call.
+#
+# The one way to do it wrong: adjusting weights or cut points because the
+# ratings they produce look agreeable. That is fitting the dial to the answer.
+# PREREGISTRATION.md §8.4 permits revising cut points for distributional
+# reasons — if nearly everything lands in 관망 the scale is useless — but never
+# against outcome data, and every change gets logged in PREREGISTRATION §R.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Every input is already a 252-trading-day rolling z-score (SPEC §5), so the
+# weights below are comparable to each other and the composite is itself in
+# roughly z units. Signs are deliberate: `short_ratio` rising is bearish.
+weights:
+  foreign_flow_5d: 0.30      # SPEC §3.1 calls this the most differentiated KR feature
+  inst_flow_5d: 0.15
+  news_polarity: 0.20        # aggregated per SPEC §6.2, relevance-weighted
+  rel_strength_20d: 0.15
+  rev_4w: 0.15               # consensus EPS revision
+  short_ratio: -0.10
+  valuation_band: 0.05       # 3-year PBR percentile, low = cheap = positive
+
+# Cut points on the composite score. Symmetric by construction — an asymmetric
+# scale bakes in a directional prior, and any such prior belongs in the weights
+# where it is visible, not hidden in the thresholds.
+cut_points:
+  strong: 2.0                # |score| ≥ 2.0  → 강한 매수 / 강한 매도
+  moderate: 1.0              # |score| ≥ 1.0  → 매수 / 매도
+  weak: 0.4                  # |score| ≥ 0.4  → 약한 매수 / 약한 매도
+                             # otherwise      → 관망
+
+# Guards against a confident-looking rating built on almost nothing.
+confidence:
+  # Minimum share of total weight that must be present. Below this the ticker is
+  # rated 관망 with the missing inputs named, rather than rated off whatever
+  # happened to arrive.
+  min_weight_coverage: 0.5
+
+  # How many contributors the rationale lists, largest |contribution| first.
+  max_rationale_terms: 4

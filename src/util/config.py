@@ -213,6 +213,42 @@ def load_models(path: Path | None = None) -> dict[str, Any]:
     return raw
 
 
+def load_rating(path: Path | None = None) -> dict[str, Any]:
+    """Load ``config/rating.yaml`` (SPEC §2.2⑥).
+
+    Validates the shape the rating depends on. The cut points must be ordered
+    and positive: the scale is symmetric by construction, so an out-of-order or
+    negative cut point silently produces a rating scale that never reaches its
+    outer buckets.
+    """
+    path = path or CONFIG_DIR / "rating.yaml"
+    raw = _read_yaml(path) or {}
+
+    weights = raw.get("weights")
+    if not isinstance(weights, dict) or not weights:
+        raise ConfigError(f"{path.name}: 'weights' must be a non-empty mapping")
+    for feature, weight in weights.items():
+        if not isinstance(weight, int | float):
+            raise ConfigError(f"{path.name}: weight for {feature!r} is not a number")
+
+    cut_points = raw.get("cut_points")
+    if not isinstance(cut_points, dict):
+        raise ConfigError(f"{path.name}: 'cut_points' must be a mapping")
+    missing = {"strong", "moderate", "weak"} - cut_points.keys()
+    if missing:
+        raise ConfigError(f"{path.name}: cut_points is missing {sorted(missing)}")
+    if not (cut_points["strong"] > cut_points["moderate"] > cut_points["weak"] > 0):
+        raise ConfigError(
+            f"{path.name}: cut_points must satisfy strong > moderate > weak > 0, got {cut_points}"
+        )
+
+    coverage = (raw.get("confidence") or {}).get("min_weight_coverage", 0.0)
+    if not 0.0 <= coverage <= 1.0:
+        raise ConfigError(f"{path.name}: min_weight_coverage must be in [0, 1], got {coverage}")
+
+    return raw
+
+
 def load_sector_mapping(path: Path | None = None) -> list[dict[str, Any]]:
     """Load ``config/sector_mapping.yaml``."""
     path = path or CONFIG_DIR / "sector_mapping.yaml"
@@ -234,4 +270,5 @@ def load_all() -> dict[str, Any]:
         "delivery": load_delivery(),
         "models": load_models(),
         "sector_mapping": load_sector_mapping(),
+        "rating": load_rating(),
     }

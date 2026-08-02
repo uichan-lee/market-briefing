@@ -5,7 +5,7 @@
 
 channels:
   # Desktop reading. Actions commits the rendered report to reports/, and the
-  # Obsidian Git plugin pulls it into the vault. Wiring: MANUAL-TASKS.md §6.
+  # Obsidian Git plugin pulls it into the vault. Wiring: MANUAL-TASKS.md §7.
   - type: vault
     path: reports/
     commit: true

@@ -30,7 +30,14 @@ def write(tmp_path, name: str, body: str):
 
 def test_all_committed_config_files_load():
     loaded = load_all()
-    assert set(loaded) == {"watchlist", "aliases", "delivery", "models", "sector_mapping"}
+    assert set(loaded) == {
+        "watchlist",
+        "aliases",
+        "delivery",
+        "models",
+        "sector_mapping",
+        "rating",
+    }
 
 
 def test_committed_watchlist_has_the_two_required_large_caps():
