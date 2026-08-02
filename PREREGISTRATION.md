@@ -64,6 +64,15 @@ Removing market beta sharply reduces cross-ticker correlation, which rescues the
 - **ICIR**: mean IC ÷ stdev of IC
 - **Quantile spread**: excess return of top-20%-score bucket − bottom-20%-score bucket
 
+**Which "score" is evaluated.** Both, reported separately and never pooled:
+
+1. The **composite rating score** from SPEC §2.2⑥ — the continuous value, not the seven-point bucket. This is the pipeline's actual output and the thing the shadow portfolio trades.
+2. The **news polarity score** from SPEC §6.2, aggregated per ticker — retained as a component-level diagnostic. If the composite carries signal while its news component does not, the LLM stage is decoration and should be cut.
+
+The continuous composite is what enters IC, not the bucket label. Bucketing discards information and its cut points are a display choice; correlating on the label would confound the signal's quality with the arbitrariness of where the thresholds sit.
+
+**Cut points are frozen against outcome data.** The seven-point thresholds in SPEC §2.2⑥ may be adjusted for distributional reasons — for example if 95% of tickers land in `관망`, making the scale useless — but never because a different cut would have produced better-looking returns. Any change is logged in §R with which of those two reasons applied.
+
 ---
 
 ## 8.5 Decision gates
@@ -85,3 +94,4 @@ SPEC §0 principle 6 requires that any revision to these criteria be recorded. A
 | Date | Section | What changed | Why | Data already seen? |
 |---|---|---|---|---|
 | 2026-08-02 | — | Initial freeze. Split out of SPEC §8 unchanged. | Pre-registration must exist as a standalone committed artifact before collection begins. | No — `data/raw/` empty, no collector run |
+| 2026-08-02 | §8.4 | Specified which score enters IC: the continuous composite rating score (SPEC §2.2⑥) as primary, aggregated news polarity as a component diagnostic, reported separately. Added that cut points may be revised for distributional reasons but never against outcome data. | Ricky's design change added a directional rating as the pipeline's actual output. §8.4 previously said "the score" when only one existed; with two, leaving it ambiguous would let the more flattering one be chosen after the fact. | No — still zero collectors run, `data/raw/` empty |

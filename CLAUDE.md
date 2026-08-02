@@ -20,7 +20,7 @@ If an instruction conflicts with one of these, say so and ask before proceeding.
 
 1. Never overwrite or delete anything under `data/raw/`. Re-runs write to a new suffixed path. This directory is the future backtest dataset.
 2. Never write code that calls order, execution, or cancellation endpoints of the KIS Open API. Read-only endpoints only.
-3. Never have an LLM produce buy/sell recommendations or directional advice text. LLM output is limited to the numeric schema in SPEC §6.2 and the red-team section in SPEC §2.2⑤.
+3. Never have an LLM produce the directional rating or its rationale as free-form text. The briefing **does** state a directional opinion (SPEC §2.2⑥), but it is computed deterministically from the numbers by `src/report/rating.py`. LLM output stays limited to the numeric schema in SPEC §6.2 and the red-team section in SPEC §2.2⑤.
 4. Never import a vendor LLM SDK outside `src/llm/adapter.py`. The pipeline must stay model-agnostic.
 5. Never add a delivery channel that is not in `config/delivery.yaml`.
 

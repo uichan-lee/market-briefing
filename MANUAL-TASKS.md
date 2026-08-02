@@ -132,7 +132,30 @@ Record the decision and its date in `config/models.yaml` as a comment. When revi
 
 ---
 
-## 6. Obsidian wiring
+## 6. Rating calibration — **Ricky's judgment, not Claude's**
+
+File: `config/rating.yaml`
+
+The briefing states a directional opinion on a seven-point scale (강한 매수 … 강한 매도). That opinion is a weighted sum of z-scores bucketed by cut points, and both the weights and the cut points currently hold **starting values that nobody has calibrated** — no data has been collected yet, so they are informed guesses, not measurements.
+
+Claude built the mechanism. Ricky owns the numbers, because the weights encode a view about what actually moves Korean equities, and that view should be Ricky's.
+
+**When to do this:** after the collectors have run for a week or two and real feature distributions exist. Not before — calibrating against imagined distributions is worse than leaving the defaults.
+
+**What to look at:**
+
+- **Distribution.** If nearly every ticker lands in `관망`, the cut points are too wide and the scale carries no information. If nothing ever lands there, they are too narrow. A usable scale puts most tickers in the middle and a few at each extreme.
+- **Weights.** `foreign_flow_5d` starts highest because SPEC §3.1 argues investor-flow data is the most differentiated feature available in Korea and one obtained without an LLM. That is a hypothesis, not a finding.
+- **Signs.** `short_ratio` carries a negative weight — rising short interest reads bearish. Confirm that matches how the data actually behaves before trusting it.
+
+> [!danger] The one way to get this wrong
+> Adjusting weights or cut points because the ratings they produce look agreeable. That is fitting the dial to the answer, and it converts the whole evaluation into circular reasoning.
+>
+> PREREGISTRATION.md §8.4 permits revising cut points for **distributional** reasons — a scale where everything is `관망` is broken regardless of returns — but never against outcome data. Every change gets a row in PREREGISTRATION §R stating which of the two reasons applied.
+
+---
+
+## 7. Obsidian wiring
 
 One-time setup:
 
@@ -145,7 +168,7 @@ Mobile reading goes through email, not Obsidian. Obsidian Git on mobile is unrel
 
 ---
 
-## 7. Daily, during the two-week trial
+## 8. Daily, during the two-week trial
 
 Five minutes a day. This is the actual experiment.
 
@@ -159,6 +182,6 @@ Keep this log in `notes/trial-log.md`. It is the input to the two-week gate deci
 
 ---
 
-## 8. Not on this list
+## 9. Not on this list
 
 Everything else — collectors, entity resolution, embeddings, features, the report renderer, delivery adapters, the Actions workflow, tests — is Claude's work. If Ricky finds himself writing that code by hand, something has gone wrong with the delegation, not with the plan.

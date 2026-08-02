@@ -1,6 +1,6 @@
 # market-briefing
 
-Automated daily market briefing for Korean and US equities. Reads data, produces a document, and stops there — **this system does not execute trades.**
+Automated daily market briefing for Korean and US equities. It states a directional opinion on every ticker it tracks, with the evidence behind it — and then stops. **This system does not execute trades.**
 
 한국어: [README.ko.md](README.ko.md)
 
@@ -17,7 +17,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 
 ### The five rules that shape everything else
 
-1. **The LLM does not make judgment calls.** It converts news into a fixed numeric schema. It never writes buy/sell language. The one exception is a red-team section that argues *against* the day's conclusions.
+1. **Opinions are computed, not written.** The briefing rates every ticker 강한 매수 through 강한 매도, but that rating is a weighted sum of z-scores — not LLM prose. The LLM only converts individual articles into a fixed numeric schema; it never sees the rating. This is what makes the opinion reproducible, and reproducibility is the precondition for ever finding out whether it was any good.
 2. **Determinism first.** Anything solvable with string matching, embedding similarity, or statistics is solved that way. LLM calls are reserved for judgments that genuinely need language understanding — this is what makes results reproducible enough to evaluate.
 3. **Raw data is immutable.** Collected data is written to date-partitioned storage and never overwritten. In three months it becomes the backtest dataset.
 4. **Models are swappable.** All model calls go through one adapter. No vendor SDK is imported anywhere else.
@@ -25,10 +25,12 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 
 ### What it deliberately does not do
 
-- No order, execution, or cancellation API calls. Read-only endpoints only.
-- No LLM-generated trading advice.
+- **No order, execution, or cancellation API calls.** Read-only endpoints only. The briefing gives an opinion; a human decides and acts.
+- No LLM-authored ratings or rationale — those are arithmetic, and auditable as such.
 - No auto-generated ticker aliases (a wrong alias corrupts every downstream number silently).
 - No real-money trading before the 3-month evaluation gate passes.
+
+> **Opinion vs. execution.** These are different things and the project takes both seriously. Stating "강한 매수" with cited evidence is the product. Placing the order is not, and never becomes so.
 
 ---
 
@@ -39,11 +41,12 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Component | Status | Notes |
 |---|---|---|
 | Design docs (SPEC, PREREGISTRATION, MANUAL-TASKS) | ✅ Done | Evaluation criteria frozen 2026-08-02 |
-| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 70 tests passing |
+| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 105 tests passing |
 | Time & market sessions (`src/util/session.py`) | ✅ Done | Trading days, DST, look-ahead boundary |
 | Collector validation framework (`src/collectors/validate.py`) | ✅ Done | The four checks every collector must pass |
 | Config loading & safeguards (`src/util/config.py`) | ✅ Done | Rejects alias collisions, unquoted tickers |
-| Config files | 🟡 Templates | `watchlist.yaml` and `aliases.yaml` need Ricky |
+| Directional rating (`src/report/rating.py`) | ✅ Done | 7-point scale + rationale; weights need calibration |
+| Config files | 🟡 Templates | `watchlist.yaml`, `aliases.yaml`, `rating.yaml` need Ricky |
 | API credentials | ⬜ Blocked | See [MANUAL-TASKS.md §1](MANUAL-TASKS.md) |
 | Collectors (price, flow, news, filings, macro) | ⬜ Not started | Next step |
 | Entity resolution | ⬜ Not started | |
@@ -84,6 +87,10 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
   Feature computation           ─→  data/features/
       │  every feature is a 252-trading-day rolling z-score per ticker
       ↓
+  Rating (deterministic)        ─→  강한 매수 … 관망 … 강한 매도, per ticker
+      │  weighted sum of z-scores → 7-point scale, no LLM involved
+      │  rationale = the largest terms in that sum
+      ↓
   Report rendering + red team   ─→  reports/YYYY-MM-DD-morning.md
       │
       ↓
@@ -101,7 +108,31 @@ The expensive step (LLM scoring) runs last and on the fewest items. Deduplicatio
 3. **News score aggregation** — per-ticker rollup of the Stage 2 scores.
 4. **Calendar** — earnings, FOMC/CPI, options expiry, ex-dividend dates.
 5. **Red team** — the LLM is instructed to argue *only* against the day's conclusions.
-6. **Shadow portfolio P&L** — what a hypothetical account following the briefing would have done, tracked separately from any real account.
+6. **Directional rating** — every ticker on a seven-point scale, with its evidence.
+7. **Shadow portfolio P&L** — what a hypothetical account following those ratings would have done, tracked separately from any real account. This is what makes the ratings falsifiable rather than merely opinionated.
+
+### How the rating works
+
+A weighted sum of the feature z-scores plus aggregated news polarity, bucketed onto seven levels. Weights and cut points live in `config/rating.yaml`.
+
+| 강한 매수 | 매수 | 약한 매수 | 관망 | 약한 매도 | 매도 | 강한 매도 |
+|---|---|---|---|---|---|---|
+| ≥ +2.0 | +1.0 | +0.4 | ±0.4 | −0.4 | −1.0 | ≤ −2.0 |
+
+The rationale is the decomposition of that sum — each term's `weight × z-score`, largest first — so it reports literally what moved the number and cannot drift from it:
+
+```
+005930 삼성전자 — 매수 (+1.10)
+  · foreign_flow_5d    z=+2.10   기여 +0.63
+  · rev_4w             z=+1.20   기여 +0.18
+  · rel_strength_20d   z=+0.90   기여 +0.14
+  · news_polarity      z=+0.60   기여 +0.12
+```
+
+Two guards, because a confident-looking rating on thin evidence is worse than no rating:
+
+- A missing feature is **excluded and the weights renormalized**, never silently treated as zero. Zero-filling would drag the score toward `관망` while the output still looked fully informed.
+- Below 50% weight coverage the ticker is forced to `관망` and the missing inputs are named.
 
 ### Two rules that prevent self-deception
 
@@ -124,6 +155,7 @@ market-briefing/
 ├── config/
 │   ├── watchlist.yaml         tickers to track          🟡 needs Ricky
 │   ├── aliases.yaml           ticker alias dictionary   🟡 needs Ricky
+│   ├── rating.yaml            rating weights & cut points  🟡 needs calibration
 │   ├── sector_mapping.yaml    US ETF ↔ KR sector
 │   ├── models.yaml            which model per stage
 │   └── delivery.yaml          output channels — the ONLY place one may be declared
@@ -138,11 +170,13 @@ market-briefing/
 │   ├── embed/                 ⬜ dedup + relevance
 │   ├── features/              ⬜ computation + normalization
 │   ├── llm/                   ⬜ adapter, scoring, synthesis
-│   ├── report/                ⬜ rendering
+│   ├── report/
+│   │   ├── rating.py          ✅ the 7-point directional rating
+│   │   └── render.py          ⬜ markdown rendering
 │   ├── notify/                ⬜ vault, email, webhook adapters
 │   └── eval/                  ⬜ golden set, bake-off, IC, shadow portfolio
 │
-├── tests/                     70 tests, all offline
+├── tests/                     105 tests, all offline
 └── data/                      gitignored — raw, embeddings, features, scores
 ```
 
@@ -152,7 +186,9 @@ market-briefing/
 
 **`src/collectors/validate.py`** — Every collector must pass four checks, written before its fetching logic: schema (column names and dtypes), missing-value ratio against a declared threshold, trading-day continuity with holidays excluded, and at least one hardcoded known value. Results are *reported*, not just raised — a failing collector records the failure and lets the pipeline continue, so a partial report still gets published with the gap named in its header.
 
-**`src/util/config.py`** — Loading is also validation. It rejects the mistakes that are easy to make by hand and impossible to spot later: an alias claimed by two different tickers, an alias that also appears in its own exclude list, and unquoted tickers.
+**`src/report/rating.py`** — Turns feature z-scores into a seven-point directional rating plus the decomposition that produced it. Pure arithmetic and fully reproducible; the same inputs always give the same rating, which an LLM-authored one could not guarantee.
+
+**`src/util/config.py`** — Loading is also validation. It rejects the mistakes that are easy to make by hand and impossible to spot later: an alias claimed by two different tickers, an alias that also appears in its own exclude list, unquoted tickers, and out-of-order rating cut points.
 
 > **The unquoted-ticker trap.** YAML reads a bare leading-zero number as octal, so an unquoted `000660` (SK하이닉스) silently becomes the integer `432`. `005930` survives only because `9` is not a valid octal digit — which makes the failure inconsistent and very easy to miss. Always quote tickers; the loader rejects unquoted ones with an explanatory error.
 
@@ -184,6 +220,7 @@ These are Ricky's, in the order they unblock work. Full detail in [MANUAL-TASKS.
 | 3 | `config/aliases.yaml` — one entry per ticker | 60–90 min | Entity resolution, all news features |
 | 4 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection |
 | 5 | Bake-off decision | 30 min | Scoring model choice |
+| 6 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
 
 Task 4 is the one that will feel skippable. It is the only step involving no code, and skipping it makes the bake-off impossible — model selection then ends at "Claude seemed good."
 
