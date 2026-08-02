@@ -1,0 +1,47 @@
+# Watchlist. MANUAL-TASKS.md §2 — Ricky fills this in; it is BLOCKING.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# ALWAYS QUOTE THE TICKER.
+#
+# YAML reads a bare leading-zero number as octal, so an unquoted 000660 becomes
+# the integer 432 and every downstream number for SK하이닉스 is silently wrong.
+# 005930 happens to survive only because 9 is not a valid octal digit — which
+# makes this failure inconsistent and easy to miss. The loader rejects unquoted
+# tickers outright rather than trusting this comment.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Start with 15 Korean tickers, not 60. A shorter list makes every downstream
+# problem visible faster, and the alias dictionary scales with this number.
+# US tickers come later, once the Korean side is stable.
+#
+# MANUAL-TASKS.md §2 asks for a mix:
+#   - whatever Ricky actually holds
+#   - a few watched-but-not-held names, as a control group
+#   - at least two heavily-covered large caps  → both seeded below
+#   - at least one ambiguous group name (한화 계열, LG 계열)  → still needed
+#
+# `held` separates the real position from the control group. It is read by the
+# report's holdings scan (SPEC §2.2②) and by nothing that places an order —
+# this system does not trade.
+
+kr:
+  # Seeded because MANUAL-TASKS.md §2 requires two heavily-covered large caps:
+  # they are what stress-tests re-report deduplication.
+  - ticker: "005930"
+    name: 삼성전자
+    sector: 반도체
+    held: false
+
+  - ticker: "000660"
+    name: SK하이닉스
+    sector: 반도체
+    held: false
+
+  # TODO(Ricky): 13 more. Set `held` honestly — a control group that is quietly
+  # all holdings tells you nothing at the two-week gate.
+  # TODO(Ricky): include at least one 한화 or LG affiliate. Those are what
+  # stress-test entity resolution, which is the step SPEC §4 flags as the one
+  # that invalidates everything downstream if it fails.
+
+us: []
+  # Deliberately empty. SPEC §12 sequences the Korean side first.

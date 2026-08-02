@@ -1,0 +1,26 @@
+# Model selection. SPEC §7.1.
+#
+# CLAUDE.md: no vendor SDK is imported outside src/llm/adapter.py. Swapping a
+# provider must be a change to the `provider` string here and nothing else.
+
+embedding:
+  provider: local
+  model: BAAI/bge-m3          # KR/EN in one model, MIT, runs locally → zero cost
+
+scoring:
+  provider: anthropic         # anthropic | openai | google | naver | local
+  model: claude-sonnet-5
+  temperature: 0
+  batch: true
+  # NOT YET DECIDED BY BAKE-OFF. This is a placeholder so the pipeline runs, not
+  # a choice. SPEC §7.4 requires the decision come from measured golden-set
+  # correlation, self-consistency, and cost per valid signal — and MANUAL-TASKS.md
+  # §5 makes the call Ricky's, not Claude's. Record the decision and its date
+  # here as a comment once the bake-off has run.
+
+synthesis:
+  provider: anthropic
+  model: claude-sonnet-5
+  temperature: 0.3
+  # Call volume is low enough that cost is immaterial here; SPEC §7.2 says
+  # prioritize quality.

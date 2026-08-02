@@ -1,0 +1,45 @@
+# Ticker alias dictionary. MANUAL-TASKS.md §3 — Ricky maintains this by hand.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# NEVER AUTO-GENERATE OR AUTO-EXTEND THIS FILE.
+#
+# CLAUDE.md is explicit: a wrong alias corrupts every downstream number
+# silently, while a missing alias only loses coverage. Those failures are not
+# symmetric, and auto-generation produces the bad kind. The two entries below
+# were transcribed from MANUAL-TASKS.md §3, where Ricky wrote them — they were
+# not inferred.
+#
+# QUOTE EVERY TICKER. Unquoted 000660 parses as the integer 432 (YAML octal).
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Fields:
+#   canonical          display name
+#   aliases            surface forms that identify THIS ticker and no other
+#   exclude            forms that must never match this ticker
+#   ambiguous_parents  group names that, appearing alone, match nothing
+#
+# `exclude` matters more than `aliases`. The failure mode is not missing an
+# article — it is attributing 삼성물산 news to 삼성전자.
+#
+# Preferred shares (우선주) are separate tickers: they belong in `exclude`,
+# never in `aliases`.
+#
+# An article mentioning only a group name goes to the `ambiguous` bucket rather
+# than being guessed at. The daily `ambiguous` ratio is reported in the briefing
+# header; when it exceeds 30%, extend this file (SPEC §4.2).
+
+"005930":
+  canonical: 삼성전자
+  aliases: [삼성전자, 삼성 전자, Samsung Electronics, SEC]
+  exclude: [삼성전자우, 삼성물산, 삼성SDI, 삼성전기]
+  ambiguous_parents: [삼성]
+
+"000660":
+  canonical: SK하이닉스
+  aliases: [SK하이닉스, 하이닉스, SK Hynix, Hynix]
+  exclude: []
+  ambiguous_parents: [SK]
+
+# TODO(Ricky): one entry per watchlist ticker. Budget 60–90 minutes for 15.
+# Include English names (foreign wire coverage gets picked up too) and the
+# spacing/spelling variants that actually appear in Korean headlines.

@@ -1,0 +1,22 @@
+# Delivery channels. SPEC §2.0.
+#
+# CLAUDE.md: never add a delivery channel that is not in this file. Channels are
+# pluggable adapters under src/notify/, selected by `type`.
+
+channels:
+  # Desktop reading. Actions commits the rendered report to reports/, and the
+  # Obsidian Git plugin pulls it into the vault. Wiring: MANUAL-TASKS.md §6.
+  - type: vault
+    path: reports/
+    commit: true
+
+  # Mobile reading. Fill `to` with the dedicated address from MANUAL-TASKS.md §1;
+  # the password itself lives in the SMTP_PASSWORD secret, never here.
+  - type: email
+    to: ""                    # TODO(Ricky): dedicated address, not a primary one
+    smtp_secret: SMTP_PASSWORD
+    body: summary             # summary | full
+
+  # Generic POST (Slack/Discord/Kakao). SPEC §2.0 specifies it be implemented but
+  # left inactive, so it is intentionally absent here rather than disabled — a
+  # channel in this file is a channel that sends.

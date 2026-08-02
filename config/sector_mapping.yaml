@@ -1,0 +1,27 @@
+# US sector/index → Korean sector correspondence. SPEC §2.2①.
+#
+# Drives the "US → KR transmission" section, which is the briefing's front page
+# and the one section with no LLM involvement at all.
+#
+# Every mapping is published alongside its trailing 60-trading-day rolling
+# correlation. A mapping whose correlation has broken down is a signal to
+# disregard, not to act on — so a weak entry here is informative, not a bug.
+# `us_kr_beta_60d` (SPEC §5) is computed per ticker against the ETF named here.
+
+mappings:
+  - us: SMH                   # semiconductor ETF
+    kr_sector: 반도체
+    note: The strongest and best-documented of the three transmissions.
+
+  - us: XLE                   # energy ETF
+    kr_sector: 정유/조선
+    note: Weaker and slower than semis; treat the correlation column as load-bearing.
+
+  - us: RUT                   # Russell 2000
+    kr_sector: 코스닥 중소형
+    note: Risk-appetite proxy rather than a sector link.
+
+# TODO(Ricky): extend as the watchlist grows. SPEC §2.2① also names XLK, XLF and
+# XBI as sector ETFs worth reporting; they need a Korean counterpart before they
+# earn a row here. A mapping asserted without a real economic link produces a
+# confident-looking number with nothing behind it.
