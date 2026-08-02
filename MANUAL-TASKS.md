@@ -21,6 +21,9 @@ Estimated time: 60–90 minutes total, mostly waiting on approvals.
 
 Store all of these in `.env` locally and as GitHub repository secrets. Never paste a key into a chat session with any AI tool, including Claude Code.
 
+> **Before creating `.env` or running the first backfill: add a `.gitignore`.**
+> As of this writing the repo has none — nothing sensitive has landed yet, so there's been nothing to ignore. It needs to cover, at minimum: `.env`, `data/raw/` (or all of `data/`, since `embeddings/`, `features/`, and `scores/` are also regenerable outputs), `__pycache__/`, and any local venv directory. Ask Claude to create it at that point; it's ordinary repo setup, not a Ricky-only task — it's flagged here only so it happens *before* secrets or raw data are ever staged, not after.
+
 ---
 
 ## 2. Watchlist — **BLOCKING**

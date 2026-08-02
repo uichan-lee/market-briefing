@@ -1,0 +1,14 @@
+# Secrets
+.env
+
+# Generated data (see SPEC.md §3.3 — all regenerable from raw or upstream sources)
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
