@@ -111,11 +111,28 @@ Output channels are pluggable adapters under `src/notify/`, configured in `confi
 
 ---
 
+## Toolchain
+
+`uv` manages the environment; `pyproject.toml` holds all configuration. Every command runs through `uv run`:
+
+```
+uv sync                        # install
+uv run pytest -m "not network" # the default test run
+uv run ruff check . && uv run ruff format .
+```
+
+Imports resolve from the repository root — `from src.util.session import ...` — via `pythonpath = ["."]` in `pyproject.toml`. This follows the flat `src/` layout in SPEC §10 rather than the usual `src/<package>/` nesting, because this project is an application run by CI and is never pip-installed.
+
+Dependencies are added when the code that needs them is written, each with a stated reason, not up front from SPEC §3's source list.
+
+---
+
 ## Testing
 
 - `pytest`. Tests making network calls are marked `@pytest.mark.network` and excluded from the default run.
+- The `network` marker is registered in `pyproject.toml` under `--strict-markers`, so a typo'd marker is an error rather than a silently-running network test.
 - Fixtures use committed sample payloads under `tests/fixtures/`, not live API calls.
-- Run `pytest -m "not network"` before declaring any task done.
+- Run `uv run pytest -m "not network"` before declaring any task done.
 
 ---
 

@@ -6,6 +6,7 @@
 > [!info] Change log
 > **v0.2** — Removed LLM from Stage 1 (replaced with embeddings) / model adapter layer / golden set + bake-off (§7) / entity resolution (§4) / re-reporting detection switched to embedding-based deduplication
 > **v0.3** — Redesigned the delivery layer (§2.0) as a swappable adapter. Dropped the Telegram dependency; Obsidian vault + email are now the defaults
+> **v0.4** — §8 split out into `PREREGISTRATION.md` and frozen before collection began; §8 here is now a pointer. §10 updated to match the built layout (`src/util/`, `src/collectors/validate.py`, toolchain files)
 
 > [!note] Language policy
 > Repository documents, code, and commit messages default to English. Exceptions are domain data (ticker/company names, the alias dictionary, Korean-language few-shot prompt examples) and this document. This SPEC was translated to English by Claude Code via `/plan translate SPEC.md to English, preserve all structure and numbering`.
@@ -333,7 +334,7 @@ Run 3 candidate models against the same golden set + same prompt, and measure th
 | Golden-set correlation | Spearman correlation of model score vs. my label (per dimension) | relevance > 0.7, polarity > 0.6 |
 | Schema compliance rate | Fraction of calls returning valid JSON without a parse failure | > 99% |
 | Self-consistency | Stdev of scores across 5 repeated runs on the same article | polarity σ < 0.1 |
-| Inter-model agreement | Spearman correlation between candidate models | See §8.3 |
+| Inter-model agreement | Spearman correlation between candidate models | See PREREGISTRATION §8.3 |
 | Cost per valid signal | Total cost ÷ count of articles with relevance>0.5 | Relative comparison |
 | Latency | Time to complete a batch | Within the briefing's time budget |
 
@@ -343,63 +344,20 @@ Run 3 candidate models against the same golden set + same prompt, and measure th
 
 ## 8. Evaluation pre-registration
 
-> [!danger] Commit this section before looking at the data
-> Changing the criteria after the fact turns this from validation into curve-fitting.
+> [!danger] This section now lives in `PREREGISTRATION.md`
+> It was split out and committed as a standalone artifact on 2026-08-02, before any data collection. A pre-registration that also exists as a copy inside a document under active revision is not a pre-registration — the two drift, and it stops being possible to say what was committed to and when. `PREREGISTRATION.md` is the single source of truth; this section is a pointer only.
 
-### 8.1 What can and can't be validated in weeks 1–2
+**Full text: @PREREGISTRATION.md** — section numbering §8.1–§8.5 is retained there, so references to "§8.3" and "§8.5" resolve unchanged.
 
-| Validation target | Feasible in 2 weeks? |
-|---|---|
-| Pipeline integrity (missing data, duplicates, delays) | ✅ |
-| Data consistency (cross-check against source) | ✅ |
-| Entity-matching accuracy (`ambiguous` ratio) | ✅ |
-| LLM output reproducibility | ✅ |
-| Model performance vs. golden set | ✅ |
-| **Inter-model agreement** | ✅ |
-| Measured cost | ✅ |
-| Whether the briefing actually gets read | ✅ |
-| **Signal hit rate** | ❌ |
-| **Strategy profitability** | ❌ |
+In summary:
 
-### 8.2 Why hit rate isn't feasible
+- **§8.1** — what 2 weeks can and cannot validate. Pipeline integrity, data consistency, `ambiguous` ratio, reproducibility, golden-set performance, inter-model agreement, and cost are all measurable. Signal hit rate and strategy profitability are not.
+- **§8.2** — why: separating a 55% hit rate from 50% needs ~800 independent observations; two weeks yields an effective 60–100 after market beta eats the cross-sectional independence.
+- **§8.3** — measured instead: inter-model agreement, as a test of measurement stability rather than predictive power.
+- **§8.4** — the real signal evaluation, deferred to 3 months and run on sector-excess returns via IC / ICIR / quantile spread, not direction.
+- **§8.5** — the 2-week, 3-month, and 6-month decision gates, and the rule that no real money moves before the 3-month gate passes.
 
-Distinguishing a directional hit rate of 55% from 50% ($\alpha=0.05$, power 0.8) requires roughly **800** independent observations. 30 tickers × 10 trading days = 300 observations, and tickers on the same day are strongly correlated via market beta, so the effective sample size is roughly 1/3 to 1/5 of the nominal count — effectively 60–100 observations. That's not enough to determine anything.
-
-Strategy-level evaluation is even worse. Making an annualized Sharpe of 1.0 significant at $t=2$ requires roughly 4 years of data.
-
-### 8.3 What gets measured in 2 weeks instead: inter-model agreement
-
-> [!tip] This is v0.2's key addition
-> We can't measure predictive accuracy yet, but we **can** measure measurement stability. Run the same articles through 3 different models and look at the score correlations.
->
-> - **High agreement** → at minimum, whatever we're measuring is a real underlying signal. Predictive power still needs to be validated separately.
-> - **Low agreement** → the scores are model-specific noise. Not yet eligible to move on to predictive-power validation. Fix the schema or the prompt first.
->
-> This only needs a few hundred articles, so 2 weeks is plenty. And this diagnostic tells us far more than a meaningless number like "55% hit rate" would.
-
-Measurement: per-dimension Spearman correlation for each pair of candidate models. Warn if the `polarity` correlation falls below 0.5.
-
-### 8.4 Signal evaluation design (after 3 months)
-
-**Evaluate on excess return, not absolute direction.**
-
-$$y_{i,t+1} = r_{i,t+1} - r_{\text{sector}(i),t+1}$$
-
-Removing market beta sharply reduces cross-ticker correlation, which rescues the effective sample size. The evaluation metrics are not hit rate but:
-
-- **IC (Information Coefficient)**: Spearman correlation between score and next-day excess return, logged as a daily time series
-- **ICIR**: mean IC ÷ stdev of IC
-- **Quantile spread**: excess return of top-20%-score bucket − bottom-20%-score bucket
-
-### 8.5 Decision gates
-
-| Checkpoint | Criteria | If not met |
-|---|---|---|
-| 2 weeks | Pipeline runs without interruption, zero data-consistency errors, `ambiguous` < 30%, inter-model polarity correlation > 0.5 | Halt signal work, repair the measurement layer |
-| 3 months | ICIR > 0.3, shadow portfolio beats KODEX 200 buy-and-hold | Discard the signal logic and redesign |
-| 6 months | Above conditions hold even after accounting for transaction costs (fees + transaction tax + slippage) | End the project, switch to indexing |
-
-**Any real-money trading, even small amounts, only begins after passing the 3-month gate.** Changing trading behavior based on 1–2 week results means chasing noise.
+Revisions to any of the above are logged in `PREREGISTRATION.md` §R, per §0 principle 6.
 
 ---
 
@@ -434,17 +392,28 @@ Claude Code has no separate pricing table — it's billed at the standard token 
 
 ```
 market-briefing/
+  README.md                   # orientation: status, pipeline flow, repo map
+  README.ko.md                # Korean version of the above
   CLAUDE.md
   SPEC.md                     # this document
   PREREGISTRATION.md          # §8 split out and committed first
-  pyproject.toml
+  MANUAL-TASKS.md             # work only Ricky can do
+  pyproject.toml              # uv + pytest + ruff config
+  uv.lock
+  .env.example                # every required key, no values
+  .gitignore                  # .env, data/, Python and OS artifacts
   config/
     watchlist.yaml
     aliases.yaml              # ticker alias dictionary (manually managed)
     sector_mapping.yaml       # US ETF ↔ KR sector mapping
     models.yaml               # model selection
+    delivery.yaml             # §2.0 — the only place a channel may be declared
   src/
+    util/
+      session.py              # UTC/KST, trading days, look-ahead boundary
+      config.py               # config loading + hand-editing safeguards
     collectors/
+      validate.py             # the four checks every collector must pass
       kr_price.py
       kr_flow.py
       kr_news.py
@@ -482,6 +451,9 @@ market-briefing/
   data/
     golden/v1.jsonl
   tests/
+    test_session.py
+    test_validate.py
+    test_config.py
     test_collectors.py
     test_entity.py
     test_features.py

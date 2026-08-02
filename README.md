@@ -1,0 +1,213 @@
+# market-briefing
+
+Automated daily market briefing for Korean and US equities. Reads data, produces a document, and stops there — **this system does not execute trades.**
+
+한국어: [README.ko.md](README.ko.md)
+
+---
+
+## What this is
+
+Twice a day, a GitHub Actions run collects market data and news, turns the news into structured numbers, computes features, and renders a Korean-language markdown briefing that lands in an Obsidian vault and an inbox. A human reads it and decides what to do.
+
+| Run | Time (KST) | Covers |
+|---|---|---|
+| `RUN_MORNING` | 07:00 | US close (previous day) + KR pre-market — 2h before KOSPI opens |
+| `RUN_EVENING` | 21:30 | KR close (same day) + US pre-market — 1h before US opens |
+
+### The five rules that shape everything else
+
+1. **The LLM does not make judgment calls.** It converts news into a fixed numeric schema. It never writes buy/sell language. The one exception is a red-team section that argues *against* the day's conclusions.
+2. **Determinism first.** Anything solvable with string matching, embedding similarity, or statistics is solved that way. LLM calls are reserved for judgments that genuinely need language understanding — this is what makes results reproducible enough to evaluate.
+3. **Raw data is immutable.** Collected data is written to date-partitioned storage and never overwritten. In three months it becomes the backtest dataset.
+4. **Models are swappable.** All model calls go through one adapter. No vendor SDK is imported anywhere else.
+5. **Evaluation criteria were frozen before any data was collected.** See [PREREGISTRATION.md](PREREGISTRATION.md).
+
+### What it deliberately does not do
+
+- No order, execution, or cancellation API calls. Read-only endpoints only.
+- No LLM-generated trading advice.
+- No auto-generated ticker aliases (a wrong alias corrupts every downstream number silently).
+- No real-money trading before the 3-month evaluation gate passes.
+
+---
+
+## Current status
+
+**Foundation stage.** The plumbing that everything else depends on is built and tested. No data has been collected yet — `data/` is empty and no collector has ever run.
+
+| Component | Status | Notes |
+|---|---|---|
+| Design docs (SPEC, PREREGISTRATION, MANUAL-TASKS) | ✅ Done | Evaluation criteria frozen 2026-08-02 |
+| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 70 tests passing |
+| Time & market sessions (`src/util/session.py`) | ✅ Done | Trading days, DST, look-ahead boundary |
+| Collector validation framework (`src/collectors/validate.py`) | ✅ Done | The four checks every collector must pass |
+| Config loading & safeguards (`src/util/config.py`) | ✅ Done | Rejects alias collisions, unquoted tickers |
+| Config files | 🟡 Templates | `watchlist.yaml` and `aliases.yaml` need Ricky |
+| API credentials | ⬜ Blocked | See [MANUAL-TASKS.md §1](MANUAL-TASKS.md) |
+| Collectors (price, flow, news, filings, macro) | ⬜ Not started | Next step |
+| Entity resolution | ⬜ Not started | |
+| Embedding pipeline (dedup + relevance) | ⬜ Not started | |
+| Golden set (100 hand-labeled articles) | ⬜ Not started | Ricky's task, blocks model selection |
+| LLM adapter + scoring + bake-off | ⬜ Not started | |
+| Feature computation | ⬜ Not started | |
+| Report renderer + delivery | ⬜ Not started | |
+| GitHub Actions workflow | ⬜ Not started | |
+
+**Immediate blocker:** `config/watchlist.yaml` needs 13 more tickers and `config/aliases.yaml` needs one entry each. Once the watchlist exists, the first collector (`kr_price` via pykrx) needs no API key and can be built right away.
+
+---
+
+## How the pipeline works
+
+### Daily run, end to end
+
+```
+  Collectors                    ─→  data/raw/YYYY-MM-DD.*     (immutable, never overwritten)
+      │                                  │
+      │  pykrx, DART, Naver News,        │
+      │  SEC EDGAR, FRED, Alpaca         │
+      ↓                                  ↓
+  Entity resolution             ─→  which article is about which ticker
+      │  deterministic, driven by config/aliases.yaml
+      │  ambiguous cases are DROPPED, never guessed
+      ↓
+  Embeddings (local bge-m3)     ─→  data/embeddings/
+      │  ├─ dedup: cosine > 0.92 collapses Korean media re-reporting
+      │  └─ relevance filter: drop the bottom tail
+      │  1,000–2,000 articles  →  60–100 survivors
+      ↓
+  LLM scoring (Stage 2)         ─→  data/scores/    ← the only step that costs money
+      │  5 dimensions per article: relevance, polarity,
+      │  intensity, uncertainty, forwardness
+      ↓
+  Feature computation           ─→  data/features/
+      │  every feature is a 252-trading-day rolling z-score per ticker
+      ↓
+  Report rendering + red team   ─→  reports/YYYY-MM-DD-morning.md
+      │
+      ↓
+  Delivery                      ─→  vault (git commit) + email
+```
+
+### Why the news pipeline is shaped this way
+
+The expensive step (LLM scoring) runs last and on the fewest items. Deduplication and relevance filtering were moved out of the LLM and into local embeddings for three reasons: cost drops to zero, embeddings are perfectly reproducible where an LLM is not even at `temperature=0`, and sentence-level similarity catches Korean media re-reporting more accurately than an LLM judgment does.
+
+### What the briefing contains
+
+1. **US → KR transmission** — the front page, and the only section with no LLM involvement. US sector ETFs mapped to Korean sectors, each shown with its trailing 60-day rolling correlation so a broken-down relationship is visible rather than silently trusted.
+2. **Holdings & watchlist scan** — one line per ticker, flagged on foreign-investor flow, new filings, earnings revisions, valuation band, news spikes, volatility.
+3. **News score aggregation** — per-ticker rollup of the Stage 2 scores.
+4. **Calendar** — earnings, FOMC/CPI, options expiry, ex-dividend dates.
+5. **Red team** — the LLM is instructed to argue *only* against the day's conclusions.
+6. **Shadow portfolio P&L** — what a hypothetical account following the briefing would have done, tracked separately from any real account.
+
+### Two rules that prevent self-deception
+
+**Look-ahead prohibition.** A feature computed at time `t` never uses data timestamped at or after `t`. Any function computing features takes an explicit `as_of` parameter — a function that reads "the latest" data without a boundary is a bug, not a convenience. News is joined on publication timestamp, and news published during a session is assumed tradeable only at the *next* session's open.
+
+**Normalization.** Every feature is a 252-trading-day rolling z-score per ticker. Raw absolute values are never compared across tickers.
+
+---
+
+## Repository map
+
+```
+market-briefing/
+├── README.md                  ← you are here
+├── SPEC.md                    full design spec — the authoritative document
+├── PREREGISTRATION.md         evaluation criteria, frozen before data collection
+├── MANUAL-TASKS.md            work only Ricky can do (keys, watchlist, golden set)
+├── CLAUDE.md                  rules for the AI agent working in this repo
+│
+├── config/
+│   ├── watchlist.yaml         tickers to track          🟡 needs Ricky
+│   ├── aliases.yaml           ticker alias dictionary   🟡 needs Ricky
+│   ├── sector_mapping.yaml    US ETF ↔ KR sector
+│   ├── models.yaml            which model per stage
+│   └── delivery.yaml          output channels — the ONLY place one may be declared
+│
+├── src/
+│   ├── util/
+│   │   ├── session.py         ✅ UTC/KST, trading days, look-ahead boundary
+│   │   └── config.py          ✅ config loading + hand-editing safeguards
+│   ├── collectors/
+│   │   └── validate.py        ✅ the four checks every collector must pass
+│   ├── entity/                ⬜ ticker matching
+│   ├── embed/                 ⬜ dedup + relevance
+│   ├── features/              ⬜ computation + normalization
+│   ├── llm/                   ⬜ adapter, scoring, synthesis
+│   ├── report/                ⬜ rendering
+│   ├── notify/                ⬜ vault, email, webhook adapters
+│   └── eval/                  ⬜ golden set, bake-off, IC, shadow portfolio
+│
+├── tests/                     70 tests, all offline
+└── data/                      gitignored — raw, embeddings, features, scores
+```
+
+### What the built modules actually do
+
+**`src/util/session.py`** — Everything is stored in UTC and displayed in KST. Market sessions come from `pandas_market_calendars`, never a hardcoded holiday list, which matters because Korean lunar holidays (Seollal, Chuseok) shift every year. The US close is *derived*, so it correctly lands at 05:00 KST during daylight saving and 06:00 KST outside it without either number appearing in the code. `next_tradeable_open()` implements the look-ahead rule.
+
+**`src/collectors/validate.py`** — Every collector must pass four checks, written before its fetching logic: schema (column names and dtypes), missing-value ratio against a declared threshold, trading-day continuity with holidays excluded, and at least one hardcoded known value. Results are *reported*, not just raised — a failing collector records the failure and lets the pipeline continue, so a partial report still gets published with the gap named in its header.
+
+**`src/util/config.py`** — Loading is also validation. It rejects the mistakes that are easy to make by hand and impossible to spot later: an alias claimed by two different tickers, an alias that also appears in its own exclude list, and unquoted tickers.
+
+> **The unquoted-ticker trap.** YAML reads a bare leading-zero number as octal, so an unquoted `000660` (SK하이닉스) silently becomes the integer `432`. `005930` survives only because `9` is not a valid octal digit — which makes the failure inconsistent and very easy to miss. Always quote tickers; the loader rejects unquoted ones with an explanatory error.
+
+---
+
+## Getting started
+
+```bash
+uv sync                          # install dependencies
+
+uv run pytest -m "not network"   # run the test suite (the default run)
+uv run ruff check . && uv run ruff format .
+
+cp .env.example .env             # then fill in your API keys
+```
+
+Tests that hit the network are marked `@pytest.mark.network` and excluded by default. Imports resolve from the repository root: `from src.util.session import ...`.
+
+---
+
+## What's blocking progress
+
+These are Ricky's, in the order they unblock work. Full detail in [MANUAL-TASKS.md](MANUAL-TASKS.md).
+
+| # | Task | Est. time | Blocks |
+|---|---|---|---|
+| 1 | API keys → `.env` | 60–90 min | All collectors |
+| 2 | `config/watchlist.yaml` — 15 KR tickers | 20 min | All collectors |
+| 3 | `config/aliases.yaml` — one entry per ticker | 60–90 min | Entity resolution, all news features |
+| 4 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection |
+| 5 | Bake-off decision | 30 min | Scoring model choice |
+
+Task 4 is the one that will feel skippable. It is the only step involving no code, and skipping it makes the bake-off impossible — model selection then ends at "Claude seemed good."
+
+---
+
+## Evaluation
+
+Criteria were frozen in [PREREGISTRATION.md](PREREGISTRATION.md) on 2026-08-02, before any data existed. Revisions are logged there with the date, the reason, and whether data had already been seen.
+
+| Gate | Criteria | If not met |
+|---|---|---|
+| 2 weeks | Pipeline uninterrupted, zero data-consistency errors, `ambiguous` < 30%, inter-model polarity correlation > 0.5 | Halt signal work, repair the measurement layer |
+| 3 months | ICIR > 0.3, shadow portfolio beats KODEX 200 buy-and-hold | Discard the signal logic, redesign |
+| 6 months | Above holds after fees, transaction tax, and slippage | End the project, switch to indexing |
+
+**Two weeks cannot measure whether the signal works.** Separating a 55% hit rate from 50% needs roughly 800 independent observations; two weeks of 30 tickers yields an effective 60–100 once market beta eats the cross-sectional independence. So the early gate measures *measurement stability* — whether three different models scoring the same articles agree with each other — rather than predictive accuracy. If they disagree, the scores are model-specific noise and there is nothing worth validating yet.
+
+---
+
+## Documents
+
+| File | Purpose |
+|---|---|
+| [SPEC.md](SPEC.md) | Full design spec. The authoritative document. |
+| [PREREGISTRATION.md](PREREGISTRATION.md) | Evaluation criteria, frozen before collection. |
+| [MANUAL-TASKS.md](MANUAL-TASKS.md) | Work only Ricky can do, ordered by what it blocks. |
+| [CLAUDE.md](CLAUDE.md) | Operating rules for the AI agent working in this repo. |

@@ -21,14 +21,21 @@ Estimated time: 60–90 minutes total, mostly waiting on approvals.
 
 Store all of these in `.env` locally and as GitHub repository secrets. Never paste a key into a chat session with any AI tool, including Claude Code.
 
-> **Before creating `.env` or running the first backfill: add a `.gitignore`.**
-> As of this writing the repo has none — nothing sensitive has landed yet, so there's been nothing to ignore. It needs to cover, at minimum: `.env`, `data/raw/` (or all of `data/`, since `embeddings/`, `features/`, and `scores/` are also regenerable outputs), `__pycache__/`, and any local venv directory. Ask Claude to create it at that point; it's ordinary repo setup, not a Ricky-only task — it's flagged here only so it happens *before* secrets or raw data are ever staged, not after.
+> **Use `.env.example` as the checklist.** It lists every key above with its issuing URL, in the exact variable names the code expects. Copy it to `.env` and fill in the values:
+>
+> ```
+> cp .env.example .env
+> ```
+>
+> `.gitignore` already covers `.env` and `data/`, so neither can be staged by accident. `.env.example` itself holds no values and is committed deliberately.
 
 ---
 
 ## 2. Watchlist — **BLOCKING**
 
-File: `config/watchlist.yaml`
+File: `config/watchlist.yaml` — exists, with the schema and the two required large caps seeded. Ricky extends it.
+
+> **Always quote the ticker.** YAML reads a bare leading-zero number as octal, so an unquoted `000660` silently becomes the integer `432`. `005930` survives only because `9` is not a valid octal digit, which makes the failure inconsistent and easy to miss. The loader rejects unquoted tickers with an explanatory error rather than relying on anyone remembering this.
 
 Start with **15 Korean tickers**. Not 60. A smaller list makes every downstream problem visible faster, and the alias dictionary in the next section scales with this number.
 
@@ -44,7 +51,7 @@ US tickers come later, after the Korean side is stable.
 
 ## 3. Alias dictionary — **BLOCKING**
 
-File: `config/aliases.yaml`
+File: `config/aliases.yaml` — exists, with the schema and the two entries below already transcribed from this section. Ricky adds one entry per watchlist ticker.
 
 This is the single highest-leverage manual task in the project. Korean financial news identifies companies inconsistently, and if this file is wrong, every news-derived number downstream is wrong in a way that is hard to detect.
 
@@ -75,6 +82,8 @@ Rules Ricky should follow while writing it:
 - Include common misspellings and spacing variants that actually appear in Korean headlines.
 
 **Maintenance:** the pipeline reports a daily `ambiguous` ratio. When it exceeds 30%, come back and extend this file. Do not let Claude auto-generate entries — an incorrect alias is worse than a missing one, and auto-generation produces incorrect aliases silently.
+
+**Checked on load.** `src/util/config.py` rejects the mistakes that are easy to make by hand and impossible to spot afterward: the same alias claimed by two different tickers, an alias that also appears in its own `exclude` list, an entry with no aliases at all, and unquoted tickers. These are hard errors at startup, not warnings — a collision would otherwise misattribute every article containing that alias, silently, and differently depending on file ordering.
 
 ---
 
