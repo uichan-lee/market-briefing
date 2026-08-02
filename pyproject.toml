@@ -1,0 +1,56 @@
+[project]
+name = "market-briefing"
+version = "0.1.0"
+description = "Daily market briefing pipeline for Korean and US equities. Read-only; does not execute trades."
+requires-python = ">=3.11"
+
+# Dependencies are added as the code that needs them is written, not up front.
+# SPEC §3 names further sources (pykrx, dart-fss, python-kis, fredapi, yfinance,
+# sentence-transformers, litellm); each is added alongside its own collector or
+# stage, with a stated reason, per CLAUDE.md "ask before adding a dependency".
+dependencies = [
+    "pandas>=2.0",
+    # CLAUDE.md mandates market-session logic come from a calendar library,
+    # never hardcoded holidays or DST transitions.
+    "pandas-market-calendars>=4.4",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# SPEC §10 lays out a flat `src/` with subpackages rather than `src/<package>/`.
+# This project is an application run by CI, never a pip-installed library, so
+# imports resolve as `from src.util.session import ...` via the repo root.
+pythonpath = ["."]
+# --strict-markers turns a typo'd or unregistered marker into an error instead of
+# a warning. That matters here because CLAUDE.md requires `pytest -m "not network"`
+# as the default run: a silently-unregistered `network` marker would mean
+# network tests quietly run in CI.
+addopts = "--strict-markers"
+markers = [
+    "network: test performs a live network call; excluded from the default run",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately compare against hardcoded expected values.
+"tests/*" = ["E501"]
