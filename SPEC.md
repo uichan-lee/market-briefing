@@ -1,158 +1,158 @@
-# 데일리 마켓 브리핑 파이프라인 — 설계 스펙 v0.3
+# Daily Market Briefing Pipeline — Design Spec v0.3
 
-> [!abstract] 이 문서의 용도
-> Claude Code에 그대로 물리는 입력 스펙. 코드를 쓰기 전에 **출력 형태와 평가 기준을 먼저 고정**해서, 안 쓸 데이터를 수집하는 낭비와 사후 기준 변경(= 자기기만)을 막는 것이 목적이다.
+> [!abstract] Purpose of this document
+> The input spec fed directly to Claude Code. The goal is to **fix the output shape and evaluation criteria before writing code**, so we don't waste effort collecting data that never gets used, and don't move the goalposts after the fact (= self-deception).
 
-> [!info] 변경 이력
-> **v0.2** — Stage 1에서 LLM 제거(임베딩 대체) / 모델 어댑터 계층 / 골든셋 + 베이크오프(§7) / 엔티티 해석(§4) / 재보도 탐지를 임베딩 중복 제거로 변경
-> **v0.3** — 전달 계층(§2.0)을 교체 가능한 어댑터로 재설계. 텔레그램 의존 제거, Obsidian vault + 이메일 기본값
+> [!info] Change log
+> **v0.2** — Removed LLM from Stage 1 (replaced with embeddings) / model adapter layer / golden set + bake-off (§7) / entity resolution (§4) / re-reporting detection switched to embedding-based deduplication
+> **v0.3** — Redesigned the delivery layer (§2.0) as a swappable adapter. Dropped the Telegram dependency; Obsidian vault + email are now the defaults
 
-> [!note] 언어 정책
-> 저장소 내 문서·코드·커밋 메시지는 영어를 기본으로 한다. 예외는 도메인 데이터(종목명, 별칭 사전, 한국어 프롬프트 few-shot)와 이 문서. 이 SPEC은 Claude Code에게 `/plan translate SPEC.md to English, preserve all structure and numbering` 로 번역시킬 것.
-
----
-
-## 0. 설계 원칙 (변경 금지)
-
-1. **LLM은 판단하지 않는다.** 뉴스를 구조화된 숫자로 바꾸는 역할만 한다. 매수/매도 문구를 생성시키지 않는다.
-2. **결정론적으로 풀 수 있는 것에 LLM을 쓰지 않는다.** 문자열 매칭, 임베딩 유사도, 통계로 되는 일은 그렇게 푼다. LLM은 "판단이 필요한 소수 건"에만 투입한다.
-3. **raw는 불변 저장.** 수집한 원본은 가공 전 상태로 날짜 파티션에 적재한다. 이게 3개월 뒤 백테스트 데이터셋이 된다.
-4. **모델은 교체 가능해야 한다.** 벤더 종속 코드를 어댑터 밖으로 새게 하지 않는다.
-5. **매매 실행 자동화 없음.** 최소 6개월간 사람이 방아쇠를 당긴다.
-6. **평가 기준은 사전 등록.** 데이터를 보기 전에 §8을 커밋하고, 이후 수정 시 수정 이력을 남긴다.
+> [!note] Language policy
+> Repository documents, code, and commit messages default to English. Exceptions are domain data (ticker/company names, the alias dictionary, Korean-language few-shot prompt examples) and this document. This SPEC was translated to English by Claude Code via `/plan translate SPEC.md to English, preserve all structure and numbering`.
 
 ---
 
-## 1. 실행 스케줄
+## 0. Design principles (do not change)
 
-| 실행 | 시각 (KST) | 커버리지 | 목적 |
+1. **The LLM does not make judgment calls.** Its only role is turning news into structured numbers. It never generates buy/sell language.
+2. **Don't use an LLM where a deterministic solution exists.** Anything solvable with string matching, embedding similarity, or statistics is solved that way. The LLM is reserved for the small number of cases that genuinely require judgment.
+3. **Raw data is stored immutably.** Collected raw data is loaded into date-partitioned storage before any processing. This becomes the backtest dataset three months from now.
+4. **Models must be swappable.** Vendor-specific code must never leak outside the adapter.
+5. **No trade-execution automation.** A human pulls the trigger for at least the first six months.
+6. **Evaluation criteria are pre-registered.** §8 is committed before looking at the data; any later revision is logged as a revision history.
+
+---
+
+## 1. Execution schedule
+
+| Run | Time (KST) | Coverage | Purpose |
 |---|---|---|---|
-| `RUN_MORNING` | 07:00 | 미국장 마감(전일) + 한국장 프리마켓 | KOSPI 개장 2시간 전 |
-| `RUN_EVENING` | 21:30 | 한국장 마감(당일) + 미국장 프리마켓 | US 개장 1시간 전(서머타임) |
+| `RUN_MORNING` | 07:00 | US market close (previous day) + KR pre-market | 2 hours before KOSPI open |
+| `RUN_EVENING` | 21:30 | KR market close (same day) + US pre-market | 1 hour before US open (DST) |
 
-> [!warning] 서머타임
-> 미국장 마감은 DST 기간 05:00 KST, 비DST 기간 06:00 KST. 스케줄은 UTC 고정으로 잡고 시장 캘린더로 세션을 판별할 것. `pandas_market_calendars` 사용.
+> [!warning] Daylight saving time
+> US market close is 05:00 KST during DST and 06:00 KST outside it. Fix the schedule in UTC and determine the session with a market calendar. Use `pandas_market_calendars`.
 
-> [!note] GitHub Actions cron 지연
-> 정시 실행이 보장되지 않고 피크 시간대에 수십 분 밀린다. 07:00 목표면 UTC 기준 21:20에 트리거해 여유를 둔다. 실행 실패 시 재시도 1회, 그래도 실패하면 설정된 전달 채널로 실패 알림을 보내고 **부분 리포트라도 발행한다** — 조용한 실패가 제일 나쁘다.
+> [!note] GitHub Actions cron delay
+> On-time execution is not guaranteed and can slip tens of minutes during peak hours. If the target is 07:00, trigger at 21:20 UTC to leave margin. On run failure, retry once; if it still fails, send a failure notice through the configured delivery channels and **publish a partial report anyway** — a silent failure is the worst outcome.
 
 ---
 
-## 2. 리포트 템플릿
+## 2. Report template
 
-### 2.0 전달 계층 (Delivery)
+### 2.0 Delivery layer
 
-출력은 마크다운 1개 파일. 전달 방식은 모델 어댑터와 마찬가지로 **교체 가능한 어댑터**로 만든다. 특정 메신저에 종속시키지 않는다.
+Output is a single markdown file. Like the model adapter, delivery is built as a **swappable adapter** — it must not be tied to a specific messenger.
 
 ```yaml
 # config/delivery.yaml
 channels:
-  - type: vault          # 기본 — 저장소에 커밋, Obsidian이 git으로 당겨간다
+  - type: vault          # default — commit to the repo, Obsidian pulls via git
     path: reports/
     commit: true
-  - type: email          # 모바일 열람 경로
-    to: <주소>
+  - type: email          # mobile reading path
+    to: <address>
     smtp_secret: SMTP_PASSWORD
     body: summary        # summary | full
-# 필요해지면 추가: webhook (Slack/Discord/Kakao 등)
+# add later if needed: webhook (Slack/Discord/Kakao, etc.)
 ```
 
-| 채널 | 용도 | 구현 |
+| Channel | Purpose | Implementation |
 |---|---|---|
-| `vault` | 데스크톱 정독 | Actions가 `reports/`에 커밋 → Obsidian Git 플러그인으로 pull |
-| `email` | 모바일에서 훑기 | Actions에서 SMTP 발송. 전용 주소 + 앱 비밀번호 사용 |
-| `webhook` | 나중에 필요하면 | 범용 POST. 구현만 해두고 비활성 |
+| `vault` | Full read on desktop | Actions commits to `reports/` → pulled via the Obsidian Git plugin |
+| `email` | Quick scan on mobile | Sent via SMTP from Actions, using a dedicated address + app password |
+| `webhook` | For later, if needed | Generic POST. Implemented but left inactive |
 
-> [!important] Obsidian 연결 방식
-> GitHub Actions는 클라우드에서 돌기 때문에 맥의 vault에 직접 못 쓴다. 저장소를 vault 안의 폴더로 두고 Obsidian Git 플러그인으로 pull 하는 구조가 가장 단순하다. 모바일에서는 이게 번거로우니 이메일이 그 자리를 맡는다.
+> [!important] How the Obsidian connection works
+> Since GitHub Actions runs in the cloud, it can't write directly to the vault on the Mac. The simplest setup is to keep the repo as a folder inside the vault and pull it via the Obsidian Git plugin. That's inconvenient on mobile, so email fills that role instead.
 
-### 2.1 헤더 (요약 — 이메일 제목/본문 상단)
+### 2.1 Header (summary — top of email subject/body)
 
 ```
-📅 2026-07-29 (수) 07:00 KST
+📅 2026-07-29 (Wed) 07:00 KST
 S&P +0.4% | NASDAQ +0.8% | SOX +1.9% | USDKRW 1,382 (+0.3%)
-▶ 오늘 관심: 반도체 갭업 압력 / 2차전지 수급 이탈 3일차
-▶ 보유 종목 플래그: 2건 (아래)
-⚠ 데이터 결측: us_filings (재시도 실패)
+▶ Today's focus: Semiconductor gap-up pressure / secondary battery outflows, day 3
+▶ Holdings flagged: 2 (below)
+⚠ Data missing: us_filings (retry failed)
 ```
 
-### 2.2 섹션 순서와 내용
+### 2.2 Section order and content
 
-**① 미국장 → 한국장 전이 (가장 먼저 온다)**
+**① US → KR market transmission (comes first)**
 
-- 주요 지수 + 섹터 ETF 일간 수익률 (XLK, XLE, XLF, SMH, XBI...)
-- SOX, DXY, USDKRW, WTI, 미10년물 — 수준과 일간 변화
-- 대응 매핑: 미국 섹터 → 한국 섹터 예상 방향
-  - SMH → 반도체 (삼성전자, SK하이닉스, 한미반도체)
-  - XLE → 정유/조선
-  - 러셀2000 → 코스닥 중소형
-- 각 매핑마다 **직전 60거래일 롤링 상관계수**를 같이 출력. 상관이 깨진 구간이면 그 신호는 무시하라는 표시.
+- Major indices + sector ETF daily returns (XLK, XLE, XLF, SMH, XBI...)
+- SOX, DXY, USDKRW, WTI, US 10Y yield — levels and daily change
+- Correspondence mapping: expected direction of US sector → KR sector
+  - SMH → Semiconductors (Samsung Electronics, SK Hynix, Hanmi Semiconductor)
+  - XLE → Refining/Shipbuilding
+  - Russell 2000 → KOSDAQ small/mid-cap
+- Each mapping is shown alongside its **trailing 60-trading-day rolling correlation**. If correlation has broken down over the window, that's a flag to disregard the signal.
 
-> [!tip] 이 섹션이 1면인 이유
-> 브리핑에서 가장 방어 가능한 정량 콘텐츠다. 감성분석보다 인과 방향이 명확하고 시차가 실재한다. LLM이 전혀 개입하지 않는 섹션이라는 점도 중요하다.
+> [!tip] Why this section comes first
+> This is the most defensible quantitative content in the briefing. The causal direction is clearer than sentiment analysis, and the lag is real. It's also important that this section involves no LLM at all.
 
-**② 보유·관심 종목 스캔**
+**② Holdings / watchlist scan**
 
-종목별 한 줄 + 플래그. 아래 조건 중 하나라도 걸리면 굵게.
+One line per ticker, plus flags. Bold if any of the conditions below are triggered.
 
-| 플래그 | 조건 |
+| Flag | Condition |
 |---|---|
-| `수급이탈` | 외국인 5일 누적 순매수 z < -1.5 |
-| `수급유입` | 외국인 5일 누적 순매수 z > +1.5 |
-| `공시` | 전일 DART/EDGAR 신규 공시 존재 |
-| `실적리비전` | 컨센서스 EPS 4주 변화율 절댓값 > 3% |
-| `밸류밴드` | 3년 PBR 밴드 하위 10% 또는 상위 10% |
-| `뉴스급증` | 중복 제거 후 언급량 z > 2.0 |
-| `변동성` | 20일 실현변동성 z > 1.5 |
+| `outflow` | Foreign 5-day cumulative net buying z < -1.5 |
+| `inflow` | Foreign 5-day cumulative net buying z > +1.5 |
+| `filing` | New DART/EDGAR filing the previous day |
+| `earnings_revision` | Absolute 4-week change in consensus EPS > 3% |
+| `valuation_band` | 3-year PBR band bottom 10% or top 10% |
+| `news_spike` | Post-dedup mention volume z > 2.0 |
+| `volatility` | 20-day realized volatility z > 1.5 |
 
-**③ 뉴스 스코어 집계**
+**③ News score aggregation**
 
-§6 스키마로 뽑은 개별 스코어를 종목별로 집계. 표시 항목: 관련성 가중 평균 방향성, 불확실성 평균, 기사 수(중복 제거 후), 최고 강도 기사 1건의 헤드라인 + 링크.
+Aggregates the individual scores from the §6 schema per ticker. Displayed fields: relevance-weighted average polarity, average uncertainty, article count (post-dedup), and the headline + link of the single highest-intensity article.
 
-> 원문 인용은 15단어 이내로 제한하고 나머지는 요약한다.
+> Quoted excerpts are capped at 15 words; everything else is summarized.
 
-**④ 캘린더**
+**④ Calendar**
 
-당일/익일 실적 발표, FOMC·CPI·고용지표, 옵션만기, 한국 배당락·공모주 일정.
+Same-day/next-day earnings releases, FOMC/CPI/employment data, options expiration, KR ex-dividend dates and IPO schedules.
 
-**⑤ 반증 섹션 (Red Team)**
+**⑤ Red team section**
 
-①~④에서 나온 결론에 대해 LLM에게 **반대 논거만** 생성시킨다. 프롬프트에 "동의하지 말 것"을 명시. 이 섹션이 브리핑에서 가장 값어치 있는 부분이 될 가능성이 높다.
+Has the LLM generate **counterarguments only** against the conclusions from ①–④. The prompt explicitly instructs it "not to agree." This section is likely to end up the most valuable part of the briefing.
 
-**⑥ 섀도 포트폴리오 P&L**
+**⑥ Shadow portfolio P&L**
 
-브리핑 신호대로 매매했다고 가정한 가상 계좌의 누적 성과. 실계좌와 분리해 자동 기록.
+Cumulative performance of a hypothetical account that traded exactly according to the briefing's signals. Tracked automatically, separate from the real account.
 
 ---
 
-## 3. 데이터 소스 스펙
+## 3. Data source spec
 
-> [!warning] 레이트리밋·무료 티어 조건은 수시로 바뀐다
-> 아래는 착수 시점 기준. 각 서비스 가입 시 현재 문서를 다시 확인하고, 확인 결과를 이 표에 갱신할 것.
+> [!warning] Rate limits and free-tier terms change frequently
+> The table below reflects the state at project start. Re-check current documentation when signing up for each service, and update this table with what you find.
 
-### 3.1 한국
+### 3.1 Korea
 
-| 소스 | 용도 | 인증 | 라이브러리 | 비고 |
+| Source | Purpose | Auth | Library | Notes |
 |---|---|---|---|---|
-| pykrx | OHLCV, 투자자별 순매수, 공매도 잔고, 시총/PER/PBR | 없음 | `pykrx` | KRX 스크래핑 기반. 호출 간 sleep 필수 |
-| DART OpenAPI | 공시 목록, 재무제표 | API 키(무료) | `dart-fss` 또는 직접 | 일 호출 한도 있음 |
-| KIS Open API | 실시간 시세, 잔고 | 앱키/시크릿 | `python-kis` | 모의투자 환경 제공. **1단계에선 조회만** |
-| 네이버 뉴스 API | 종목 뉴스, 언급량 | 클라이언트 ID/시크릿 | 직접 | 검색 결과 수 제한 있음 |
+| pykrx | OHLCV, net buying by investor type, short-interest balance, market cap/PER/PBR | None | `pykrx` | Based on KRX scraping. Sleep required between calls |
+| DART OpenAPI | Filing lists, financial statements | API key (free) | `dart-fss` or direct | Daily call limit applies |
+| KIS Open API | Real-time quotes, balances | App key/secret | `python-kis` | Mock trading environment provided. **Read-only in stage 1** |
+| Naver News API | Ticker news, mention volume | Client ID/secret | Direct | Limited number of search results |
 
-> [!important] 한국 시장의 구조적 강점
-> 투자자별 일별 순매수(외국인/기관/개인)는 미국에 존재하지 않는 데이터다. 이 파이프라인에서 가장 차별적인 피처가 여기서 나온다. **LLM 없이 얻는 신호**라는 점이 특히 중요하다.
+> [!important] A structural edge in the Korean market
+> Daily net buying by investor type (foreign/institutional/retail) doesn't exist as a data source in the US. This pipeline's most differentiated feature comes from here. It's especially notable as a **signal obtained without an LLM**.
 
-### 3.2 미국
+### 3.2 United States
 
-| 소스 | 용도 | 인증 | 비고 |
+| Source | Purpose | Auth | Notes |
 |---|---|---|---|
-| SEC EDGAR | 8-K/10-Q/10-K 전문, Form 4 내부자 거래 | 없음 (User-Agent 필수) | full-text search API 제공 |
-| FRED | 금리, 환율, 매크로 | API 키(무료) | `fredapi` |
-| yfinance | OHLCV 백필 | 없음 | 비공식. **프로덕션 의존 금지**, 초기 백필용 |
-| Alpaca / Tiingo | OHLCV, 뉴스 | API 키(무료 티어) | 둘 중 하나 선택해 프로덕션 시세로 사용 |
-| GDELT | 글로벌 뉴스 볼륨 | 없음 | 언급량 z-score 산출에 유용 |
+| SEC EDGAR | Full text of 8-K/10-Q/10-K, Form 4 insider trading | None (User-Agent required) | Full-text search API available |
+| FRED | Interest rates, FX, macro | API key (free) | `fredapi` |
+| yfinance | OHLCV backfill | None | Unofficial. **Do not depend on it in production**; backfill only |
+| Alpaca / Tiingo | OHLCV, news | API key (free tier) | Pick one to use as the production quote source |
+| GDELT | Global news volume | None | Useful for computing mention-volume z-scores |
 
-### 3.3 저장 레이아웃
+### 3.3 Storage layout
 
 ```
 data/
@@ -163,7 +163,7 @@ data/
     us/price/2026-07-29.parquet
     us/filings/2026-07-29.jsonl
   embeddings/
-    2026-07-29.parquet        # 기사 임베딩 (재보도 탐지·관련성 필터용)
+    2026-07-29.parquet        # article embeddings (for re-report detection / relevance filtering)
   features/
     2026-07-29.parquet
   scores/
@@ -172,84 +172,84 @@ reports/
   2026-07-29-morning.md
 ```
 
-`raw/`는 **덮어쓰기 금지**. 재실행 시 `-v2` 접미사로 별도 저장하고 원본은 남긴다.
-`scores/`는 파일명에 모델 ID와 프롬프트 버전을 박는다 — §7 베이크오프에서 비교 단위가 된다.
+`raw/` is **never overwritten**. On a re-run, save separately with a `-v2` suffix and keep the original.
+`scores/` files embed the model ID and prompt version in the filename — this is the comparison unit for the §7 bake-off.
 
 ---
 
-## 4. 엔티티 해석 (Entity Resolution)
+## 4. Entity Resolution
 
-> [!danger] 여기서 실패하면 뒤의 모든 게 무의미하다
-> 한국 뉴스는 종목 식별이 구조적으로 어렵다. 이 단계를 LLM에 맡기지 말고 결정론적으로 푼다.
+> [!danger] If this step fails, everything downstream is meaningless
+> Ticker identification in Korean news is structurally hard. Don't hand this step to an LLM — solve it deterministically.
 
-### 4.1 문제 유형
+### 4.1 Problem types
 
-| 유형 | 예시 |
+| Type | Example |
 |---|---|
-| 그룹명 ↔ 계열사 | "한화" → 한화 / 한화솔루션 / 한화에어로스페이스 / 한화오션 |
-| 지주 ↔ 사업회사 | "LG" → LG(지주) vs LG전자 vs LG화학 |
-| 우선주 | "삼성전자우"는 별도 종목 |
-| 약칭·별칭 | "하이닉스", "SK하이닉스", "005930" |
-| 동음이의 | "한섬"(기업) vs 일반명사, "미래에셋" 여러 종목 |
-| 산업 언급 | "반도체 업황" — 특정 종목 아님 |
+| Group name ↔ affiliate | "한화" (Hanwha) → 한화 / 한화솔루션 / 한화에어로스페이스 / 한화오션 |
+| Holding company ↔ operating company | "LG" → LG (holding co.) vs LG전자 (LG Electronics) vs LG화학 (LG Chem) |
+| Preferred shares | "삼성전자우" (Samsung Electronics Preferred) is a separate ticker |
+| Abbreviations/aliases | "하이닉스", "SK하이닉스", "005930" |
+| Homonyms | "한섬" (Hanssem, the company) vs the common noun, "미래에셋" (Mirae Asset) has multiple tickers |
+| Industry mentions | "semiconductor market conditions" — not a specific ticker |
 
-### 4.2 해결 방식
+### 4.2 Resolution approach
 
-1. `config/aliases.yaml`에 종목별 별칭 사전을 명시적으로 관리한다. 자동 생성 금지 — 수동 관리 대상.
-2. 1차 매칭: 별칭 정확 매칭 + 종목코드 매칭
-3. 애매한 경우(그룹명만 등장)는 **매칭하지 않고 `ambiguous` 버킷에 넣는다.** 잘못 매칭하느니 버리는 게 낫다.
-4. `ambiguous` 비율을 매일 리포트에 기록. 이 비율이 30%를 넘으면 별칭 사전을 보강한다.
+1. Explicitly maintain a per-ticker alias dictionary in `config/aliases.yaml`. No auto-generation — this is manually managed.
+2. Primary matching: exact alias match + ticker code match
+3. Ambiguous cases (only a group name appears, etc.) are **not matched — they go into the `ambiguous` bucket.** Better to drop a match than get it wrong.
+4. Log the `ambiguous` ratio in the report every day. If it exceeds 30%, augment the alias dictionary.
 
 ---
 
-## 5. 피처 정의
+## 5. Feature definitions
 
-모든 피처는 종목별 시계열에 대해 **252거래일 롤링 z-score**로 정규화한다. 절대값은 종목 간 비교가 불가능하다.
+All features are normalized as a **252-trading-day rolling z-score** per ticker's time series. Absolute values cannot be compared across tickers.
 
 $$z_{i,t} = \frac{x_{i,t} - \mu_{i,t-252:t-1}}{\sigma_{i,t-252:t-1}}$$
 
-| 피처 | 정의 |
+| Feature | Definition |
 |---|---|
-| `foreign_flow_5d` | 외국인 5일 누적 순매수액 ÷ 5일 누적 거래대금 |
-| `inst_flow_5d` | 기관 동일 |
-| `short_ratio` | 공매도 잔고 ÷ 상장주식수 |
-| `rev_4w` | 컨센서스 EPS 4주 변화율 |
-| `rel_strength_20d` | 종목 20일 수익률 − 섹터 20일 수익률 |
-| `rv_20d` | 20일 실현변동성 (로그수익률 표준편차 × √252) |
-| `news_volume_z` | **중복 제거 후** 일간 기사 수의 z-score |
-| `us_kr_beta_60d` | 대응 미국 섹터 ETF 대비 60일 롤링 베타 |
+| `foreign_flow_5d` | 5-day cumulative foreign net buying ÷ 5-day cumulative trading value |
+| `inst_flow_5d` | Same, for institutional investors |
+| `short_ratio` | Short-interest balance ÷ shares outstanding |
+| `rev_4w` | 4-week change in consensus EPS |
+| `rel_strength_20d` | Ticker 20-day return − sector 20-day return |
+| `rv_20d` | 20-day realized volatility (stdev of log returns × √252) |
+| `news_volume_z` | z-score of daily article count **after deduplication** |
+| `us_kr_beta_60d` | 60-day rolling beta against the corresponding US sector ETF |
 
 ---
 
-## 6. 뉴스 처리 파이프라인
+## 6. News processing pipeline
 
-### 6.1 단계 구성 (v0.2에서 재설계)
+### 6.1 Stage structure (redesigned in v0.2)
 
 ```
-1,000~2,000건 원본 기사
+1,000–2,000 raw articles
     │
-    ├─ Stage 0: 엔티티 매칭 (§4)          — 결정론적, 비용 0
+    ├─ Stage 0: Entity matching (§4)         — deterministic, zero cost
     │      ↓
-    ├─ Stage 1: 임베딩 (bge-m3, 로컬)      — 비용 0, 재현성 100%
-    │      ├─ 재보도 탐지: 코사인 유사도 > 0.92 → 클러스터 대표 1건만 잔존
-    │      └─ 관련성 필터: 종목 프로파일 문장과의 유사도 하위 컷
+    ├─ Stage 1: Embedding (bge-m3, local)     — zero cost, 100% reproducible
+    │      ├─ Re-report detection: cosine similarity > 0.92 → keep only 1 cluster representative
+    │      └─ Relevance filter: cut the bottom tail of similarity against ticker profile sentences
     │      ↓
-    │   상위 60~100건
+    │   top 60–100 articles
     │      ↓
-    ├─ Stage 2: LLM 5차원 스코어링         — 여기서만 LLM 비용 발생
+    ├─ Stage 2: LLM 5-dimensional scoring     — the only stage that incurs LLM cost
     │      ↓
-    └─ Stage 3: LLM 리포트 합성 + 반증 섹션
+    └─ Stage 3: LLM report synthesis + red-team section
 ```
 
-> [!tip] v0.1에서 바뀐 핵심
-> 관련성 필터와 재보도 탐지를 LLM에서 임베딩으로 옮겼다. 이유 세 가지:
-> 1. **비용**: 1,500건/일 LLM 필터링 → 0원
-> 2. **재현성**: 임베딩은 결정론적. LLM은 `temperature=0`에서도 완전히 같지 않다
-> 3. **재보도 탐지 정확도**: 한국 언론의 재보도는 문장 단위 유사도로 잡는 게 LLM 판단보다 정확하다
+> [!tip] What changed from v0.1
+> The relevance filter and re-report detection moved from the LLM to embeddings. Three reasons:
+> 1. **Cost**: LLM filtering of 1,500 articles/day → $0
+> 2. **Reproducibility**: embeddings are deterministic. Even at `temperature=0`, the LLM isn't perfectly identical run to run
+> 3. **Re-report detection accuracy**: for Korean media's re-reporting pattern, sentence-level similarity catches it more accurately than LLM judgment does
 >
-> 임베딩 모델은 `BAAI/bge-m3` (한/영 동시 처리, MIT). 맥에서 `sentence-transformers`로 로컬 실행. 유사도 임계값 0.92는 초기값이고 §7 골든셋으로 튜닝한다.
+> The embedding model is `BAAI/bge-m3` (handles Korean/English simultaneously, MIT license). Runs locally on the Mac via `sentence-transformers`. The 0.92 similarity threshold is an initial value, to be tuned against the §7 golden set.
 
-### 6.2 Stage 2 출력 스키마 (고정)
+### 6.2 Stage 2 output schema (fixed)
 
 ```json
 {
@@ -257,32 +257,32 @@ $$z_{i,t} = \frac{x_{i,t} - \mu_{i,t-252:t-1}}{\sigma_{i,t-252:t-1}}$$
   "ticker": "005930",
   "model_id": "string",
   "prompt_version": "v1",
-  "relevance": 0.0,      // 0~1, 해당 종목 실적/주가에 직접 관련되는가
-  "polarity": 0.0,       // -1~1, 방향
-  "intensity": 0.0,      // 0~1, 재무적 영향 크기
-  "uncertainty": 0.0,    // 0~1, 결과가 불확실한 정도
-  "forwardness": 0.0,    // 0~1, 이미 반영된 과거사실(0) vs 미래 기대(1)
-  "rationale": "string"  // 40자 이내
+  "relevance": 0.0,      // 0-1, is this directly related to the ticker's earnings/price
+  "polarity": 0.0,       // -1 to 1, direction
+  "intensity": 0.0,      // 0-1, magnitude of financial impact
+  "uncertainty": 0.0,    // 0-1, degree of outcome uncertainty
+  "forwardness": 0.0,    // 0-1, already-priced-in past fact (0) vs future expectation (1)
+  "rationale": "string"  // 40 characters or fewer
 }
 ```
 
-> [!note] polarity 단독을 쓰지 않는 이유
-> 다차원 감성 연구에서 intensity와 uncertainty가 단순 극성보다 예측력 기여가 컸다.
+> [!note] Why polarity alone isn't used
+> In multi-dimensional sentiment research, intensity and uncertainty contributed more predictive power than simple polarity alone.
 
-### 6.3 프롬프트 규율
+### 6.3 Prompt discipline
 
-- `temperature=0`, 스키마를 tool/structured output으로 강제
-- 시스템 프롬프트와 스코어링 기준은 **프롬프트 캐싱** 대상으로 분리
-- 프롬프트 문구를 바꾸면 그 이전 스코어와 비교 불가. 프롬프트에 버전 태그를 달고 스코어에 함께 기록한다.
-- 프롬프트는 `src/llm/prompts/`에 파일로 관리하고 코드에 하드코딩하지 않는다.
+- `temperature=0`, the schema is enforced via tool/structured output
+- The system prompt and scoring criteria are kept separate as **prompt caching** targets
+- Changing the prompt wording makes prior scores non-comparable. Tag the prompt with a version and record it alongside the score.
+- Prompts are managed as files under `src/llm/prompts/`, not hardcoded in the code.
 
 ---
 
-## 7. 모델 선택 — 어댑터와 베이크오프
+## 7. Model selection — adapters and bake-off
 
-### 7.1 벤더 중립 원칙
+### 7.1 Vendor-neutral principle
 
-모델 호출은 전부 `src/llm/adapter.py` 하나를 통과한다. 어댑터 밖의 코드는 어떤 벤더를 쓰는지 몰라야 한다.
+All model calls pass through the single `src/llm/adapter.py`. Code outside the adapter must not know which vendor is in use.
 
 ```yaml
 # config/models.yaml
@@ -302,147 +302,147 @@ synthesis:
   temperature: 0.3
 ```
 
-구현은 `litellm`으로 통일하거나, 얇은 자체 래퍼 + 벤더별 SDK 조합. 어느 쪽이든 **provider 문자열 하나로 갈아끼워지는 것**이 요구사항이다.
+Implement either via a unified `litellm` layer, or a thin custom wrapper combined with per-vendor SDKs. Either way, the requirement is that **swapping happens via a single provider string.**
 
-### 7.2 단계별 모델 적합성
+### 7.2 Model fit per stage
 
-| 단계 | 요구 능력 | 후보 | 판단 |
+| Stage | Required capability | Candidates | Verdict |
 |---|---|---|---|
-| 임베딩 | 한/영 동시, 로컬 실행 | bge-m3, multilingual-e5, KR-SBERT | bge-m3가 한영 혼재 문서에서 무난. 로컬이라 비용 0 |
-| 스코어링 | 한국 금융 기사 뉘앙스, 구조화 출력, 저비용 배치 | Claude Sonnet 5 / GPT-5 계열 / Gemini Pro 계열 / HyperCLOVA X / EXAONE / Solar | **베이크오프로 결정** |
-| 합성·반증 | 장문 추론, 지시 준수 | 프론티어 모델 아무거나 | 호출량이 적어 비용 영향 미미. 품질 우선 |
-| 개발 도구 | 에이전틱 코딩 | Claude Code / Codex CLI / Gemini CLI / Cursor / Aider | 취향. 이 프로젝트는 Claude Code 기준으로 작성됨 |
+| Embedding | Handles Korean/English simultaneously, runs locally | bge-m3, multilingual-e5, KR-SBERT | bge-m3 handles mixed KR/EN documents well. Zero cost since it's local |
+| Scoring | Nuance in Korean financial articles, structured output, low-cost batching | Claude Sonnet 5 / GPT-5 family / Gemini Pro family / HyperCLOVA X / EXAONE / Solar | **Decided by bake-off** |
+| Synthesis / red-team | Long-form reasoning, instruction following | Any frontier model | Call volume is low so cost impact is negligible. Prioritize quality |
+| Development tooling | Agentic coding | Claude Code / Codex CLI / Gemini CLI / Cursor / Aider | Personal preference. This project is written against Claude Code |
 
-> [!important] 국내 모델을 후보에서 빼지 말 것
-> HyperCLOVA X는 한국어 특화 토크나이저를 써서 같은 한국어 텍스트에 대해 해외 모델보다 토큰 수가 적게 나온다. 한국 기사 위주 워크로드에서는 이게 곧 비용 차이다. EXAONE·Solar는 오픈웨이트 변형이 있어 로컬 서빙으로 한계비용을 0으로 만들 수도 있다. 다만 **구조화 출력(tool/JSON schema) 지원 성숙도**가 벤더마다 다르니 반드시 실측할 것.
+> [!important] Don't exclude domestic Korean models from consideration
+> HyperCLOVA X uses a Korean-specialized tokenizer, so the same Korean text produces fewer tokens than with overseas models. For a workload dominated by Korean articles, that directly translates into a cost difference. EXAONE and Solar have open-weight variants, which could drive the marginal cost to zero via local serving. That said, **maturity of structured-output support (tool/JSON schema)** varies by vendor, so this must be measured empirically.
 
-### 7.3 골든셋
+### 7.3 Golden set
 
-베이크오프 전에 **직접 라벨링한 100건**을 만든다. 2시간이면 된다. 이게 없으면 모델 선택이 전부 감으로 간다.
+Before the bake-off, build **100 hand-labeled examples**. Should take about 2 hours. Without this, model selection is entirely guesswork.
 
-- 구성: 명확한 호재 25 / 명확한 악재 25 / 애매 25 / 무관 25
-- 라벨: §6.2 스키마의 5개 차원을 직접 부여
-- 저장: `data/golden/v1.jsonl` (커밋)
+- Composition: 25 clearly positive / 25 clearly negative / 25 ambiguous / 25 irrelevant
+- Labels: assign all 5 dimensions from the §6.2 schema by hand
+- Storage: `data/golden/v1.jsonl` (committed)
 
-### 7.4 베이크오프 프로토콜
+### 7.4 Bake-off protocol
 
-같은 골든셋 + 같은 프롬프트로 후보 모델 3개를 돌리고 아래를 측정한다.
+Run 3 candidate models against the same golden set + same prompt, and measure the following.
 
-| 지표 | 정의 | 합격선 |
+| Metric | Definition | Passing bar |
 |---|---|---|
-| 골든셋 상관 | 모델 스코어 vs 내 라벨의 스피어만 상관 (차원별) | relevance > 0.7, polarity > 0.6 |
-| 스키마 준수율 | 파싱 실패 없이 유효 JSON 반환 비율 | > 99% |
-| 자기일관성 | 동일 기사 5회 반복 시 스코어 표준편차 | polarity σ < 0.1 |
-| 모델간 일치도 | 후보 모델들 사이의 스피어만 상관 | §8.3 참조 |
-| 유효신호당 비용 | 총비용 ÷ relevance>0.5 건수 | 상대 비교 |
-| 지연 | 배치 완료까지 소요 시간 | 브리핑 시각 여유 내 |
+| Golden-set correlation | Spearman correlation of model score vs. my label (per dimension) | relevance > 0.7, polarity > 0.6 |
+| Schema compliance rate | Fraction of calls returning valid JSON without a parse failure | > 99% |
+| Self-consistency | Stdev of scores across 5 repeated runs on the same article | polarity σ < 0.1 |
+| Inter-model agreement | Spearman correlation between candidate models | See §8.3 |
+| Cost per valid signal | Total cost ÷ count of articles with relevance>0.5 | Relative comparison |
+| Latency | Time to complete a batch | Within the briefing's time budget |
 
-**결정 규칙**: 골든셋 상관과 자기일관성을 먼저 통과한 모델들 중에서 유효신호당 비용이 가장 낮은 것을 채택한다. 성능이 비슷하면 싼 걸 고른다.
+**Decision rule**: among models that pass golden-set correlation and self-consistency first, adopt the one with the lowest cost per valid signal. If performance is comparable, pick the cheaper one.
 
 ---
 
-## 8. 평가 사전 등록 (Pre-registration)
+## 8. Evaluation pre-registration
 
-> [!danger] 데이터를 보기 전에 이 섹션을 커밋할 것
-> 사후에 기준을 바꾸면 검증이 아니라 곡선 맞추기가 된다.
+> [!danger] Commit this section before looking at the data
+> Changing the criteria after the fact turns this from validation into curve-fitting.
 
-### 8.1 1~2주 차에 검증 가능한 것 / 불가능한 것
+### 8.1 What can and can't be validated in weeks 1–2
 
-| 검증 대상 | 2주로 가능? |
+| Validation target | Feasible in 2 weeks? |
 |---|---|
-| 파이프라인 무결성 (결측·중복·지연) | ✅ |
-| 데이터 정합성 (원본 대조) | ✅ |
-| 엔티티 매칭 정확도 (`ambiguous` 비율) | ✅ |
-| LLM 출력 재현성 | ✅ |
-| 골든셋 대비 모델 성능 | ✅ |
-| **모델간 일치도** | ✅ |
-| 실측 비용 | ✅ |
-| 브리핑을 실제로 읽게 되는가 | ✅ |
-| **신호 적중률** | ❌ |
-| **전략 수익성** | ❌ |
+| Pipeline integrity (missing data, duplicates, delays) | ✅ |
+| Data consistency (cross-check against source) | ✅ |
+| Entity-matching accuracy (`ambiguous` ratio) | ✅ |
+| LLM output reproducibility | ✅ |
+| Model performance vs. golden set | ✅ |
+| **Inter-model agreement** | ✅ |
+| Measured cost | ✅ |
+| Whether the briefing actually gets read | ✅ |
+| **Signal hit rate** | ❌ |
+| **Strategy profitability** | ❌ |
 
-### 8.2 적중률이 왜 불가능한가
+### 8.2 Why hit rate isn't feasible
 
-방향 적중률 55%를 50%와 구분하려면($\alpha=0.05$, power 0.8) 약 **800건**의 독립 관측치가 필요하다. 종목 30개 × 10영업일 = 300건이고, 같은 날 종목들은 시장 베타로 강하게 상관되어 있어 유효 표본은 명목치의 1/3~1/5 수준이다. 실질 60~100건 — 아무것도 판별하지 못한다.
+Distinguishing a directional hit rate of 55% from 50% ($\alpha=0.05$, power 0.8) requires roughly **800** independent observations. 30 tickers × 10 trading days = 300 observations, and tickers on the same day are strongly correlated via market beta, so the effective sample size is roughly 1/3 to 1/5 of the nominal count — effectively 60–100 observations. That's not enough to determine anything.
 
-전략 수준은 더 심하다. 연율 샤프 1.0을 $t=2$로 유의하게 만들려면 대략 4년의 데이터가 필요하다.
+Strategy-level evaluation is even worse. Making an annualized Sharpe of 1.0 significant at $t=2$ requires roughly 4 years of data.
 
-### 8.3 대신 2주 안에 측정하는 것: 모델간 일치도
+### 8.3 What gets measured in 2 weeks instead: inter-model agreement
 
-> [!tip] 이게 v0.2의 핵심 추가
-> 예측 정확도는 못 재도 **측정 안정성**은 잴 수 있다. 같은 기사를 서로 다른 모델 3개에 물려서 스코어 상관을 본다.
+> [!tip] This is v0.2's key addition
+> We can't measure predictive accuracy yet, but we **can** measure measurement stability. Run the same articles through 3 different models and look at the score correlations.
 >
-> - **일치도가 높다** → 최소한 측정하고 있는 대상이 실재한다. 예측력은 별개로 더 검증해야 한다.
-> - **일치도가 낮다** → 스코어가 모델 고유의 노이즈다. 예측력 검증으로 넘어갈 자격이 없다. 스키마나 프롬프트부터 고쳐야 한다.
+> - **High agreement** → at minimum, whatever we're measuring is a real underlying signal. Predictive power still needs to be validated separately.
+> - **Low agreement** → the scores are model-specific noise. Not yet eligible to move on to predictive-power validation. Fix the schema or the prompt first.
 >
-> 이건 기사 수백 건이면 되므로 2주로 충분하다. 그리고 이 진단이 "적중률 55%" 같은 무의미한 숫자보다 훨씬 많은 걸 알려준다.
+> This only needs a few hundred articles, so 2 weeks is plenty. And this diagnostic tells us far more than a meaningless number like "55% hit rate" would.
 
-측정: 후보 모델 쌍별 차원별 스피어만 상관. `polarity` 상관이 0.5 미만이면 경고.
+Measurement: per-dimension Spearman correlation for each pair of candidate models. Warn if the `polarity` correlation falls below 0.5.
 
-### 8.4 신호 평가 설계 (3개월 이후)
+### 8.4 Signal evaluation design (after 3 months)
 
-**절대 방향이 아니라 초과수익으로 평가한다.**
+**Evaluate on excess return, not absolute direction.**
 
 $$y_{i,t+1} = r_{i,t+1} - r_{\text{sector}(i),t+1}$$
 
-시장 베타를 제거하면 종목 간 상관이 크게 줄어 유효 표본이 산다. 평가 지표는 적중률이 아니라:
+Removing market beta sharply reduces cross-ticker correlation, which rescues the effective sample size. The evaluation metrics are not hit rate but:
 
-- **IC (Information Coefficient)**: 스코어와 익일 초과수익의 스피어만 상관, 일별 시계열로 기록
-- **ICIR**: IC 평균 ÷ IC 표준편차
-- **분위 스프레드**: 스코어 상위 20% − 하위 20% 초과수익
+- **IC (Information Coefficient)**: Spearman correlation between score and next-day excess return, logged as a daily time series
+- **ICIR**: mean IC ÷ stdev of IC
+- **Quantile spread**: excess return of top-20%-score bucket − bottom-20%-score bucket
 
-### 8.5 판정 게이트
+### 8.5 Decision gates
 
-| 시점 | 기준 | 미달 시 |
+| Checkpoint | Criteria | If not met |
 |---|---|---|
-| 2주 | 파이프라인 무중단, 데이터 정합성 오류 0건, `ambiguous` < 30%, 모델간 polarity 상관 > 0.5 | 신호 작업 중단, 측정 레이어 수리 |
-| 3개월 | ICIR > 0.3, 섀도 포트폴리오가 KODEX 200 buy&hold 대비 우위 | 신호 로직 폐기 후 재설계 |
-| 6개월 | 위 조건 유지 + 거래비용(수수료+거래세+슬리피지) 반영 후에도 유지 | 프로젝트 종료, 인덱스로 전환 |
+| 2 weeks | Pipeline runs without interruption, zero data-consistency errors, `ambiguous` < 30%, inter-model polarity correlation > 0.5 | Halt signal work, repair the measurement layer |
+| 3 months | ICIR > 0.3, shadow portfolio beats KODEX 200 buy-and-hold | Discard the signal logic and redesign |
+| 6 months | Above conditions hold even after accounting for transaction costs (fees + transaction tax + slippage) | End the project, switch to indexing |
 
-**소액이라도 실제 매매에 반영하는 것은 3개월 게이트 통과 이후.** 1~2주 결과로 매매를 바꾸면 그건 노이즈를 따라가는 것이다.
+**Any real-money trading, even small amounts, only begins after passing the 3-month gate.** Changing trading behavior based on 1–2 week results means chasing noise.
 
 ---
 
-## 9. 비용 추정
+## 9. Cost estimate
 
-### 9.1 런타임 (월 기준)
+### 9.1 Runtime (monthly)
 
-| 항목 | 최소 구성 | 표준 구성 |
+| Item | Minimal configuration | Standard configuration |
 |---|---|---|
-| GitHub Actions | $0 (프라이빗 2,000분 무료 내) | $0 |
-| 데이터 API | $0 (전부 무료 티어) | $0 |
-| 임베딩 (로컬 bge-m3) | $0 | $0 |
-| Stage 2 스코어링 (배치) | ~$2 | ~$8 |
-| Stage 3 합성 (실시간) | ~$3 | ~$10 |
-| 전달 (vault/email) | $0 | $0 |
-| **합계** | **월 $5 내외** | **월 $18~20** |
+| GitHub Actions | $0 (within the 2,000 free private minutes) | $0 |
+| Data APIs | $0 (all free tier) | $0 |
+| Embedding (local bge-m3) | $0 | $0 |
+| Stage 2 scoring (batch) | ~$2 | ~$8 |
+| Stage 3 synthesis (real-time) | ~$3 | ~$10 |
+| Delivery (vault/email) | $0 | $0 |
+| **Total** | **~$5/month** | **~$18–20/month** |
 
-최소 구성 = 관심종목 15개, 1일 1회 실행.
-표준 구성 = 관심종목 60개(KR 30 + US 30), 1일 2회 실행.
+Minimal configuration = 15 watchlist tickers, run once daily.
+Standard configuration = 60 watchlist tickers (30 KR + 30 US), run twice daily.
 
-v0.1 대비 절감은 Stage 1을 임베딩으로 옮긴 결과다. 배치 API는 입출력 모두 50% 할인이고 브리핑은 실시간성이 필요 없으므로 전 구간 배치를 기본값으로 한다.
+The reduction from v0.1 comes from moving Stage 1 to embeddings. Batch APIs get a 50% discount on both input and output, and the briefing has no real-time requirement, so batch is the default across the board.
 
-**베이크오프 기간에는 후보 모델 수만큼 곱해진다.** 골든셋 100건 × 3모델 × 5회 반복 = 1,500 호출이지만 총액은 $1 미만.
+**During the bake-off period, cost multiplies by the number of candidate models.** 100 golden-set examples × 3 models × 5 repeats = 1,500 calls, but the total is still under $1.
 
-### 9.2 개발 비용
+### 9.2 Development cost
 
-Claude Code는 별도 요금표 없이 실행 모델의 표준 토큰 요금으로 과금되지만, Claude Pro/Max 구독에 구독 한도 내 사용이 포함된다. 개인 개발 용도면 구독 쪽이 API 종량제보다 저렴하다.
+Claude Code has no separate pricing table — it's billed at the standard token rate of whichever model it runs — but Claude Pro/Max subscriptions include usage within the subscription's limits. For personal development use, the subscription is cheaper than pay-as-you-go API billing.
 
 ---
 
-## 10. 프로젝트 구조
+## 10. Project structure
 
 ```
 market-briefing/
   CLAUDE.md
-  SPEC.md                     # 이 문서
-  PREREGISTRATION.md          # §8을 분리해 먼저 커밋
+  SPEC.md                     # this document
+  PREREGISTRATION.md          # §8 split out and committed first
   pyproject.toml
   config/
     watchlist.yaml
-    aliases.yaml              # 종목 별칭 사전 (수동 관리)
-    sector_mapping.yaml       # 미국 ETF ↔ 한국 섹터
-    models.yaml               # 모델 선택
+    aliases.yaml              # ticker alias dictionary (manually managed)
+    sector_mapping.yaml       # US ETF ↔ KR sector mapping
+    models.yaml               # model selection
   src/
     collectors/
       kr_price.py
@@ -455,13 +455,13 @@ market-briefing/
       resolve.py              # §4
     embed/
       encode.py
-      dedup.py                # 재보도 클러스터링
+      dedup.py                # re-report clustering
       relevance.py
     features/
       compute.py
       normalize.py
     llm/
-      adapter.py              # 벤더 중립 계층
+      adapter.py              # vendor-neutral layer
       score.py
       synthesize.py
       prompts/
@@ -470,13 +470,13 @@ market-briefing/
     report/
       render.py
     notify/
-      base.py                 # Channel 인터페이스
+      base.py                 # Channel interface
       vault.py
       email.py
       webhook.py
     eval/
-      golden.py               # 골든셋 채점
-      bakeoff.py              # 모델 비교
+      golden.py               # golden-set scoring
+      bakeoff.py               # model comparison
       ic.py
       shadow_portfolio.py
   data/
@@ -491,77 +491,77 @@ market-briefing/
 
 ---
 
-## 11. CLAUDE.md 초안
+## 11. CLAUDE.md draft
 
 ````markdown
-# 프로젝트 규약
+# Project Conventions
 
-## 목적
-한국·미국 주식 데일리 브리핑 자동 생성. 매매 실행은 하지 않는다.
-상세 스펙은 @SPEC.md, 평가 기준은 @PREREGISTRATION.md.
+## Purpose
+Automated daily briefing generation for Korean and US equities. Does not execute trades.
+Full spec at @SPEC.md, evaluation criteria at @PREREGISTRATION.md.
 
-## 절대 규칙
-- `data/raw/` 아래 파일을 덮어쓰거나 삭제하지 않는다.
-- 주문/체결 관련 KIS API 엔드포인트를 호출하는 코드를 작성하지 않는다. 조회 전용.
-- LLM에게 매수/매도 권고 문구를 생성시키지 않는다. 출력은 SPEC §6.2 스키마의 숫자뿐이다.
-- 벤더 SDK를 `src/llm/adapter.py` 밖에서 직접 import하지 않는다.
-- 외부 API 스펙을 추측해서 쓰지 않는다. 공식 문서를 읽고, 불확실하면 물어본다.
+## Absolute rules
+- Never overwrite or delete files under `data/raw/`.
+- Never write code that calls order/execution-related KIS API endpoints. Read-only only.
+- Never have the LLM generate buy/sell recommendation language. Output is limited to the numeric schema in SPEC §6.2.
+- Never import a vendor SDK directly outside `src/llm/adapter.py`.
+- Never guess at external API specs. Read the official docs, and ask if uncertain.
 
-## 결정론 우선
-문자열 매칭·임베딩 유사도·통계로 풀 수 있는 문제에 LLM을 쓰지 않는다.
-새 기능을 제안할 때 LLM 호출이 들어간다면, 왜 결정론적으로 안 되는지 먼저 설명할 것.
+## Determinism first
+Don't use an LLM for problems solvable with string matching, embedding similarity, or statistics.
+When proposing a new feature that involves an LLM call, first explain why it can't be done deterministically.
 
-## 수집기 작성 규칙
-새 collector를 만들 때는 **검증 함수를 먼저 쓴다**:
-1. 반환 스키마 (컬럼명, dtype) assert
-2. 결측치 비율 임계 검사
-3. 거래일 연속성 검사 (휴장일 제외)
-4. 알려진 값 1건 이상과 대조 (예: 삼성전자 특정일 종가)
+## Collector rules
+When building a new collector, **write the validation functions first**:
+1. Assert the return schema (column names, dtypes)
+2. Check the missing-value ratio against a threshold
+3. Check trading-day continuity (excluding market holidays)
+4. Cross-check at least one known value (e.g., Samsung Electronics' closing price on a specific date)
 
-검증 없는 collector는 머지하지 않는다.
+A collector without validation does not get merged.
 
-## 정규화
-모든 피처는 252거래일 롤링 z-score. 절대값 비교 금지.
+## Normalization
+All features use a 252-trading-day rolling z-score. No comparing absolute values.
 
-## 시간 처리
-- 저장은 전부 UTC
-- 표시만 KST
-- 시장 세션 판별은 `pandas_market_calendars` 사용, 하드코딩 금지
+## Time handling
+- Store everything in UTC
+- Display only in KST
+- Determine market sessions with `pandas_market_calendars`; no hardcoding
 
-## 룩어헤드 금지
-피처 계산 시 $t$ 시점 데이터로 $t$ 시점 수익률을 설명하지 않는다.
-뉴스는 발행 타임스탬프 기준으로 체결 가능 시각을 분리한다.
-장중 발행 뉴스는 익일 시가 체결로 가정한다.
+## Look-ahead prohibition
+When computing a feature, never use data at time $t$ to explain the return at time $t$.
+News is split by publication timestamp to determine the earliest tradeable time.
+News published during market hours is assumed to be tradeable at the next day's open.
 
-## 실패 처리
-수집 실패 시 조용히 넘어가지 않는다. 결측을 리포트 헤더에 명시하고
-부분 리포트라도 발행한다. 예외를 삼키는 try/except를 쓰지 않는다.
+## Failure handling
+Don't silently pass over a collection failure. Note the missing data in the report header and
+publish a partial report anyway. Don't use a try/except that swallows the exception.
 
-## 시크릿
-`.env` 로컬, GitHub Actions는 repository secrets.
-키를 로그나 리포트에 출력하지 않는다.
+## Secrets
+`.env` locally; GitHub Actions uses repository secrets.
+Never print keys to logs or reports.
 
-## 테스트
-`pytest`로 실행. 네트워크를 타는 테스트는 `@pytest.mark.network`로 분리한다.
+## Testing
+Run via `pytest`. Tests that hit the network are separated under `@pytest.mark.network`.
 ````
 
 ---
 
-## 12. 작업 순서
+## 12. Work order
 
-1. repo 생성, `SPEC.md`·`PREREGISTRATION.md`·`CLAUDE.md` 커밋
-2. `watchlist.yaml` + `aliases.yaml` 작성 — KR 15종목으로 시작
-3. collector 4종 + 검증 테스트
-4. 3년치 백필, `data/raw/` 적재
-5. 엔티티 해석 + `ambiguous` 비율 측정
-6. 임베딩 파이프라인 (dedup + relevance)
-7. **골든셋 100건 직접 라벨링**
-8. 모델 어댑터 + 베이크오프 → 스코어링 모델 확정
-9. 피처 계산 + 알려진 값 대조
-10. 리포트 렌더러 + 전달 채널(vault, email)
-11. GitHub Actions 워크플로우, 수동 트리거 검증
-12. 스케줄 활성화, 매일 실행 로그·비용 기록
-13. 2주 후 §8.5 게이트 판정
+1. Create the repo, commit `SPEC.md`, `PREREGISTRATION.md`, `CLAUDE.md`
+2. Write `watchlist.yaml` + `aliases.yaml` — start with 15 KR tickers
+3. 4 collectors + validation tests
+4. 3-year backfill, load into `data/raw/`
+5. Entity resolution + measure the `ambiguous` ratio
+6. Embedding pipeline (dedup + relevance)
+7. **Hand-label the 100-example golden set**
+8. Model adapter + bake-off → finalize the scoring model
+9. Feature computation + cross-check against known values
+10. Report renderer + delivery channels (vault, email)
+11. GitHub Actions workflow, verify manual trigger
+12. Activate the schedule, log daily runs and cost
+13. §8.5 gate decision after 2 weeks
 
-> [!note] 7번을 건너뛰고 싶어질 것이다
-> 골든셋 라벨링은 지루하고 코드를 안 쓰는 유일한 단계다. 하지만 이걸 건너뛰면 8번이 불가능해지고, 모델 선택이 "Claude가 좋아 보여서"로 끝난다. 2시간 투자할 가치가 있다.
+> [!note] You'll want to skip step 7
+> Golden-set labeling is tedious and the only step that doesn't involve writing code. But skipping it makes step 8 impossible, and model selection ends up decided by "Claude seemed good." It's worth the 2 hours.
