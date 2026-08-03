@@ -1,8 +1,24 @@
 # Secrets
 .env
 
-# Generated data (see SPEC.md §3.3 — all regenerable from raw or upstream sources)
-data/
+# Generated data. Regenerable from raw or upstream sources — pykrx will serve
+# 2024 prices again in 2030, FRED keeps decades of history.
+#
+# News is the exception, and not a small one. RSS serves a rolling 50–120 item
+# buffer with no history, so an hour not collected is gone permanently.
+# Collection runs in GitHub Actions, where the runner is destroyed after each
+# job, so committing is the only thing that makes this data exist tomorrow.
+# SPEC §0 principle 3 calls raw data the future backtest dataset; for news that
+# is true only because of the exception below.
+#
+# The stepwise form is required, not stylistic: git cannot re-include a path
+# whose parent directory is excluded, so every level has to be opened in turn.
+data/*
+!data/raw/
+data/raw/*
+!data/raw/kr/
+data/raw/kr/*
+!data/raw/kr/news/
 
 # Python
 __pycache__/

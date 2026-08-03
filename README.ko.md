@@ -51,7 +51,8 @@ English: [README.md](README.md)
 | API 인증 정보 | ⬜ 대기 | [MANUAL-TASKS.md §1](MANUAL-TASKS.md) 참조 |
 | `kr_price` collector (pykrx OHLCV) | ✅ 완료 | 4가지 검사 + 커밋된 픽스처. 기준값은 네이버 금융과 교차 확인 |
 | `macro` collector (FRED) | ✅ 완료 | 6개 시리즈 실측 확인. 기준값은 미 재무부와 교차 확인 |
-| `kr_flow` 및 나머지 collector | 🟡 막힘 | KRX 로그인(아래), 네이버 앱에 검색 API 미등록 |
+| `kr_news` collector (언론사 RSS) | ✅ 완료 | 15개 피드, Actions 시간당 실행. 1회 수집당 9개 매체 1,008건 |
+| `kr_flow` 및 나머지 collector | 🟡 막힘 | KRX 로그인 — 아래 참조 |
 | 엔티티 해석 | ⬜ 미착수 | |
 | 임베딩 파이프라인 (중복 제거 + 관련성) | ⬜ 미착수 | |
 | 골든셋 (100건 직접 라벨링) | ⬜ 미착수 | Ricky 작업, 모델 선택을 막고 있음 |
@@ -59,6 +60,8 @@ English: [README.md](README.md)
 | 피처 계산 | ⬜ 미착수 | |
 | 리포트 렌더러 + 전달 | ⬜ 미착수 | |
 | GitHub Actions 워크플로우 | ⬜ 미착수 | |
+
+**한국 뉴스 수집은 이미 동작하고 막힌 게 없다** — `kr_news`가 언론사 RSS 15개를 GitHub Actions로 시간당 읽는다. 인증 정보가 전혀 필요 없다. 다만 RSS는 소급 수집이 안 되므로, `collect-news.yml`이 기본 브랜치에 올라간 시점부터만 쌓인다.
 
 **당장의 병목: KRX Data Marketplace 무료 계정.** 2026-08-03 기준 `data.krx.co.kr`은 세션 없이 요청하면 HTTP 400 `LOGOUT`을 반환한다. 기존의 열린 정보데이터시스템이 회원제로 바뀌었다. 일봉은 여전히 동작하고(pykrx가 네이버로 폴백한다) 그래서 `kr_price`는 이미 만들어져 통과한다. 하지만 투자자별 순매수, 공매도 잔고, 시가총액, 펀더멘털은 안 되고, 이 넷이 **등급 가중치의 55%**를 차지한다. 남는 45%는 신뢰도 하한 아래라 모든 종목이 `관망`으로 나온다. 가입은 무료이고 몇 분이면 된다: [API-KEYS.md §0](API-KEYS.md).
 
@@ -187,6 +190,7 @@ market-briefing/
 │   ├── watchlist.yaml         추적할 종목            🟡 Ricky 필요
 │   ├── aliases.yaml           종목 별칭 사전          🟡 Ricky 필요
 │   ├── rating.yaml            등급 가중치·구분점        🟡 캘리브레이션 필요
+│   ├── news_feeds.yaml        RSS 소스 — 커버리지가 곧 이 파일이다
 │   ├── sector_mapping.yaml    미국 ETF ↔ 한국 섹터
 │   ├── models.yaml            단계별 모델 선택
 │   └── delivery.yaml          출력 채널 — 채널을 선언할 수 있는 유일한 곳
@@ -196,7 +200,10 @@ market-briefing/
 │   │   ├── session.py         ✅ UTC/KST, 거래일, 룩어헤드 경계
 │   │   └── config.py          ✅ config 로딩 + 수기 편집 안전장치
 │   ├── collectors/
-│   │   └── validate.py        ✅ 모든 collector가 통과해야 하는 4가지 검사
+│   │   │   ├── validate.py    ✅ 모든 collector가 통과해야 하는 4가지 검사
+│   │   ├── kr_price.py    ✅ pykrx 일봉
+│   │   ├── kr_news.py     ✅ 언론사 RSS, 시간당 수집
+│   │   └── macro.py       ✅ FRED 국면 지표
 │   ├── entity/                ⬜ 종목 매칭
 │   ├── embed/                 ⬜ 중복 제거 + 관련성
 │   ├── features/              ⬜ 계산 + 정규화

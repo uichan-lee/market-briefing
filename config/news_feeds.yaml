@@ -1,0 +1,158 @@
+# Korean news RSS feeds. SPEC §3.1.
+#
+# Feeds are configuration, not code — the same reason delivery channels live in
+# config/delivery.yaml. Adding an outlet is an edit here, not a code change.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY RSS AND NOT THE NAVER SEARCH API
+#
+# The Naver search API closed to new registrations in 2026: 검색 moved to NAVER
+# Cloud Platform's API HUB, which takes a payment method at signup and is free
+# only 한시적으로. GDELT was measured as a replacement and rejected — it carries
+# none of the 21 Korean financial outlets checked. Details in API-KEYS.md §2.
+#
+# RSS is a subscription, not a query: each outlet publishes its most recent
+# 50–120 articles and we take all of them, filtering locally. That means
+# coverage equals this list — an outlet absent here is invisible to the
+# pipeline. It also means there is no result cap and no ranking algorithm
+# between us and what the outlet actually published.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# `domain` is not decoration. The collector checks that each item's link
+# actually points there, which catches a feed that has been redirected or
+# replaced with someone else's content — the well-formed-but-wrong failure that
+# a schema check sails straight past.
+#
+# Measured 2026-08-03. `description` length varies enormously by outlet and is
+# recorded here because it decides how much text SPEC §6.2 has to score:
+# 뉴시스 ~1155자, 머니투데이 ~516자, 인포스탁 ~300자, 전자신문 ~250자,
+# 아시아경제 ~236자, 매일경제 ~102자, 연합뉴스 ~83자, 한국경제·조선비즈 0자.
+#
+# Headline-only outlets are kept deliberately. Korean media re-report heavily,
+# so SPEC §6.1's clustering will group a 한국경제 headline with a 뉴시스 item
+# carrying the full body, and the cluster representative can be the latter.
+
+feeds:
+  - name: hankyung_finance
+    outlet: 한국경제
+    section: 증권
+    url: https://www.hankyung.com/feed/finance
+    domain: hankyung.com
+    enabled: true
+
+  - name: hankyung_economy
+    outlet: 한국경제
+    section: 경제
+    url: https://www.hankyung.com/feed/economy
+    domain: hankyung.com
+    enabled: true
+
+  - name: hankyung_it
+    outlet: 한국경제
+    section: IT
+    url: https://www.hankyung.com/feed/it
+    domain: hankyung.com
+    enabled: true
+
+  - name: mk_stock
+    outlet: 매일경제
+    section: 증권
+    url: https://www.mk.co.kr/rss/50200011/
+    domain: mk.co.kr
+    enabled: true
+
+  - name: mk_company
+    outlet: 매일경제
+    section: 기업
+    url: https://www.mk.co.kr/rss/50100032/
+    domain: mk.co.kr
+    enabled: true
+
+  - name: mk_economy
+    outlet: 매일경제
+    section: 경제
+    url: https://www.mk.co.kr/rss/30100041/
+    domain: mk.co.kr
+    enabled: true
+
+  - name: yna_economy
+    outlet: 연합뉴스
+    section: 경제
+    url: https://www.yna.co.kr/rss/economy.xml
+    domain: yna.co.kr
+    enabled: true
+
+  - name: yna_industry
+    outlet: 연합뉴스
+    section: 산업
+    url: https://www.yna.co.kr/rss/industry.xml
+    domain: yna.co.kr
+    enabled: true
+
+  - name: etnews_main
+    outlet: 전자신문
+    section: 주요
+    url: https://rss.etnews.com/Section901.xml
+    domain: etnews.com
+    enabled: true
+
+  - name: etnews_economy
+    outlet: 전자신문
+    section: 경제
+    url: https://rss.etnews.com/Section902.xml
+    domain: etnews.com
+    enabled: true
+
+  - name: chosunbiz
+    outlet: 조선비즈
+    section: 전체
+    url: https://biz.chosun.com/arc/outboundfeeds/rss/?outputType=xml
+    domain: chosun.com
+    enabled: true
+
+  - name: mt_news
+    outlet: 머니투데이
+    section: 전체
+    url: https://rss.mt.co.kr/mt_news.xml
+    domain: mt.co.kr
+    enabled: true
+
+  - name: asiae_stock
+    outlet: 아시아경제
+    section: 증권
+    url: https://www.asiae.co.kr/rss/stock.htm
+    domain: asiae.co.kr
+    enabled: true
+
+  - name: newsis_economy
+    outlet: 뉴시스
+    section: 경제
+    url: https://newsis.com/RSS/economy.xml
+    domain: newsis.com
+    enabled: true
+
+  - name: infostock_all
+    outlet: 인포스탁데일리
+    section: 전체
+    url: https://www.infostockdaily.co.kr/rss/allArticle.xml
+    domain: infostockdaily.co.kr
+    # This feed emits a naive "2026-08-03 17:11:18" with no zone. A Korean
+    # outlet means KST, but the parser refuses to infer that: reading it as UTC
+    # would place every article 9 hours early and make it appear knowable before
+    # publication — the look-ahead failure CLAUDE.md forbids. Declared here so
+    # the assumption is reviewable rather than buried in the parser.
+    timezone: Asia/Seoul
+    enabled: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tried and failed on 2026-08-03. Recorded so nobody re-tests them from scratch;
+# each needs a working replacement URL found before it can be enabled.
+#
+#   서울경제      https://www.sedaily.com/RSS/S1N1.xml            HTTP 404
+#   파이낸셜뉴스  https://www.fnnews.com/rss/r_finance.xml        HTTP 404
+#   이데일리      https://rss.edaily.co.kr/stock_news.xml         connection reset
+#   더벨          https://www.thebell.co.kr/free/content/rss.asp  malformed XML
+#
+# 이데일리 and 서울경제 are worth the effort to recover — both carry heavy
+# equity coverage. 더벨 is IB/deal focused and lower priority.
+# ─────────────────────────────────────────────────────────────────────────────

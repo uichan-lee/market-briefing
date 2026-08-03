@@ -113,6 +113,8 @@ Silent failure is the worst outcome in this project.
 - A partial report is published rather than no report.
 - A run that produces no report at all sends a failure notice through the configured delivery channels.
 
+**News is the one source where a missed run is unrecoverable.** Prices and macro can be re-fetched years later; RSS holds a rolling buffer with no history, so an hour not collected is permanently absent from the backtest dataset. That is why `kr_news` collects hourly, why `data/raw/kr/news/` is committed rather than gitignored, and why a long gap between collection runs is a validation *failure* rather than an idle period.
+
 ---
 
 ## Delivery

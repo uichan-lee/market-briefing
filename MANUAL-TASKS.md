@@ -14,7 +14,7 @@ Estimated time: 60–90 minutes total, mostly waiting on approvals.
 |---|---|---|
 | **KRX Data Marketplace** | data.krx.co.kr | **Free, minutes, and now mandatory.** Register with a native ID/PW, not social login. Blocks 55% of the rating weight — see API-KEYS.md §0. |
 | DART OpenAPI key | opendart.fss.or.kr | Instant issue. Free. |
-| Naver Developers app | developers.naver.com | Register an application, enable the 검색 (search) API, record client ID and secret. |
+| ~~Naver Developers app~~ | — | **No longer needed.** Korean news comes from outlet RSS, which requires no credential. API-KEYS.md §2 explains why and keeps Naver as the fallback. |
 | KIS Open API keys | 한국투자증권 → 트레이딩 → Open API → KIS Developers | Requires a securities account, and the **모의투자** environment is a separate prior signup. Approval is not always instant — **start this one first**. |
 | FRED API key | fred.stlouisfed.org | Instant issue. Free. |
 | US market data key | Alpaca or Tiingo | Pick one. Free tier is sufficient at this stage. |
@@ -105,7 +105,7 @@ Without this, the choice of scoring model is guesswork. With it, the choice is m
 
 ### Procedure
 
-1. Run the collectors for one week. Do not run any LLM yet.
+1. Run the collectors for one week. Do not run any LLM yet. News collection is already hourly and automatic once `collect-news.yml` is on the default branch, so this week accumulates by itself — but it only starts accumulating from the day it is merged, because RSS cannot be backfilled.
 2. Sample 100 articles from the collected pool: 25 clearly positive, 25 clearly negative, 25 ambiguous, 25 irrelevant. Sample the ambiguous and irrelevant buckets honestly — the temptation is to pick easy cases, which makes every model look good.
 3. For each article, assign the five dimensions from SPEC §6.2 by hand:
 
@@ -193,6 +193,14 @@ Keep this log in `notes/trial-log.md`. It is the input to the two-week gate deci
 
 ---
 
-## 9. Not on this list
+## 9. Repository growth — nothing to do, but worth knowing
+
+`data/raw/kr/news/` is committed rather than gitignored, because RSS has no backfill and the collector runs on an Actions runner that is destroyed after each job. Committing is the only thing that makes yesterday's news exist today.
+
+Measured at roughly **300–450 KB/day gzipped**, so about 110–165 MB/year, and 5–7 MB across the two-week trial. No action is needed now. Revisit at the three-month gate if the repository has become unpleasant to clone.
+
+---
+
+## 10. Not on this list
 
 Everything else — collectors, entity resolution, embeddings, features, the report renderer, delivery adapters, the Actions workflow, tests — is Claude's work. If Ricky finds himself writing that code by hand, something has gone wrong with the delegation, not with the plan.

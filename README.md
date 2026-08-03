@@ -51,7 +51,8 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | API credentials | ⬜ Blocked | See [MANUAL-TASKS.md §1](MANUAL-TASKS.md) |
 | `kr_price` collector (pykrx OHLCV) | ✅ Done | Four checks + committed fixture; known value cross-checked against Naver |
 | `macro` collector (FRED) | ✅ Done | 6 series verified live; known value cross-checked against Treasury |
-| `kr_flow` and remaining collectors | 🟡 Blocked | KRX login (below); Naver app needs 검색 enabled |
+| `kr_news` collector (outlet RSS) | ✅ Done | 15 feeds, hourly via Actions; 1,008 articles/poll across 9 outlets |
+| `kr_flow` and remaining collectors | 🟡 Blocked | KRX login — see below |
 | Entity resolution | ⬜ Not started | |
 | Embedding pipeline (dedup + relevance) | ⬜ Not started | |
 | Golden set (100 hand-labeled articles) | ⬜ Not started | Ricky's task, blocks model selection |
@@ -59,6 +60,8 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Feature computation | ⬜ Not started | |
 | Report renderer + delivery | ⬜ Not started | |
 | GitHub Actions workflow | ⬜ Not started | |
+
+**Korean news collection is live and unblocked** — `kr_news` reads 15 outlet RSS feeds hourly via GitHub Actions, needing no credential at all. Because RSS cannot be backfilled, that clock only starts once `collect-news.yml` is on the default branch.
 
 **Immediate blocker: a free KRX Data Marketplace account.** As of 2026-08-03 `data.krx.co.kr` returns HTTP 400 `LOGOUT` without a session — the old open 정보데이터시스템 became members-only. Daily OHLCV still works (pykrx falls back to Naver), which is why `kr_price` is built and passing. Investor flows, short interest, market cap and fundamentals do not, and those carry **55% of the rating weight**; the remaining 45% sits under the confidence floor, so every ticker would rate `관망`. Registration takes minutes and is free: [API-KEYS.md §0](API-KEYS.md).
 
@@ -187,6 +190,7 @@ market-briefing/
 │   ├── watchlist.yaml         tickers to track          🟡 needs Ricky
 │   ├── aliases.yaml           ticker alias dictionary   🟡 needs Ricky
 │   ├── rating.yaml            rating weights & cut points  🟡 needs calibration
+│   ├── news_feeds.yaml        RSS sources — coverage equals this file
 │   ├── sector_mapping.yaml    US ETF ↔ KR sector
 │   ├── models.yaml            which model per stage
 │   └── delivery.yaml          output channels — the ONLY place one may be declared
@@ -196,7 +200,10 @@ market-briefing/
 │   │   ├── session.py         ✅ UTC/KST, trading days, look-ahead boundary
 │   │   └── config.py          ✅ config loading + hand-editing safeguards
 │   ├── collectors/
-│   │   └── validate.py        ✅ the four checks every collector must pass
+│   │   │   ├── validate.py    ✅ the four checks every collector must pass
+│   │   ├── kr_price.py    ✅ pykrx daily OHLCV
+│   │   ├── kr_news.py     ✅ outlet RSS, collected hourly
+│   │   └── macro.py       ✅ FRED regime series
 │   ├── entity/                ⬜ ticker matching
 │   ├── embed/                 ⬜ dedup + relevance
 │   ├── features/              ⬜ computation + normalization

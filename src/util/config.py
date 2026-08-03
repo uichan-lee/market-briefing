@@ -262,6 +262,89 @@ def load_sector_mapping(path: Path | None = None) -> list[dict[str, Any]]:
     return mappings
 
 
+@dataclass(frozen=True)
+class NewsFeed:
+    """One RSS feed. SPEC §3.1."""
+
+    name: str
+    outlet: str
+    section: str
+    url: str
+    domain: str
+    # Only for feeds emitting a naive pubDate. Declared here rather than assumed
+    # in code: reading a timestamp in the wrong zone shifts an article by hours
+    # and can make it appear knowable before it was published, which is the
+    # look-ahead failure CLAUDE.md forbids. An assumption in config is
+    # reviewable; the same assumption buried in a parser is not.
+    timezone: str | None = None
+
+
+def load_news_feeds(path: Path | None = None, *, enabled_only: bool = True) -> list[NewsFeed]:
+    """Load and validate ``config/news_feeds.yaml``.
+
+    Coverage equals this file — an outlet absent here is invisible to the
+    pipeline — so the checks target the edits that would silently shrink or
+    corrupt it. A duplicated ``name`` would make two feeds indistinguishable in
+    stored rows; a duplicated ``url`` doubles a source's apparent article volume
+    and skews ``news_volume_z`` without ever looking wrong.
+    """
+    path = path or CONFIG_DIR / "news_feeds.yaml"
+    raw = _read_yaml(path) or {}
+    entries = raw.get("feeds") or []
+
+    feeds: list[NewsFeed] = []
+    seen_names: dict[str, int] = {}
+    seen_urls: dict[str, str] = {}
+
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ConfigError(
+                f"{path.name}: feed #{index} is {type(entry).__name__}, expected a mapping"
+            )
+
+        missing = {"name", "outlet", "section", "url", "domain"} - entry.keys()
+        if missing:
+            raise ConfigError(f"{path.name}: feed #{index} is missing {sorted(missing)}")
+
+        name, url = str(entry["name"]), str(entry["url"])
+
+        if name in seen_names:
+            raise ConfigError(
+                f"{path.name}: duplicate feed name {name!r} (#{seen_names[name]} and #{index}); "
+                f"names identify the source in every stored article and must be unique"
+            )
+        if not url.startswith(("http://", "https://")):
+            raise ConfigError(f"{path.name}: feed {name!r} url is not http(s): {url!r}")
+        if url in seen_urls:
+            raise ConfigError(
+                f"{path.name}: {name!r} and {seen_urls[url]!r} share the url {url!r}; "
+                f"the same source counted twice inflates news volume invisibly"
+            )
+
+        seen_names[name] = index
+        seen_urls[url] = name
+
+        if enabled_only and not entry.get("enabled", True):
+            continue
+
+        feeds.append(
+            NewsFeed(
+                name=name,
+                outlet=str(entry["outlet"]),
+                section=str(entry["section"]),
+                url=url,
+                domain=str(entry["domain"]),
+                timezone=str(entry["timezone"]) if entry.get("timezone") else None,
+            )
+        )
+
+    if not feeds:
+        raise ConfigError(
+            f"{path.name}: no enabled feeds; news collection would silently do nothing"
+        )
+    return feeds
+
+
 def load_all() -> dict[str, Any]:
     """Load every config file. Useful as a startup smoke check."""
     return {
@@ -271,4 +354,5 @@ def load_all() -> dict[str, Any]:
         "models": load_models(),
         "sector_mapping": load_sector_mapping(),
         "rating": load_rating(),
+        "news_feeds": load_news_feeds(),
     }

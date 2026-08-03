@@ -37,6 +37,7 @@ def test_all_committed_config_files_load():
         "models",
         "sector_mapping",
         "rating",
+        "news_feeds",
     }
 
 

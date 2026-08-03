@@ -1,0 +1,66 @@
+# Hourly Korean news collection. SPEC §1, §3.1.
+name: collect-news
+
+# Hourly is not a preference. RSS serves a rolling 50–120 item buffer with no
+# history, and the fastest feeds measured turn over in well under two hours, so
+# anything missed between runs is gone permanently. This is the only collector
+# in the project whose schedule is a correctness requirement rather than a
+# freshness one.
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+# GitHub disables scheduled workflows after 60 days without commit activity.
+# This job commits data every hour, so that timer can never expire and no
+# keepalive workflow is needed.
+
+permissions:
+  contents: write
+
+# A slow run must not overlap the next one — two jobs pushing to the same branch
+# race, and the loser's articles are lost with no way to re-fetch them.
+# cancel-in-progress stays false for the same reason: a run already holding
+# articles has to be allowed to finish writing them.
+concurrency:
+  group: collect-news
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Collect
+        run: uv run python -m src.collectors.kr_news
+
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add data/raw/kr/news
+          if git diff --cached --quiet; then
+            echo "no new articles this hour"
+            exit 0
+          fi
+
+          git commit -m "data: kr_news $(date -u +'%Y-%m-%dT%H:%MZ')"
+
+          # The report workflow commits too, so rebase before pushing. Retry
+          # rather than fail: a lost push means lost articles.
+          for attempt in 1 2 3; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && \
+              git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            echo "push attempt ${attempt} failed, retrying"
+            sleep $((attempt * 5))
+          done
+          exit 1

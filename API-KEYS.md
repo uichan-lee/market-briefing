@@ -19,7 +19,7 @@ Do **not** wait for all keys before writing code. The first collector needs none
 |---|---|---|---|---|
 | 0 | **KRX Data Marketplace** | minutes | `kr_flow`, short interest, market cap, fundamentals — **55% of the rating weight** | **first** |
 | 1 | **KIS** | **days** — approval is not instant | real-time quotes (§3.1) | **first, because of the wait** |
-| 2 | Naver | instant | `kr_news` → the entire news pipeline | today |
+| — | ~~Naver~~ | — | **no longer needed** — outlet RSS replaced it, see §2 | skip |
 | 3 | DART | instant | `kr_filings` | today |
 | 4 | FRED | instant | `macro` | today |
 | 5 | SEC User-Agent | not an issuance | `us_filings` | today, 30 seconds |
@@ -230,7 +230,10 @@ NAVER_CLIENT_SECRET=
 > | `naverapihub.apigw.ntruss.com/search/v1/news` | classic | 401 `Authentication information are missing` |
 > | `openapi.naver.com/v1/search/news.json` | classic | 401 `Scopes are Empty` |
 
-### The migration
+### The migration — NOT the current path
+
+> [!note] RSS was chosen instead; this section is retained as the fallback
+> `config/news_feeds.yaml` now collects from 15 Korean outlets directly, free and with no account. Follow the steps below only if measurement shows RSS is insufficient — the golden set and bake-off are what would show that.
 
 1. Sign up at **ncloud.com** and enable **NAVER API HUB → 검색**.
 2. Issue an API key. It is an NCP key, unrelated to the developers.naver.com pair.

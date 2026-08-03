@@ -1,4 +1,4 @@
-# Daily Market Briefing Pipeline — Design Spec v0.5
+# Daily Market Briefing Pipeline — Design Spec v0.6
 
 > [!abstract] Purpose of this document
 > The input spec fed directly to Claude Code. The goal is to **fix the output shape and evaluation criteria before writing code**, so we don't waste effort collecting data that never gets used, and don't move the goalposts after the fact (= self-deception).
@@ -7,6 +7,7 @@
 > **v0.2** — Removed LLM from Stage 1 (replaced with embeddings) / model adapter layer / golden set + bake-off (§7) / entity resolution (§4) / re-reporting detection switched to embedding-based deduplication
 > **v0.3** — Redesigned the delivery layer (§2.0) as a swappable adapter. Dropped the Telegram dependency; Obsidian vault + email are now the defaults
 > **v0.4** — §8 split out into `PREREGISTRATION.md` and frozen before collection began; §8 here is now a pointer. §10 updated to match the built layout (`src/util/`, `src/collectors/validate.py`, toolchain files)
+> **v0.6** — Naver's search API closed to new registrations; §3.1's Korean news source is now outlet RSS (`config/news_feeds.yaml`), collected hourly because RSS has no backfill. GDELT was measured as an alternative and rejected. `data/raw/kr/news/` is committed rather than gitignored, since it is the one raw source that cannot be re-fetched
 > **v0.5** — Added §2.2⑧ AI 총평 (the synthesis half of the Stage 3 §6.1 always specified) with a deterministic guard, and §2.2⑨ medium-term regime. §5 gained three long-horizon per-ticker features. §2.3 separates stable section IDs from display order. Made while `data/raw/` was still empty, so the composite's changed input is logged in PREREGISTRATION §R rather than contaminating an evaluation in flight
 
 > [!note] Language policy
@@ -31,6 +32,10 @@
 |---|---|---|---|
 | `RUN_MORNING` | 07:00 | US market close (previous day) + KR pre-market | 2 hours before KOSPI open |
 | `RUN_EVENING` | 21:30 | KR market close (same day) + US pre-market | 1 hour before US open (DST) |
+| `COLLECT_NEWS` | hourly, on the hour | Korean outlet RSS | Not a report run — see below |
+
+> [!important] News collection is hourly, and that is a correctness requirement
+> RSS holds a rolling 50–120 item buffer with no history. The fastest feeds measured turn over in well under two hours, so an hour not collected is gone permanently — unlike prices, which pykrx will re-serve years later. `.github/workflows/collect-news.yml` runs on its own schedule, separate from the two report runs, and writes nothing but `data/raw/kr/news/`.
 
 > [!warning] Daylight saving time
 > US market close is 05:00 KST during DST and 06:00 KST outside it. Fix the schedule in UTC and determine the session with a market calendar. Use `pandas_market_calendars`.
@@ -241,10 +246,21 @@ Section IDs ①–⑨ are **stable identifiers**, referenced from `src/report/ra
 | pykrx | OHLCV, net buying by investor type, short-interest balance, market cap/PER/PBR | **KRX account** (was: none) | `pykrx>=1.2.8` | Based on KRX scraping. Sleep required between calls. See the warning below |
 | DART OpenAPI | Filing lists, financial statements | API key (free) | `dart-fss` or direct | Daily call limit applies |
 | KIS Open API | Real-time quotes, balances | App key/secret | `python-kis` | Mock trading environment provided. **Read-only in stage 1** |
-| Naver News API | Ticker news, mention volume | Client ID/secret | Direct | Limited number of search results |
+| **Outlet RSS** | Ticker news, mention volume | **None** | Direct | 15 feeds in `config/news_feeds.yaml`. Replaced the Naver search API in 2026 — see below |
 
 > [!important] A structural edge in the Korean market
 > Daily net buying by investor type (foreign/institutional/retail) doesn't exist as a data source in the US. This pipeline's most differentiated feature comes from here. It's especially notable as a **signal obtained without an LLM**.
+
+> [!danger] The Naver search API is gone, and RSS replaced it
+> Verified 2026-08-03: 검색 no longer accepts new registrations at developers.naver.com — the option is absent at app creation, appears afterwards, and submitting it returns `신규로 등록할 수 없는 API가 선택되었습니다`. It moved to NAVER Cloud Platform's API HUB, which takes a payment method at signup and is free only 한시적으로.
+>
+> GDELT was measured as a replacement and **rejected**: across 9,577 rows it carried none of the 21 Korean financial outlets checked. Details and numbers in API-KEYS.md §2.
+>
+> The pipeline now reads RSS directly from 15 outlets. That is a subscription rather than a query — there is no search, no result cap, and no ranking algorithm between the outlet and the collector — so **coverage equals `config/news_feeds.yaml`**. An outlet missing from that file is invisible to the entire pipeline.
+>
+> Measured at 1,008 unique articles per poll across 9 outlets, exceeding the 1,000–2,000/day §6.1 assumes. Body text ranges from 뉴시스 at ~1,241자 to 한국경제 at none; headline-only outlets are kept because §6.1's re-report clustering pairs them with a body-carrying duplicate.
+>
+> Naver remains documented in API-KEYS.md as the fallback if measurement later shows RSS is insufficient.
 
 > [!danger] KRX now requires a login, and it gates most of the rating
 > Verified 2026-08-03 by direct request: `data.krx.co.kr` answers **HTTP 400 `LOGOUT`** without a session. The old 정보데이터시스템 was replaced by the members-only KRX Data Marketplace. Registration is free, but it is no longer optional.
@@ -274,7 +290,7 @@ data/
   raw/
     kr/price/2026-07-29.parquet
     kr/investor_flow/2026-07-29.parquet
-    kr/news/2026-07-29.jsonl
+    kr/news/2026-07-29/0900.jsonl.gz   # one file per hourly run, gzipped
     us/price/2026-07-29.parquet
     us/filings/2026-07-29.jsonl
   embeddings/
@@ -288,6 +304,9 @@ reports/
 ```
 
 `raw/` is **never overwritten**. On a re-run, save separately with a `-v2` suffix and keep the original.
+
+> [!warning] Not all raw data is re-fetchable, and `.gitignore` reflects that
+> pykrx will serve 2024 prices again in 2030 and FRED keeps decades of history, so those directories stay gitignored and regenerable. **News is not.** RSS has no backfill, and collection runs on an Actions runner that is destroyed after each job, so `data/raw/kr/news/` is committed to the repository — the only arrangement in which it exists tomorrow. Roughly 300–450 KB/day gzipped.
 `scores/` files embed the model ID and prompt version in the filename — this is the comparison unit for the §7 bake-off.
 
 ---
@@ -532,6 +551,7 @@ market-briefing/
     aliases.yaml              # ticker alias dictionary (manually managed)
     sector_mapping.yaml       # US ETF ↔ KR sector mapping
     models.yaml               # model selection
+    news_feeds.yaml           # §3.1 — RSS sources; coverage equals this file
     rating.yaml               # §2.2⑥ — weights and cut points for the directional rating
     delivery.yaml             # §2.0 — the only place a channel may be declared
   src/
@@ -540,9 +560,9 @@ market-briefing/
       config.py               # config loading + hand-editing safeguards
     collectors/
       validate.py             # the four checks every collector must pass
-      kr_price.py
+      kr_price.py             # pykrx OHLCV
       kr_flow.py
-      kr_news.py
+      kr_news.py              # outlet RSS, hourly
       us_price.py
       us_filings.py
       macro.py
@@ -585,11 +605,15 @@ market-briefing/
     test_config.py
     test_rating.py
     test_consistency.py
+    test_kr_price.py
+    test_kr_news.py
+    test_macro.py
     test_collectors.py
     test_entity.py
     test_features.py
   .github/workflows/
     briefing.yml
+    collect-news.yml          # hourly; the only schedule that is a correctness requirement
 ```
 
 ---
