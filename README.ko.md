@@ -50,7 +50,8 @@ English: [README.md](README.md)
 | Config 파일 | 🟡 템플릿 | `watchlist.yaml`, `aliases.yaml`, `rating.yaml`은 Ricky가 채워야 함 |
 | API 인증 정보 | ⬜ 대기 | [MANUAL-TASKS.md §1](MANUAL-TASKS.md) 참조 |
 | `kr_price` collector (pykrx OHLCV) | ✅ 완료 | 4가지 검사 + 커밋된 픽스처. 기준값은 네이버 금융과 교차 확인 |
-| `kr_flow` 및 나머지 collector | 🟡 막힘 | KRX가 로그인을 요구하게 됨 — 아래 참조 |
+| `macro` collector (FRED) | ✅ 완료 | 6개 시리즈 실측 확인. 기준값은 미 재무부와 교차 확인 |
+| `kr_flow` 및 나머지 collector | 🟡 막힘 | KRX 로그인(아래), 네이버 앱에 검색 API 미등록 |
 | 엔티티 해석 | ⬜ 미착수 | |
 | 임베딩 파이프라인 (중복 제거 + 관련성) | ⬜ 미착수 | |
 | 골든셋 (100건 직접 라벨링) | ⬜ 미착수 | Ricky 작업, 모델 선택을 막고 있음 |

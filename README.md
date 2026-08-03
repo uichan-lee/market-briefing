@@ -50,7 +50,8 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Config files | 🟡 Templates | `watchlist.yaml`, `aliases.yaml`, `rating.yaml` need Ricky |
 | API credentials | ⬜ Blocked | See [MANUAL-TASKS.md §1](MANUAL-TASKS.md) |
 | `kr_price` collector (pykrx OHLCV) | ✅ Done | Four checks + committed fixture; known value cross-checked against Naver |
-| `kr_flow` and the rest of the collectors | 🟡 Blocked | KRX now requires a login — see below |
+| `macro` collector (FRED) | ✅ Done | 6 series verified live; known value cross-checked against Treasury |
+| `kr_flow` and remaining collectors | 🟡 Blocked | KRX login (below); Naver app needs 검색 enabled |
 | Entity resolution | ⬜ Not started | |
 | Embedding pipeline (dedup + relevance) | ⬜ Not started | |
 | Golden set (100 hand-labeled articles) | ⬜ Not started | Ricky's task, blocks model selection |

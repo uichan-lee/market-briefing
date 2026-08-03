@@ -203,6 +203,22 @@ NAVER_CLIENT_ID=
 NAVER_CLIENT_SECRET=
 ```
 
+> [!danger] `"Scopes are Empty"` means the app has no API enabled
+> Hit on 2026-08-03 with valid credentials:
+>
+> ```
+> GET https://openapi.naver.com/v1/search/news.json
+> → HTTP 401
+> → {"errorMessage":"Scopes are Empty : Authentication failed. (인증에 실패했습니다.)",
+>    "errorCode":"024"}
+> ```
+>
+> The key pair is fine; the application simply has no API attached, because **사용 API** was left unchecked at registration. It is a one-minute fix and does not require new credentials:
+>
+> developers.naver.com → **내 애플리케이션** → the app → **API 설정** → add **검색** → 수정
+>
+> `errorCode 024` is generic "authentication failed", so the `Scopes are Empty` prefix is the part that identifies this specific cause. Without it the natural assumption is a bad key, and re-issuing the key would not help.
+
 > [!important] Naver search cannot be backfilled
 > The search API caps both results per query and paging depth. Historical news cannot be retrieved in bulk — the corpus only accumulates from the day collection starts.
 >
