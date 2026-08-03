@@ -24,3 +24,10 @@ synthesis:
   temperature: 0.3
   # Call volume is low enough that cost is immaterial here; SPEC §7.2 says
   # prioritize quality.
+  #
+  # Drives the red-team section (SPEC §2.2⑤) and the AI 총평 (SPEC §2.2⑧).
+  # 총평 output is checked by src/report/consistency.py before publication: any
+  # rating label disagreeing with the computed rating in §2.2⑥ drops the section
+  # and puts the reason in the report header. Note that temperature is 0.3 here,
+  # not 0 — this output is prose and is deliberately outside the evaluation path
+  # (PREREGISTRATION §8.4), unlike the scoring stage above.
