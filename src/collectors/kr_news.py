@@ -48,6 +48,7 @@ import gzip
 import hashlib
 import json
 import re
+import time
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -99,6 +100,11 @@ _OLDEST_PLAUSIBLE = dt.timedelta(days=30)
 _FUTURE_TOLERANCE = dt.timedelta(hours=6)
 
 _TIMEOUT = 20
+
+# A dropped feed costs articles that cannot be re-fetched, so a couple of
+# seconds of retry is cheap insurance. Live evidence: 머니투데이 timed out from a
+# GitHub Actions runner while answering fine locally.
+_ATTEMPTS = 3
 
 
 class FeedError(RuntimeError):
@@ -379,12 +385,54 @@ def write_run(df: pd.DataFrame, root: Path, at: pd.Timestamp) -> Path:
 # --- fetching ------------------------------------------------------------
 
 
+def _fetch_one(
+    feed: NewsFeed,
+    collected_at: pd.Timestamp,
+    *,
+    timeout: int,
+    attempts: int,
+) -> tuple[pd.DataFrame | None, str | None]:
+    """Poll one feed, retrying transient network failures.
+
+    Retrying is worth the seconds here in a way it would not be for prices. A
+    dropped connection costs articles that cannot be re-fetched at the next run,
+    or ever. Observed live: 머니투데이 — one of the better sources at ~516
+    characters of body text — timed out from a GitHub Actions runner while
+    answering fine from a local connection.
+
+    A parse failure is not retried. Malformed XML will be malformed again.
+    """
+    last: str | None = None
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(2**attempt)
+        try:
+            response = requests.get(
+                feed.url, headers={"User-Agent": "market-briefing"}, timeout=timeout
+            )
+        except requests.RequestException as exc:
+            last = f"{feed.name}: {type(exc).__name__}"
+            continue
+
+        if response.status_code != 200:
+            last = f"{feed.name}: HTTP {response.status_code}"
+            continue
+
+        try:
+            return parse_feed(response.content, feed, collected_at), None
+        except FeedError as exc:
+            return None, f"{feed.name}: {exc}"
+
+    return None, f"{last} after {attempts} attempts"
+
+
 def fetch(
     feeds: Iterable[NewsFeed],
     *,
     root: Path | None = None,
     now: pd.Timestamp | None = None,
     timeout: int = _TIMEOUT,
+    attempts: int = _ATTEMPTS,
 ) -> tuple[pd.DataFrame, ValidationReport]:
     """Poll every feed once and return the articles not already stored.
 
@@ -400,18 +448,10 @@ def fetch(
     failures: list[str] = []
 
     for feed in feeds:
-        try:
-            response = requests.get(
-                feed.url, headers={"User-Agent": "market-briefing"}, timeout=timeout
-            )
-            if response.status_code != 200:
-                failures.append(f"{feed.name}: HTTP {response.status_code}")
-                continue
-            parsed = parse_feed(response.content, feed, collected_at)
-        except (requests.RequestException, FeedError) as exc:
-            failures.append(f"{feed.name}: {type(exc).__name__}")
-            continue
-        if not parsed.empty:
+        parsed, failure = _fetch_one(feed, collected_at, timeout=timeout, attempts=attempts)
+        if failure:
+            failures.append(failure)
+        elif parsed is not None and not parsed.empty:
             frames.append(parsed)
 
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=list(SCHEMA))

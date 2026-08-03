@@ -359,3 +359,72 @@ def test_the_committed_config_declares_a_zone_only_where_needed():
     feeds = {f.name: f for f in load_news_feeds()}
     assert feeds["infostock_all"].timezone == "Asia/Seoul"
     assert feeds["hankyung_finance"].timezone is None
+
+
+def test_a_transient_network_failure_is_retried(monkeypatch):
+    """A dropped feed costs articles that cannot be re-fetched later, so the
+    seconds spent retrying are cheap. 머니투데이 timed out from an Actions runner
+    while answering fine locally."""
+    import requests
+
+    from src.collectors import kr_news
+
+    calls = {"n": 0}
+    body = (FIXTURES / "rss_mk_stock.xml").read_bytes()
+
+    class Response:
+        status_code = 200
+        content = body
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise requests.ConnectTimeout("boom")
+        return Response()
+
+    monkeypatch.setattr(kr_news.requests, "get", flaky)
+    monkeypatch.setattr(kr_news.time, "sleep", lambda _: None)
+
+    parsed, failure = kr_news._fetch_one(FEEDS["mk_stock"], NOW, timeout=1, attempts=3)
+    assert failure is None
+    assert calls["n"] == 2
+    assert len(parsed) > 10
+
+
+def test_a_persistent_failure_reports_the_attempt_count(monkeypatch):
+    import requests
+
+    from src.collectors import kr_news
+
+    def always_fails(*args, **kwargs):
+        raise requests.ConnectTimeout("boom")
+
+    monkeypatch.setattr(kr_news.requests, "get", always_fails)
+    monkeypatch.setattr(kr_news.time, "sleep", lambda _: None)
+
+    parsed, failure = kr_news._fetch_one(FEEDS["mk_stock"], NOW, timeout=1, attempts=3)
+    assert parsed is None
+    assert "3 attempts" in failure
+
+
+def test_a_parse_failure_is_not_retried(monkeypatch):
+    """Malformed XML will be malformed again; retrying only wastes the window."""
+    from src.collectors import kr_news
+
+    calls = {"n": 0}
+
+    class Response:
+        status_code = 200
+        content = b"<rss><channel></channel></rss>"
+
+    def counted(*args, **kwargs):
+        calls["n"] += 1
+        return Response()
+
+    monkeypatch.setattr(kr_news.requests, "get", counted)
+    monkeypatch.setattr(kr_news.time, "sleep", lambda _: None)
+
+    parsed, failure = kr_news._fetch_one(FEEDS["mk_stock"], NOW, timeout=1, attempts=3)
+    assert parsed is None
+    assert calls["n"] == 1
+    assert "none parseable" in failure
