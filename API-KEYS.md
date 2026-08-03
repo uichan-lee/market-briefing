@@ -248,7 +248,48 @@ Query parameters appear unchanged: `query`, `display` (1–100), `start` (1–10
 > [!warning] This is a decision, not just a signup
 > NCP registers a **payment method at account creation**. API HUB is currently **한시적 무료** with paid conversion to be announced in advance, so a card sits on file against a service that is scheduled to start charging. That is a different commitment from the old free 25,000 calls/day, and worth deciding deliberately rather than clicking through.
 >
-> Documented alternatives, neither yet evaluated: **GDELT** (SPEC §3.2, no key, no account — its Korean equity coverage is untested; its public API rate-limits aggressively, which blocked assessment on 2026-08-03), and per-outlet RSS (free, but no search and per-source work).
+### GDELT was evaluated and rejected — 2026-08-03
+
+Measured, so nobody has to re-open it. Six GKG translingual files sampled across ~31 hours:
+
+```
+9,577 rows total   →   124 from .kr domains  (1.3%)
+extrapolated ~1,984 Korean articles/day, ALL topics
+
+Korean outlets present:
+   hani.co.kr  zdnet.co.kr  wikitree.co.kr  newsway.co.kr
+   etoday.co.kr  kbs.co.kr  seoul.co.kr  ecomedia.co.kr
+```
+
+Checked for 21 Korean financial outlets — 한국경제, 매일경제, 연합뉴스, 조선비즈, 이데일리, 서울경제, 머니투데이, 파이낸셜뉴스, 아시아경제, 헤럴드경제, 뉴시스, 더벨, 전자신문 among them. **All 21 absent.** The Korean panel GDELT does carry is a general-news daily, a tech site, and a celebrity-gossip site.
+
+Two further notes, both recorded because they look like solvable problems and are not:
+
+- Korean content lives in the **translingual** feed (`lastupdate-translation.txt`), not the main one. The main GKG feed contains zero `.kr` rows. Checking only the main feed would produce a falsely absolute "GDELT has no Korean news".
+- The DOC query API returned **HTTP 429 on every attempt** from this machine, including a single cold request after backoff to four minutes. It is IP-range throttling, not request spacing. GitHub Actions runners are also cloud IPs, so the query API is a production risk regardless. The bulk file feed at `data.gdeltproject.org` is *not* throttled and downloads fine — the content simply is not there.
+
+**Verdict: GDELT cannot supply `news_polarity`, `news_volume_z`, or the golden set.** Building the LLM stage on a panel that excludes every outlet reporting Korean earnings and contracts would measure the wrong thing well.
+
+### Korean outlet RSS — free, and viable
+
+Tested 2026-08-03. Exactly the outlets GDELT lacks:
+
+| Feed | Items | `description` |
+|---|---|---|
+| 한국경제 증권 / 산업 | 50 each | empty — title only |
+| 매일경제 증권 / 기업 | 50 each | ~102자 |
+| 연합뉴스 경제 | 120 | ~83자 |
+| 전자신문 | 30 | ~247자 |
+
+All carry `title`, `link`, and a timezone-aware `pubDate`, which is what the look-ahead rule joins on. Sample headline pulled live: *"두산, SK실트론 잘 샀네 … 증권가, 목표가 잇단 상향"* — precisely the article class this project exists to score.
+
+Three real costs, none fatal:
+
+- **No search.** The firehose arrives per outlet and is filtered locally by `config/aliases.yaml` — which is what Stage 0 entity resolution already does, so the work is not new. It also removes dependence on Naver's search ranking.
+- **No backfill, and a rollover risk Naver does not have.** A feed holds 50–120 items. If an outlet publishes more than that between polls, the excess is lost permanently. Two runs a day is not enough; this needs hourly collection.
+- **Body text varies from empty to ~250 characters.** 한국경제 gives headline only. Scoring SPEC §6.2's five dimensions off a bare headline is materially weaker than off Naver's description passage, unless article bodies are fetched separately.
+
+Feeds that failed and would need replacing: 서울경제 (404), 헤럴드경제 (malformed XML), 이데일리 (connection reset).
 
 > [!important] Naver search cannot be backfilled
 > The search API caps both results per query and paging depth. Historical news cannot be retrieved in bulk — the corpus only accumulates from the day collection starts.
