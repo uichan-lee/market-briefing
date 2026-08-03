@@ -115,7 +115,18 @@ feeds:
     section: 전체
     url: https://rss.mt.co.kr/mt_news.xml
     domain: mt.co.kr
-    enabled: true
+    # DISABLED — blocked from GitHub Actions runners, not broken.
+    # Measured 2026-08-03: answers in 0.1s from a Korean connection, times out
+    # on all three attempts from a runner. Cloud-IP or geo blocking.
+    #
+    # A painful one to lose: ~516자 of body text, among the most useful sources
+    # for SPEC §6.2 scoring. Left disabled rather than enabled-and-failing
+    # because a fetch check that fails every single hour is one that stops being
+    # read, and then a real failure goes unnoticed.
+    #
+    # Recoverable if collection ever moves to a Korean IP, or if a mirror URL
+    # that answers from cloud hosts is found.
+    enabled: false
 
   - name: asiae_stock
     outlet: 아시아경제
