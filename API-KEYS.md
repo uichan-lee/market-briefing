@@ -55,6 +55,11 @@ The surviving 45% is below `min_weight_coverage: 0.5`, so **every ticker would b
 
 data.krx.co.kr → 회원가입
 
+> [!warning] Do not register with Kakao or Naver social login
+> pykrx performs a form login and needs an actual password, which a social account does not have. Worse, the recovery path is bad: withdrawing the social account and re-registering natively is blocked by "이미 사용중인 전화번호" — the phone number stays attached after withdrawal. Observed 2026-08-03.
+>
+> If this has already happened, KRX 고객센터 is **1577-0088**. Ask either to have the phone number released for re-registration, or to attach a password to the existing social account — the second is usually simpler and avoids losing the account.
+
 - Free. Data queries remain free; the change was to stop unauthenticated bulk scraping.
 - Naver/Kakao social login is offered, but **register with a native ID and password.** pykrx performs a form login and needs an actual password; a social account has none it can use.
 
@@ -203,21 +208,47 @@ NAVER_CLIENT_ID=
 NAVER_CLIENT_SECRET=
 ```
 
-> [!danger] `"Scopes are Empty"` means the app has no API enabled
-> Hit on 2026-08-03 with valid credentials:
+> [!danger] developers.naver.com no longer issues 검색 API access
+> **The instructions above no longer work, and the classic key cannot be fixed.** Established 2026-08-03 by direct request; recorded here because the failure looks like an ordinary bad key and is not one.
+>
+> Symptom one — the classic key authenticates but has no API attached:
 >
 > ```
 > GET https://openapi.naver.com/v1/search/news.json
-> → HTTP 401
-> → {"errorMessage":"Scopes are Empty : Authentication failed. (인증에 실패했습니다.)",
->    "errorCode":"024"}
+> → 401 {"errorMessage":"Scopes are Empty : Authentication failed.","errorCode":"024"}
 > ```
 >
-> The key pair is fine; the application simply has no API attached, because **사용 API** was left unchecked at registration. It is a one-minute fix and does not require new credentials:
+> Symptom two — 검색 cannot be added to the application. It is absent from the list when creating an app, appears later under **API 설정**, and submitting it returns:
 >
-> developers.naver.com → **내 애플리케이션** → the app → **API 설정** → add **검색** → 수정
+> > 애플리케이션 설정 실패 — 신규로 등록할 수 없는 API가 선택되었습니다.
 >
-> `errorCode 024` is generic "authentication failed", so the `Scopes are Empty` prefix is the part that identifies this specific cause. Without it the natural assumption is a bad key, and re-issuing the key would not help.
+> The API moved to **NAVER API HUB** on NAVER Cloud Platform. The new gateway is live and rejects classic credentials outright, which rules out any header-level workaround:
+>
+> | Endpoint | Headers | Result |
+> |---|---|---|
+> | `naverapihub.apigw.ntruss.com/search/v1/news` | NCP | 401 `Invalid authentication information` |
+> | `naverapihub.apigw.ntruss.com/search/v1/news` | classic | 401 `Authentication information are missing` |
+> | `openapi.naver.com/v1/search/news.json` | classic | 401 `Scopes are Empty` |
+
+### The migration
+
+1. Sign up at **ncloud.com** and enable **NAVER API HUB → 검색**.
+2. Issue an API key. It is an NCP key, unrelated to the developers.naver.com pair.
+3. The request changes shape:
+
+| | Classic (dead) | API Hub |
+|---|---|---|
+| URL | `https://openapi.naver.com/v1/search/news.json` | `https://naverapihub.apigw.ntruss.com/search/v1/news` |
+| Auth headers | `X-Naver-Client-Id` / `X-Naver-Client-Secret` | `X-NCP-APIGW-API-KEY-ID` / `X-NCP-APIGW-API-KEY` |
+
+Query parameters appear unchanged: `query`, `display` (1–100), `start` (1–1000), `sort` (`sim` \| `date`).
+
+`.env` therefore needs new variable names once this is done. `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET` are dead weight until then.
+
+> [!warning] This is a decision, not just a signup
+> NCP registers a **payment method at account creation**. API HUB is currently **한시적 무료** with paid conversion to be announced in advance, so a card sits on file against a service that is scheduled to start charging. That is a different commitment from the old free 25,000 calls/day, and worth deciding deliberately rather than clicking through.
+>
+> Documented alternatives, neither yet evaluated: **GDELT** (SPEC §3.2, no key, no account — its Korean equity coverage is untested; its public API rate-limits aggressively, which blocked assessment on 2026-08-03), and per-outlet RSS (free, but no search and per-source work).
 
 > [!important] Naver search cannot be backfilled
 > The search API caps both results per query and paging depth. Historical news cannot be retrieved in bulk — the corpus only accumulates from the day collection starts.
