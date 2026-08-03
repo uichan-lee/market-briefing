@@ -8,17 +8,17 @@ Ordered by when it blocks progress. Items marked **BLOCKING** stop the pipeline 
 
 ## 1. Accounts and credentials — **BLOCKING**
 
-Estimated time: 60–90 minutes total, mostly waiting on approvals.
+Most of this is done. Two remain.
 
-| Item | Where | Notes |
+| Item | Status | Notes |
 |---|---|---|
-| **KRX Data Marketplace** | data.krx.co.kr | **Free, minutes, and now mandatory.** Register with a native ID/PW, not social login. Blocks 55% of the rating weight — see API-KEYS.md §0. |
-| DART OpenAPI key | opendart.fss.or.kr | Instant issue. Free. |
-| ~~Naver Developers app~~ | — | **No longer needed.** Korean news comes from outlet RSS, which requires no credential. API-KEYS.md §2 explains why and keeps Naver as the fallback. |
-| KIS Open API keys | 한국투자증권 → 트레이딩 → Open API → KIS Developers | Requires a securities account, and the **모의투자** environment is a separate prior signup. Approval is not always instant — **start this one first**. |
-| FRED API key | fred.stlouisfed.org | Instant issue. Free. |
-| US market data key | Alpaca or Tiingo | Pick one. Free tier is sufficient at this stage. |
-| Email sending credential | Dedicated address + app password | Do not use a primary personal address. |
+| **KRX Data Marketplace** | ⬜ **outstanding** | Free and takes minutes, but now mandatory. Register with a native ID/PW — **not** social login; see the trap in API-KEYS.md §0. Blocks 55% of the rating weight, which makes it the one that matters. |
+| KIS Open API keys | ⬜ outstanding | Requires a 한국투자증권 account, and 모의투자 is a separate prior signup. Approval takes days, so start it early — but it only adds real-time quotes on top of data pykrx already gives, so it blocks less than the queue suggests. |
+| ~~Naver Developers app~~ | ✖ not needed | Korean news comes from outlet RSS, which requires no credential. API-KEYS.md §2 explains why, and keeps Naver as the documented fallback. |
+| DART OpenAPI key | ✅ held | |
+| FRED API key | ✅ held | `macro` is built and passing against it. |
+| US market data key | ✅ held | Tiingo. Alpaca left blank deliberately — SPEC §3.2 says pick one. |
+| Email sending credential | ✅ held | Dedicated account, separate from the reading address. |
 
 Store all of these in `.env` locally and as GitHub repository secrets. Never paste a key into a chat session with any AI tool, including Claude Code.
 
@@ -32,10 +32,10 @@ Store all of these in `.env` locally and as GitHub repository secrets. Never pas
 
 **Step-by-step issuance instructions: @API-KEYS.md.** That document covers each provider's signup screen, which options to select, and the non-obvious traps — in particular the KIS `API그룹` selection, which is the strongest available enforcement of absolute rule 2, and the fact that Naver news cannot be backfilled.
 
-> [!warning] Do the KRX registration first
-> `kr_price` (daily OHLCV) is built and passing without any credential, because pykrx serves OHLCV through a Naver fallback. Everything else pykrx offers — investor flows, short interest, market cap, fundamentals — now requires a KRX Data Marketplace login, verified 2026-08-03.
+> [!warning] KRX first — it is the only one still blocking real work
+> Three collectors already run without it: `kr_price` (pykrx serves OHLCV through a Naver fallback), `kr_news` (outlet RSS, no credential), and `macro` (FRED). What KRX gates is investor flows, short interest, market cap and fundamentals — 55% of the §2.2⑥ rating weight. The surviving 45% falls below the confidence floor, so until this is done **every ticker rates `관망`**: the pipeline runs, publishes, and says nothing.
 >
-> Those four carry 55% of the §2.2⑥ rating weight, and the remainder falls below the confidence floor, so without KRX credentials every ticker rates `관망`. It takes minutes and is free. Do it before anything else here, then start the KIS application since it is the only item with an approval queue.
+> Free, minutes, verified 2026-08-03. Start KIS afterwards, since its approval queue runs in the background while you do everything else.
 
 ---
 

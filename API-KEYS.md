@@ -13,20 +13,20 @@ Screen labels are quoted verbatim in Korean, because that is what the UI actuall
 
 ## Order of work
 
-Do **not** wait for all keys before writing code. The first collector needs none of them.
+Three collectors — `kr_price`, `kr_news`, `macro` — are built and running. Two credentials remain outstanding.
 
-| # | Credential | Issue time | Unblocks | Do it |
-|---|---|---|---|---|
-| 0 | **KRX Data Marketplace** | minutes | `kr_flow`, short interest, market cap, fundamentals — **55% of the rating weight** | **first** |
-| 1 | **KIS** | **days** — approval is not instant | real-time quotes (§3.1) | **first, because of the wait** |
-| — | ~~Naver~~ | — | **no longer needed** — outlet RSS replaced it, see §2 | skip |
-| 3 | DART | instant | `kr_filings` | today |
-| 4 | FRED | instant | `macro` | today |
-| 5 | SEC User-Agent | not an issuance | `us_filings` | today, 30 seconds |
-| 6 | Alpaca *or* Tiingo | instant | `us_price` | later — US comes after KR is stable |
-| 7 | SMTP | ~5 min | email delivery | later |
+| Credential | Status | Unblocks |
+|---|---|---|
+| **KRX Data Marketplace** | ⬜ **outstanding** | `kr_flow`, short interest, market cap, fundamentals — **55% of the rating weight** |
+| **KIS** | ⬜ outstanding | real-time quotes (§3.1). Approval takes days, so start it early |
+| ~~Naver~~ | ✖ not needed | outlet RSS replaced it — see §2 |
+| DART | ✅ held | `kr_filings` |
+| FRED | ✅ held | `macro` — already built and passing |
+| SEC User-Agent | ✅ held | `us_filings` |
+| Tiingo | ✅ held | `us_price`. Alpaca deliberately blank — SPEC §3.2 says pick one |
+| SMTP | ✅ held | email delivery |
 
-Everything except KIS is same-day. Start the KIS application, then do the rest while it is pending.
+Only KRX and KIS remain. KRX is the one that matters: without it every ticker rates `관망`, because the surviving features fall below the confidence floor. KIS adds real-time quotes on top of data pykrx already supplies, so it is less urgent than its approval queue makes it look.
 
 ---
 

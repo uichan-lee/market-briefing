@@ -246,7 +246,7 @@ Section IDs ①–⑨ are **stable identifiers**, referenced from `src/report/ra
 | pykrx | OHLCV, net buying by investor type, short-interest balance, market cap/PER/PBR | **KRX account** (was: none) | `pykrx>=1.2.8` | Based on KRX scraping. Sleep required between calls. See the warning below |
 | DART OpenAPI | Filing lists, financial statements | API key (free) | `dart-fss` or direct | Daily call limit applies |
 | KIS Open API | Real-time quotes, balances | App key/secret | `python-kis` | Mock trading environment provided. **Read-only in stage 1** |
-| **Outlet RSS** | Ticker news, mention volume | **None** | Direct | 15 feeds in `config/news_feeds.yaml`. Replaced the Naver search API in 2026 — see below |
+| **Outlet RSS** | Ticker news, mention volume | **None** | Direct | 14 enabled of 15 declared in `config/news_feeds.yaml`. Replaced the Naver search API in 2026 — see below |
 
 > [!important] A structural edge in the Korean market
 > Daily net buying by investor type (foreign/institutional/retail) doesn't exist as a data source in the US. This pipeline's most differentiated feature comes from here. It's especially notable as a **signal obtained without an LLM**.
@@ -256,9 +256,9 @@ Section IDs ①–⑨ are **stable identifiers**, referenced from `src/report/ra
 >
 > GDELT was measured as a replacement and **rejected**: across 9,577 rows it carried none of the 21 Korean financial outlets checked. Details and numbers in API-KEYS.md §2.
 >
-> The pipeline now reads RSS directly from 15 outlets. That is a subscription rather than a query — there is no search, no result cap, and no ranking algorithm between the outlet and the collector — so **coverage equals `config/news_feeds.yaml`**. An outlet missing from that file is invisible to the entire pipeline.
+> The pipeline now reads RSS directly from 14 feeds across 8 outlets. That is a subscription rather than a query — there is no search, no result cap, and no ranking algorithm between the outlet and the collector — so **coverage equals `config/news_feeds.yaml`**. An outlet missing from that file is invisible to the entire pipeline.
 >
-> Measured at 1,008 unique articles per poll across 9 outlets, exceeding the 1,000–2,000/day §6.1 assumes. Body text ranges from 뉴시스 at ~1,241자 to 한국경제 at none; headline-only outlets are kept because §6.1's re-report clustering pairs them with a body-carrying duplicate.
+> Measured at ~909 unique articles per poll, exceeding the 1,000–2,000/day §6.1 assumes. 머니투데이 is declared but disabled: it answers in 0.1s from a Korean connection and times out entirely from a GitHub Actions runner. Body text ranges from 뉴시스 at ~1,241자 to 한국경제 at none; headline-only outlets are kept because §6.1's re-report clustering pairs them with a body-carrying duplicate.
 >
 > Naver remains documented in API-KEYS.md as the fallback if measurement later shows RSS is insufficient.
 

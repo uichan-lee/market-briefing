@@ -41,7 +41,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Component | Status | Notes |
 |---|---|---|
 | Design docs (SPEC, PREREGISTRATION, MANUAL-TASKS) | ✅ Done | Evaluation criteria frozen 2026-08-02 |
-| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 146 tests passing |
+| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 233 tests passing |
 | Time & market sessions (`src/util/session.py`) | ✅ Done | Trading days, DST, look-ahead boundary |
 | Collector validation framework (`src/collectors/validate.py`) | ✅ Done | The four checks every collector must pass |
 | Config loading & safeguards (`src/util/config.py`) | ✅ Done | Rejects alias collisions, unquoted tickers |
@@ -51,7 +51,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | API credentials | ⬜ Blocked | See [MANUAL-TASKS.md §1](MANUAL-TASKS.md) |
 | `kr_price` collector (pykrx OHLCV) | ✅ Done | Four checks + committed fixture; known value cross-checked against Naver |
 | `macro` collector (FRED) | ✅ Done | 6 series verified live; known value cross-checked against Treasury |
-| `kr_news` collector (outlet RSS) | ✅ Done | 15 feeds, hourly via Actions; 1,008 articles/poll across 9 outlets |
+| `kr_news` collector (outlet RSS) | ✅ Done | 14 feeds, hourly via Actions; ~909 articles/poll across 8 outlets |
 | `kr_flow` and remaining collectors | 🟡 Blocked | KRX login — see below |
 | Entity resolution | ⬜ Not started | |
 | Embedding pipeline (dedup + relevance) | ⬜ Not started | |
@@ -61,7 +61,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Report renderer + delivery | ⬜ Not started | |
 | GitHub Actions workflow | ⬜ Not started | |
 
-**Korean news collection is live and unblocked** — `kr_news` reads 15 outlet RSS feeds hourly via GitHub Actions, needing no credential at all. Because RSS cannot be backfilled, that clock only starts once `collect-news.yml` is on the default branch.
+**Korean news collection is live and unblocked** — `kr_news` reads 14 outlet RSS feeds hourly via GitHub Actions, needing no credential at all. Because RSS cannot be backfilled, that clock only starts once `collect-news.yml` is on the default branch.
 
 **Immediate blocker: a free KRX Data Marketplace account.** As of 2026-08-03 `data.krx.co.kr` returns HTTP 400 `LOGOUT` without a session — the old open 정보데이터시스템 became members-only. Daily OHLCV still works (pykrx falls back to Naver), which is why `kr_price` is built and passing. Investor flows, short interest, market cap and fundamentals do not, and those carry **55% of the rating weight**; the remaining 45% sits under the confidence floor, so every ticker would rate `관망`. Registration takes minutes and is free: [API-KEYS.md §0](API-KEYS.md).
 
@@ -76,7 +76,7 @@ After that, `config/watchlist.yaml` needs 13 more tickers and `config/aliases.ya
 ```
   Collectors                    ─→  data/raw/YYYY-MM-DD.*     (immutable, never overwritten)
       │                                  │
-      │  pykrx, DART, Naver News,        │
+      │  pykrx, DART, outlet RSS,        │
       │  SEC EDGAR, FRED, Alpaca         │
       ↓                                  ↓
   Entity resolution             ─→  which article is about which ticker
@@ -218,7 +218,7 @@ market-briefing/
 │   ├── notify/                ⬜ vault, email, webhook adapters
 │   └── eval/                  ⬜ golden set, bake-off, IC, shadow portfolio
 │
-├── tests/                     146 tests, all offline
+├── tests/                     233 tests, all offline
 └── data/                      gitignored — raw, embeddings, features, scores
 ```
 
@@ -259,8 +259,8 @@ These are Ricky's, in the order they unblock work. Full detail in [MANUAL-TASKS.
 
 | # | Task | Est. time | Blocks |
 |---|---|---|---|
-| 1 | API keys → `.env` ([API-KEYS.md](API-KEYS.md)) | 60–90 min | API-dependent collectors — *not* `kr_price`/`kr_flow`, which need none |
-| 2 | `config/watchlist.yaml` — 15 KR tickers | 20 min | **Every** collector, including the keyless ones |
+| 1 | KRX Data Marketplace account ([API-KEYS.md §0](API-KEYS.md)) | minutes | `kr_flow` — and with it 55% of the rating weight |
+| 2 | `config/watchlist.yaml` — 15 KR tickers | 20 min | `kr_price`, `kr_flow`. Not `kr_news` or `macro`, which are ticker-agnostic |
 | 3 | `config/aliases.yaml` — one entry per ticker | 60–90 min | Entity resolution, all news features |
 | 4 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection |
 | 5 | Bake-off decision | 30 min | Scoring model choice |

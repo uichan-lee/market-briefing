@@ -41,7 +41,7 @@ English: [README.md](README.md)
 | 구성요소 | 상태 | 비고 |
 |---|---|---|
 | 설계 문서 (SPEC, PREREGISTRATION, MANUAL-TASKS) | ✅ 완료 | 평가 기준 2026-08-02 고정 |
-| Python 프로젝트, 테스트, 린팅 | ✅ 완료 | `uv` + `pytest` + `ruff`, 146개 테스트 통과 |
+| Python 프로젝트, 테스트, 린팅 | ✅ 완료 | `uv` + `pytest` + `ruff`, 233개 테스트 통과 |
 | 시간·시장 세션 (`src/util/session.py`) | ✅ 완료 | 거래일, 서머타임, 룩어헤드 경계 |
 | Collector 검증 프레임워크 (`src/collectors/validate.py`) | ✅ 완료 | 모든 collector가 통과해야 하는 4가지 검사 |
 | Config 로딩·안전장치 (`src/util/config.py`) | ✅ 완료 | 별칭 충돌, 따옴표 없는 종목코드 차단 |
@@ -51,7 +51,7 @@ English: [README.md](README.md)
 | API 인증 정보 | ⬜ 대기 | [MANUAL-TASKS.md §1](MANUAL-TASKS.md) 참조 |
 | `kr_price` collector (pykrx OHLCV) | ✅ 완료 | 4가지 검사 + 커밋된 픽스처. 기준값은 네이버 금융과 교차 확인 |
 | `macro` collector (FRED) | ✅ 완료 | 6개 시리즈 실측 확인. 기준값은 미 재무부와 교차 확인 |
-| `kr_news` collector (언론사 RSS) | ✅ 완료 | 15개 피드, Actions 시간당 실행. 1회 수집당 9개 매체 1,008건 |
+| `kr_news` collector (언론사 RSS) | ✅ 완료 | 14개 피드, Actions 시간당 실행. 1회 수집당 8개 매체 ~909건 |
 | `kr_flow` 및 나머지 collector | 🟡 막힘 | KRX 로그인 — 아래 참조 |
 | 엔티티 해석 | ⬜ 미착수 | |
 | 임베딩 파이프라인 (중복 제거 + 관련성) | ⬜ 미착수 | |
@@ -61,7 +61,7 @@ English: [README.md](README.md)
 | 리포트 렌더러 + 전달 | ⬜ 미착수 | |
 | GitHub Actions 워크플로우 | ⬜ 미착수 | |
 
-**한국 뉴스 수집은 이미 동작하고 막힌 게 없다** — `kr_news`가 언론사 RSS 15개를 GitHub Actions로 시간당 읽는다. 인증 정보가 전혀 필요 없다. 다만 RSS는 소급 수집이 안 되므로, `collect-news.yml`이 기본 브랜치에 올라간 시점부터만 쌓인다.
+**한국 뉴스 수집은 이미 동작하고 막힌 게 없다** — `kr_news`가 언론사 RSS 14개를 GitHub Actions로 시간당 읽는다. 인증 정보가 전혀 필요 없다. 다만 RSS는 소급 수집이 안 되므로, `collect-news.yml`이 기본 브랜치에 올라간 시점부터만 쌓인다.
 
 **당장의 병목: KRX Data Marketplace 무료 계정.** 2026-08-03 기준 `data.krx.co.kr`은 세션 없이 요청하면 HTTP 400 `LOGOUT`을 반환한다. 기존의 열린 정보데이터시스템이 회원제로 바뀌었다. 일봉은 여전히 동작하고(pykrx가 네이버로 폴백한다) 그래서 `kr_price`는 이미 만들어져 통과한다. 하지만 투자자별 순매수, 공매도 잔고, 시가총액, 펀더멘털은 안 되고, 이 넷이 **등급 가중치의 55%**를 차지한다. 남는 45%는 신뢰도 하한 아래라 모든 종목이 `관망`으로 나온다. 가입은 무료이고 몇 분이면 된다: [API-KEYS.md §0](API-KEYS.md).
 
@@ -76,7 +76,7 @@ English: [README.md](README.md)
 ```
   Collector                     ─→  data/raw/YYYY-MM-DD.*     (불변, 덮어쓰기 없음)
       │                                  │
-      │  pykrx, DART, 네이버 뉴스,        │
+      │  pykrx, DART, 언론사 RSS,        │
       │  SEC EDGAR, FRED, Alpaca         │
       ↓                                  ↓
   엔티티 해석                    ─→  어떤 기사가 어떤 종목에 관한 것인가
@@ -218,7 +218,7 @@ market-briefing/
 │   ├── notify/                ⬜ vault, email, webhook 어댑터
 │   └── eval/                  ⬜ 골든셋, 베이크오프, IC, 섀도 포트폴리오
 │
-├── tests/                     146개 테스트, 전부 오프라인
+├── tests/                     233개 테스트, 전부 오프라인
 └── data/                      gitignore 대상 — raw, embeddings, features, scores
 ```
 
@@ -259,8 +259,8 @@ Ricky의 작업이고, 무엇을 푸는지 순서대로 정렬했다. 상세 내
 
 | # | 작업 | 예상 시간 | 막고 있는 것 |
 |---|---|---|---|
-| 1 | API 키 → `.env` ([API-KEYS.md](API-KEYS.md)) | 60~90분 | 키가 필요한 collector — `kr_price`/`kr_flow`는 키 없이 동작하므로 해당 없음 |
-| 2 | `config/watchlist.yaml` — KR 15종목 | 20분 | 키가 없는 것까지 포함해 **모든** collector |
+| 1 | KRX Data Marketplace 계정 ([API-KEYS.md §0](API-KEYS.md)) | 몇 분 | `kr_flow` — 그리고 등급 가중치의 55% |
+| 2 | `config/watchlist.yaml` — KR 15종목 | 20분 | `kr_price`, `kr_flow`. `kr_news`·`macro`는 종목과 무관하므로 해당 없음 |
 | 3 | `config/aliases.yaml` — 종목당 항목 1개 | 60~90분 | 엔티티 해석, 모든 뉴스 피처 |
 | 4 | 골든셋 — 100건 직접 라벨링 | 약 2시간 | 모델 선택 |
 | 5 | 베이크오프 결정 | 30분 | 스코어링 모델 확정 |
