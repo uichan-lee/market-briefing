@@ -14,7 +14,7 @@ Estimated time: 60–90 minutes total, mostly waiting on approvals.
 |---|---|---|
 | DART OpenAPI key | opendart.fss.or.kr | Instant issue. Free. |
 | Naver Developers app | developers.naver.com | Register an application, enable the 검색 (search) API, record client ID and secret. |
-| KIS Open API keys | 한국투자증권 → 트레이딩 → Open API → KIS Developers | Requires a securities account. Request the **모의투자** (paper) environment as well. Approval is not always instant. |
+| KIS Open API keys | 한국투자증권 → 트레이딩 → Open API → KIS Developers | Requires a securities account, and the **모의투자** environment is a separate prior signup. Approval is not always instant — **start this one first**. |
 | FRED API key | fred.stlouisfed.org | Instant issue. Free. |
 | US market data key | Alpaca or Tiingo | Pick one. Free tier is sufficient at this stage. |
 | Email sending credential | Dedicated address + app password | Do not use a primary personal address. |
@@ -28,6 +28,11 @@ Store all of these in `.env` locally and as GitHub repository secrets. Never pas
 > ```
 >
 > `.gitignore` already covers `.env` and `data/`, so neither can be staged by accident. `.env.example` itself holds no values and is committed deliberately.
+
+**Step-by-step issuance instructions: @API-KEYS.md.** That document covers each provider's signup screen, which options to select, and the non-obvious traps — in particular the KIS `API그룹` selection, which is the strongest available enforcement of absolute rule 2, and the fact that Naver news cannot be backfilled.
+
+> [!note] None of this blocks the first collector
+> `kr_price` and `kr_flow` run on pykrx, which scrapes KRX and needs no credential at all. The genuine blocker for starting code is §2 (watchlist), not this section. Apply for KIS first because it is the only item with an approval queue, then issue the instant ones while it is pending.
 
 ---
 
@@ -147,6 +152,7 @@ Claude built the mechanism. Ricky owns the numbers, because the weights encode a
 - **Distribution.** If nearly every ticker lands in `관망`, the cut points are too wide and the scale carries no information. If nothing ever lands there, they are too narrow. A usable scale puts most tickers in the middle and a few at each extreme.
 - **Weights.** `foreign_flow_5d` starts highest because SPEC §3.1 argues investor-flow data is the most differentiated feature available in Korea and one obtained without an LLM. That is a hypothesis, not a finding.
 - **Signs.** `short_ratio` carries a negative weight — rising short interest reads bearish. Confirm that matches how the data actually behaves before trusting it.
+- **The three medium-term features** (`rel_strength_120d`, `flow_persistence_60d`, `rev_trend_12w`) sit commented out in the file with starting values that are guesses like all the others. Activating them means rebalancing the existing seven, not appending — weights are relative shares, so adding weight on top silently rescales what every existing weight means.
 
 > [!danger] The one way to get this wrong
 > Adjusting weights or cut points because the ratings they produce look agreeable. That is fitting the dial to the answer, and it converts the whole evaluation into circular reasoning.
@@ -173,6 +179,8 @@ Mobile reading goes through email, not Obsidian. Obsidian Git on mobile is unrel
 Five minutes a day. This is the actual experiment.
 
 - [ ] Read the briefing. Note whether it was read at all — if Ricky stops reading it by day 8, that is the most important finding of the trial and it means the format is wrong.
+- [ ] **Note whether only §2.2⑧ (AI 총평) got read.** That section exists so a rushed reader gets something; if it becomes the *only* thing read, the other seven sections are costing money and attention for nothing. Either finding is useful — the failure is not recording which one happened.
+- [ ] **Note whether ⑧ was dropped for contradicting the ratings** (the header says so when it happens). Rare is expected. Frequent means either the prompt or `src/report/consistency.py` needs work, and the two must be fixed together.
 - [ ] Log anything that looked wrong: a misattributed article, a stale number, a section that was noise.
 - [ ] Record the daily `ambiguous` ratio and the run cost.
 

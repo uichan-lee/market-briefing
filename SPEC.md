@@ -1,4 +1,4 @@
-# Daily Market Briefing Pipeline — Design Spec v0.3
+# Daily Market Briefing Pipeline — Design Spec v0.5
 
 > [!abstract] Purpose of this document
 > The input spec fed directly to Claude Code. The goal is to **fix the output shape and evaluation criteria before writing code**, so we don't waste effort collecting data that never gets used, and don't move the goalposts after the fact (= self-deception).
@@ -7,6 +7,7 @@
 > **v0.2** — Removed LLM from Stage 1 (replaced with embeddings) / model adapter layer / golden set + bake-off (§7) / entity resolution (§4) / re-reporting detection switched to embedding-based deduplication
 > **v0.3** — Redesigned the delivery layer (§2.0) as a swappable adapter. Dropped the Telegram dependency; Obsidian vault + email are now the defaults
 > **v0.4** — §8 split out into `PREREGISTRATION.md` and frozen before collection began; §8 here is now a pointer. §10 updated to match the built layout (`src/util/`, `src/collectors/validate.py`, toolchain files)
+> **v0.5** — Added §2.2⑧ AI 총평 (the synthesis half of the Stage 3 §6.1 always specified) with a deterministic guard, and §2.2⑨ medium-term regime. §5 gained three long-horizon per-ticker features. §2.3 separates stable section IDs from display order. Made while `data/raw/` was still empty, so the composite's changed input is logged in PREREGISTRATION §R rather than contaminating an evaluation in flight
 
 > [!note] Language policy
 > Repository documents, code, and commit messages default to English. Exceptions are domain data (ticker/company names, the alias dictionary, Korean-language few-shot prompt examples) and this document. This SPEC was translated to English by Claude Code via `/plan translate SPEC.md to English, preserve all structure and numbering`.
@@ -75,9 +76,14 @@ S&P +0.4% | NASDAQ +0.8% | SOX +1.9% | USDKRW 1,382 (+0.3%)
 ▶ Today's focus: Semiconductor gap-up pressure / secondary battery outflows, day 3
 ▶ Holdings flagged: 2 (below)
 ⚠ Data missing: us_filings (retry failed)
+⚠ 총평 생략: 등급과 모순 — 000660 (§2.2⑧)
 ```
 
-### 2.2 Section order and content
+The last line appears only when the commentary was dropped. Every degradation of the briefing is stated in the header, never only in logs.
+
+### 2.2 Sections
+
+Content and identity. Display order is §2.3.
 
 **① US → KR market transmission (comes first)**
 
@@ -155,12 +161,71 @@ Two guards, both because a confident-looking rating on thin evidence is worse th
 - A ticker whose inputs are largely missing is rated `관망` with the missing inputs named, never rated confidently on whatever happened to arrive.
 - A missing feature is never silently treated as zero — it is excluded from the sum and the weights are renormalized over what is present.
 
+> [!note] The rationale is truncated, so it must show its residual
+> `RatingResult.rationale()` returns only the top `max_rationale_terms` contributors (4 by default), while the headline score is the sum of **all** of them. With the committed config a reader adding up the displayed lines gets `+1.065` against a stated `+1.13`. The renderer emits a residual line whenever terms were dropped:
+>
+> ```
+>   · 그 외 3개 항목                    기여 +0.065
+> ```
+>
+> A number on the page that does not reconcile teaches the reader to stop checking, which defeats the reason the rationale is a decomposition in the first place.
+
 **⑦ Shadow portfolio P&L**
 
 Cumulative performance of a hypothetical account that traded exactly according to the ⑥ ratings. Tracked automatically, separate from the real account. This is the section that makes the rating falsifiable rather than merely opinionated.
 
 > [!warning] Rating ≠ execution
 > This system produces an opinion and stops. It places no orders, and SPEC §0 principle 5 and CLAUDE.md's absolute rule 2 continue to hold without exception. The trigger is pulled by a human, and not before the 3-month gate in PREREGISTRATION §8.5.
+
+**⑧ AI 총평 (commentary)**
+
+Five to eight lines synthesizing everything above into what a reader with thirty seconds needs: the day's single most decision-relevant fact, two or three tickers worth attention with the number behind each, and the one thing most likely to make today's numbers wrong.
+
+This is the **synthesis** half of the Stage 3 already specified in §6.1 — the red-team section ⑤ has always been the other half. The prompt lives at `src/llm/prompts/v1_synthesis.md`, versioned per §6.3.
+
+Three properties keep this inside CLAUDE.md's absolute rule 3, and all three are load-bearing:
+
+| Property | Why it matters |
+|---|---|
+| Input is the **rendered deterministic sections**, never raw articles | It cannot re-score news. Scoring happened at §6.2 and only its output arrives here |
+| Output passes `src/report/consistency.py` before publication | Every rating label in the prose is compared against ⑥'s computed rating for that ticker |
+| Nothing downstream reads it | Not a feature, not a score, not the shadow portfolio, not a PREREGISTRATION metric |
+
+On contradiction the section is **dropped** and the reason is written into the header (`⚠ 총평 생략: 등급과 모순 — 000660`). Publishing an opinion known to disagree with the computed rating is worse than publishing neither, and CLAUDE.md requires a partial report over no report.
+
+> [!important] The guard and the prompt are a matched pair
+> The seven rating labels are reserved vocabulary in the prompt — ordinary market movement must be written as 순매수 / 순매도 / 수급 유입 / 수급 이탈. The checker relies on this: without it, `매수` appears in normal Korean market prose constantly and the guard would drop the section daily. A checker that fires every day is one nobody reads. Changing either file requires re-reading the other.
+
+The section carries a permanent footer marking it as LLM-authored and outside evaluation, so it is never mistaken for the computed part of the briefing.
+
+**⑨ 중장기 국면 (medium-term regime)**
+
+The rest of the briefing is same-day. This section supplies the horizon that ①–⑧ lack — and it contains no LLM, like ①.
+
+| Indicator | Source | Definition |
+|---|---|---|
+| `yield_curve_10y2y` | FRED | US 10Y − 2Y, level and 60-day change |
+| `dxy_trend_120d` | FRED | 120-day trend of the dollar index |
+| `usdkrw_trend_120d` | FRED | 120-day trend of USD/KRW |
+| `wti_trend_120d` | FRED | 120-day trend of WTI |
+| `us_sector_rotation_120d` | US price collector | each sector ETF's 120-day return − SPY, mapped to KR sectors via `config/sector_mapping.yaml` |
+
+> [!important] Why the regime is a section and not a rating input
+> These indicators are deliberately **excluded from the ⑥ composite.** PREREGISTRATION §8.4 evaluates on sector-excess return, and a macro term is common to every ticker, so it cancels in the excess by construction — it could add variance to the composite but never IC. The medium-term signal that *is* cross-sectional lives in §5 as per-ticker features (`rel_strength_120d`, `flow_persistence_60d`, `rev_trend_12w`) and enters ⑥ there.
+
+> [!warning] There is no long-horizon news feature, and there never will be
+> Naver's search API caps result count and paging depth, so historical news cannot be retrieved in bulk (API-KEYS.md §2). The news corpus only accumulates forward from the day collection starts. Every medium-term signal in this project is therefore price, flow, or macro — which has the side benefit of keeping this section LLM-free.
+
+### 2.3 Render order
+
+Section IDs ①–⑨ are **stable identifiers**, referenced from `src/report/rating.py`, `config/rating.yaml`, `MANUAL-TASKS.md`, `PREREGISTRATION.md` §8.4/§R, and both READMEs. They are not renumbered when sections are added, so ID order and display order are separate things.
+
+```
+헤더 → ⑧ AI 총평 → ① 미국→한국 전이 → ⑨ 중장기 국면 → ② 종목 스캔
+     → ③ 뉴스 집계 → ④ 캘린더 → ⑥ 방향성 등급 → ⑤ 반증 → ⑦ 섀도 P&L
+```
+
+⑧ is displayed first and **generated last** — it consumes every other section as input. ⑤ sits after ⑥ for the same reason it exists: a counterargument is only useful once the reader has seen the claim it attacks.
 
 ---
 
@@ -257,6 +322,16 @@ $$z_{i,t} = \frac{x_{i,t} - \mu_{i,t-252:t-1}}{\sigma_{i,t-252:t-1}}$$
 | `rv_20d` | 20-day realized volatility (stdev of log returns × √252) |
 | `news_volume_z` | z-score of daily article count **after deduplication** |
 | `us_kr_beta_60d` | 60-day rolling beta against the corresponding US sector ETF |
+
+**Medium-term features (added v0.5).** Everything above tops out at 4 weeks for fundamentals and 20 days for price; 252 days appeared only as the normalization window, never as a signal. These three supply the missing horizon and are cross-sectional, so unlike the §2.2⑨ regime indicators they can enter the ⑥ composite and be measured by IC.
+
+| Feature | Definition |
+|---|---|
+| `rel_strength_120d` | 120-day return − sector 120-day return |
+| `flow_persistence_60d` | 60-day cumulative foreign net buying ÷ 60-day cumulative trading value |
+| `rev_trend_12w` | 12-week change in consensus EPS — the slower companion to `rev_4w` |
+
+All three are computable from the day the 3-year backfill lands (§12 step 4), since pykrx and DART both serve history. Their weights sit **commented out** in `config/rating.yaml` until `src/features/compute.py` produces them: `rate()` renormalizes over present features, so activating a weight for a feature that does not yet exist would lower every ticker's `weight_coverage` and could trip the 0.5 floor into spurious `관망`.
 
 ---
 
@@ -436,6 +511,7 @@ market-briefing/
   SPEC.md                     # this document
   PREREGISTRATION.md          # §8 split out and committed first
   MANUAL-TASKS.md             # work only Ricky can do
+  API-KEYS.md                 # per-provider issuance walkthrough for §1 of the above
   pyproject.toml              # uv + pytest + ruff config
   uv.lock
   .env.example                # every required key, no values
@@ -445,6 +521,7 @@ market-briefing/
     aliases.yaml              # ticker alias dictionary (manually managed)
     sector_mapping.yaml       # US ETF ↔ KR sector mapping
     models.yaml               # model selection
+    rating.yaml               # §2.2⑥ — weights and cut points for the directional rating
     delivery.yaml             # §2.0 — the only place a channel may be declared
   src/
     util/
@@ -474,7 +551,10 @@ market-briefing/
       prompts/
         v1_scoring.md
         v1_redteam.md
+        v1_synthesis.md       # §2.2⑧ — paired with report/consistency.py
     report/
+      rating.py               # §2.2⑥ — the deterministic directional rating
+      consistency.py          # §2.2⑧ — commentary checked against the rating
       render.py
     notify/
       base.py                 # Channel interface
@@ -492,6 +572,8 @@ market-briefing/
     test_session.py
     test_validate.py
     test_config.py
+    test_rating.py
+    test_consistency.py
     test_collectors.py
     test_entity.py
     test_features.py

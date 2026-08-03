@@ -30,6 +30,26 @@ weights:
   short_ratio: -0.10
   valuation_band: 0.05       # 3-year PBR percentile, low = cheap = positive
 
+  # --- medium-term features (SPEC §5, added v0.5) -----------------------------
+  # Inactive until src/features/compute.py produces them. Uncommenting early
+  # would be actively harmful, not merely useless: rate() renormalizes over the
+  # features that are present, so a weight for a feature that never arrives
+  # lowers every ticker's weight_coverage and can trip the 0.5 floor below,
+  # forcing 관망 on tickers that have complete data for everything that exists.
+  #
+  # When activating, rebalance the seven above rather than adding on top —
+  # weights are read as relative shares, and appending 0.25 of new weight
+  # silently rescales what every existing weight means.
+  #
+  # rel_strength_120d: 0.10    # 120-day return − sector, the slow companion to rel_strength_20d
+  # flow_persistence_60d: 0.10 # 60-day cumulative foreign net buying ÷ trading value
+  # rev_trend_12w: 0.05        # 12-week consensus EPS change
+  #
+  # Macro and industry regime indicators (SPEC §2.2⑨) deliberately do NOT belong
+  # here. They are common to every ticker, so they cancel in the sector-excess
+  # return that PREREGISTRATION §8.4 evaluates against — they could add variance
+  # to this composite but never IC. They are reported as their own section.
+
 # Cut points on the composite score. Symmetric by construction — an asymmetric
 # scale bakes in a directional prior, and any such prior belongs in the weights
 # where it is visible, not hidden in the thresholds.

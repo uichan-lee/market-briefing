@@ -41,11 +41,12 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Component | Status | Notes |
 |---|---|---|
 | Design docs (SPEC, PREREGISTRATION, MANUAL-TASKS) | ✅ Done | Evaluation criteria frozen 2026-08-02 |
-| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 105 tests passing |
+| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 146 tests passing |
 | Time & market sessions (`src/util/session.py`) | ✅ Done | Trading days, DST, look-ahead boundary |
 | Collector validation framework (`src/collectors/validate.py`) | ✅ Done | The four checks every collector must pass |
 | Config loading & safeguards (`src/util/config.py`) | ✅ Done | Rejects alias collisions, unquoted tickers |
 | Directional rating (`src/report/rating.py`) | ✅ Done | 7-point scale + rationale; weights need calibration |
+| AI commentary guard (`src/report/consistency.py`) | ✅ Done | Drops the 총평 if it contradicts the computed rating |
 | Config files | 🟡 Templates | `watchlist.yaml`, `aliases.yaml`, `rating.yaml` need Ricky |
 | API credentials | ⬜ Blocked | See [MANUAL-TASKS.md §1](MANUAL-TASKS.md) |
 | Collectors (price, flow, news, filings, macro) | ⬜ Not started | Next step |
@@ -91,10 +92,18 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
       │  weighted sum of z-scores → 7-point scale, no LLM involved
       │  rationale = the largest terms in that sum
       ↓
-  Report rendering + red team   ─→  reports/YYYY-MM-DD-morning.md
-      │
+  Report rendering              ─→  the deterministic sections, laid out
       ↓
-  Delivery                      ─→  vault (git commit) + email
+  LLM synthesis (Stage 3)       ─→  red team + AI 총평
+      │  reads the rendered sections only — never raw articles,
+      │  so it cannot re-score anything
+      ↓
+  Consistency guard             ─→  every rating label in the 총평 is compared
+      │  against the computed rating; on contradiction the section is
+      │  DROPPED and the reason goes in the header
+      ↓
+  Delivery                      ─→  reports/YYYY-MM-DD-morning.md
+                                    vault (git commit) + email
 ```
 
 ### Why the news pipeline is shaped this way
@@ -103,13 +112,27 @@ The expensive step (LLM scoring) runs last and on the fewest items. Deduplicatio
 
 ### What the briefing contains
 
-1. **US → KR transmission** — the front page, and the only section with no LLM involvement. US sector ETFs mapped to Korean sectors, each shown with its trailing 60-day rolling correlation so a broken-down relationship is visible rather than silently trusted.
+1. **US → KR transmission** — the most defensible quantitative content in the briefing, and one of the sections with no LLM involvement at all. US sector ETFs mapped to Korean sectors, each shown with its trailing 60-day rolling correlation so a broken-down relationship is visible rather than silently trusted.
 2. **Holdings & watchlist scan** — one line per ticker, flagged on foreign-investor flow, new filings, earnings revisions, valuation band, news spikes, volatility.
 3. **News score aggregation** — per-ticker rollup of the Stage 2 scores.
 4. **Calendar** — earnings, FOMC/CPI, options expiry, ex-dividend dates.
 5. **Red team** — the LLM is instructed to argue *only* against the day's conclusions.
 6. **Directional rating** — every ticker on a seven-point scale, with its evidence.
 7. **Shadow portfolio P&L** — what a hypothetical account following those ratings would have done, tracked separately from any real account. This is what makes the ratings falsifiable rather than merely opinionated.
+8. **AI 총평** — five to eight lines synthesizing all of the above into what a reader with thirty seconds needs. LLM-authored, and the only such section besides the red team. See below.
+9. **Medium-term regime** — yield curve, dollar, USD/KRW, WTI, and US sector rotation over 120 days. Deterministic, like ①.
+
+Display order is not ID order: ⑧ renders first (so a rushed reader hits it immediately) but is generated last (it consumes everything else). The IDs are stable identifiers referenced across the docs and code, so they are never renumbered when a section is added.
+
+### How the AI commentary stays honest
+
+The commentary is the only place an LLM writes prose about direction, which is exactly the thing this project otherwise refuses to let a model do. Three properties keep it from becoming the rating, and all three are load-bearing:
+
+- **It reads the rendered deterministic sections, never raw articles.** Scoring already happened upstream; the commentary cannot redo it.
+- **It is checked before publication.** `src/report/consistency.py` finds every rating label in the prose, attributes it to a ticker via `config/aliases.yaml`, and compares it against the computed rating. Contradiction → the section is dropped, and the header says so.
+- **Nothing downstream reads it.** No feature, no score, no shadow portfolio, no evaluation metric. It is a leaf.
+
+The guard is string matching, not a second LLM — a checker that needed judgment to verify a judgment would be checking nothing. It and the prompt are a matched pair: the prompt reserves the seven rating labels as rating vocabulary and requires ordinary market movement be written as `순매수` / `수급 이탈`, which is what makes the matching sound. Without that rule `매수` appears in normal Korean market prose constantly and the section would be dropped daily.
 
 ### How the rating works
 
@@ -122,12 +145,15 @@ A weighted sum of the feature z-scores plus aggregated news polarity, bucketed o
 The rationale is the decomposition of that sum — each term's `weight × z-score`, largest first — so it reports literally what moved the number and cannot drift from it:
 
 ```
-005930 삼성전자 — 매수 (+1.10)
+005930 삼성전자 — 매수 (+1.13)
   · foreign_flow_5d    z=+2.10   기여 +0.63
   · rev_4w             z=+1.20   기여 +0.18
   · rel_strength_20d   z=+0.90   기여 +0.14
   · news_polarity      z=+0.60   기여 +0.12
+  · 그 외 3개 항목                기여 +0.065
 ```
+
+Only the top four contributors are listed, so the residual line is required — otherwise a reader adding up the visible terms gets `+1.065` against a stated `+1.13`, and a number that does not reconcile teaches them to stop checking.
 
 Two guards, because a confident-looking rating on thin evidence is worse than no rating:
 
@@ -150,6 +176,7 @@ market-briefing/
 ├── SPEC.md                    full design spec — the authoritative document
 ├── PREREGISTRATION.md         evaluation criteria, frozen before data collection
 ├── MANUAL-TASKS.md            work only Ricky can do (keys, watchlist, golden set)
+├── API-KEYS.md                how to issue each credential, provider by provider
 ├── CLAUDE.md                  rules for the AI agent working in this repo
 │
 ├── config/
@@ -169,14 +196,18 @@ market-briefing/
 │   ├── entity/                ⬜ ticker matching
 │   ├── embed/                 ⬜ dedup + relevance
 │   ├── features/              ⬜ computation + normalization
-│   ├── llm/                   ⬜ adapter, scoring, synthesis
+│   ├── llm/
+│   │   ├── prompts/
+│   │   │   └── v1_synthesis.md ✅ the AI 총평 prompt
+│   │   └── adapter.py         ⬜ vendor-neutral layer, scoring, synthesis
 │   ├── report/
 │   │   ├── rating.py          ✅ the 7-point directional rating
+│   │   ├── consistency.py     ✅ commentary checked against the rating
 │   │   └── render.py          ⬜ markdown rendering
 │   ├── notify/                ⬜ vault, email, webhook adapters
 │   └── eval/                  ⬜ golden set, bake-off, IC, shadow portfolio
 │
-├── tests/                     105 tests, all offline
+├── tests/                     146 tests, all offline
 └── data/                      gitignored — raw, embeddings, features, scores
 ```
 
@@ -187,6 +218,8 @@ market-briefing/
 **`src/collectors/validate.py`** — Every collector must pass four checks, written before its fetching logic: schema (column names and dtypes), missing-value ratio against a declared threshold, trading-day continuity with holidays excluded, and at least one hardcoded known value. Results are *reported*, not just raised — a failing collector records the failure and lets the pipeline continue, so a partial report still gets published with the gap named in its header.
 
 **`src/report/rating.py`** — Turns feature z-scores into a seven-point directional rating plus the decomposition that produced it. Pure arithmetic and fully reproducible; the same inputs always give the same rating, which an LLM-authored one could not guarantee.
+
+**`src/report/consistency.py`** — The guard on the AI commentary. Finds every rating label in the LLM's prose, attributes it to a ticker through the alias dictionary, and compares it against the computed rating. The interesting part is what it *doesn't* match: `순매수`, `매수세`, `매도호가` are ordinary market vocabulary, not rating claims, so a label glued to an adjacent Hangul syllable is rejected — with an allowlist for trailing particles (`매수는`, `매수로`), which are a closed class where compound nouns are not.
 
 **`src/util/config.py`** — Loading is also validation. It rejects the mistakes that are easy to make by hand and impossible to spot later: an alias claimed by two different tickers, an alias that also appears in its own exclude list, unquoted tickers, and out-of-order rating cut points.
 
@@ -215,8 +248,8 @@ These are Ricky's, in the order they unblock work. Full detail in [MANUAL-TASKS.
 
 | # | Task | Est. time | Blocks |
 |---|---|---|---|
-| 1 | API keys → `.env` | 60–90 min | All collectors |
-| 2 | `config/watchlist.yaml` — 15 KR tickers | 20 min | All collectors |
+| 1 | API keys → `.env` ([API-KEYS.md](API-KEYS.md)) | 60–90 min | API-dependent collectors — *not* `kr_price`/`kr_flow`, which need none |
+| 2 | `config/watchlist.yaml` — 15 KR tickers | 20 min | **Every** collector, including the keyless ones |
 | 3 | `config/aliases.yaml` — one entry per ticker | 60–90 min | Entity resolution, all news features |
 | 4 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection |
 | 5 | Bake-off decision | 30 min | Scoring model choice |
@@ -247,4 +280,5 @@ Criteria were frozen in [PREREGISTRATION.md](PREREGISTRATION.md) on 2026-08-02, 
 | [SPEC.md](SPEC.md) | Full design spec. The authoritative document. |
 | [PREREGISTRATION.md](PREREGISTRATION.md) | Evaluation criteria, frozen before collection. |
 | [MANUAL-TASKS.md](MANUAL-TASKS.md) | Work only Ricky can do, ordered by what it blocks. |
+| [API-KEYS.md](API-KEYS.md) | Signup walkthrough for every credential, with the per-provider traps. |
 | [CLAUDE.md](CLAUDE.md) | Operating rules for the AI agent working in this repo. |
