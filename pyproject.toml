@@ -9,10 +9,28 @@ requires-python = ">=3.11"
 # sentence-transformers, litellm); each is added alongside its own collector or
 # stage, with a stated reason, per CLAUDE.md "ask before adding a dependency".
 dependencies = [
-    "pandas>=2.0",
+    # Pinned below 3.0 deliberately, not by accident. pykrx — the KRX data
+    # source SPEC §3.1 specifies, and the origin of foreign_flow_5d, the
+    # project's most differentiated feature — caps pandas at <3.0. Resolving
+    # against pandas 3 silently backsolves to pykrx 1.0.51, a version old
+    # enough that it fails to import on Python 3.13 and whose scraping logic
+    # predates the current KRX site by years.
+    #
+    # For a library whose entire job is scraping a site that changes, being
+    # maintained matters more than the pandas major version. Other Korean
+    # finance libraries still to be added (dart-fss, python-kis) are likely to
+    # carry the same cap, so this pin is expected to hold for a while.
+    #
+    # The cost is visible in tests/test_validate.py: pandas 2 types a text
+    # column as `object`, pandas 3 as `str`. Revisit when pykrx supports
+    # pandas 3, and expect that schema convention to flip back.
+    "pandas>=2.2,<3.0",
     # CLAUDE.md mandates market-session logic come from a calendar library,
     # never hardcoded holidays or DST transitions.
     "pandas-market-calendars>=4.4",
+    # SPEC §3.1: KR OHLCV, net buying by investor type, short-interest balance,
+    # market cap/PER/PBR. No credential — it scrapes KRX. Sleep between calls.
+    "pykrx>=1.2.8",
     "pyyaml>=6.0",
 ]
 

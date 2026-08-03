@@ -49,7 +49,8 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | AI commentary guard (`src/report/consistency.py`) | ✅ Done | Drops the 총평 if it contradicts the computed rating |
 | Config files | 🟡 Templates | `watchlist.yaml`, `aliases.yaml`, `rating.yaml` need Ricky |
 | API credentials | ⬜ Blocked | See [MANUAL-TASKS.md §1](MANUAL-TASKS.md) |
-| Collectors (price, flow, news, filings, macro) | ⬜ Not started | Next step |
+| `kr_price` collector (pykrx OHLCV) | ✅ Done | Four checks + committed fixture; known value cross-checked against Naver |
+| `kr_flow` and the rest of the collectors | 🟡 Blocked | KRX now requires a login — see below |
 | Entity resolution | ⬜ Not started | |
 | Embedding pipeline (dedup + relevance) | ⬜ Not started | |
 | Golden set (100 hand-labeled articles) | ⬜ Not started | Ricky's task, blocks model selection |
@@ -58,7 +59,9 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Report renderer + delivery | ⬜ Not started | |
 | GitHub Actions workflow | ⬜ Not started | |
 
-**Immediate blocker:** `config/watchlist.yaml` needs 13 more tickers and `config/aliases.yaml` needs one entry each. Once the watchlist exists, the first collector (`kr_price` via pykrx) needs no API key and can be built right away.
+**Immediate blocker: a free KRX Data Marketplace account.** As of 2026-08-03 `data.krx.co.kr` returns HTTP 400 `LOGOUT` without a session — the old open 정보데이터시스템 became members-only. Daily OHLCV still works (pykrx falls back to Naver), which is why `kr_price` is built and passing. Investor flows, short interest, market cap and fundamentals do not, and those carry **55% of the rating weight**; the remaining 45% sits under the confidence floor, so every ticker would rate `관망`. Registration takes minutes and is free: [API-KEYS.md §0](API-KEYS.md).
+
+After that, `config/watchlist.yaml` needs 13 more tickers and `config/aliases.yaml` one entry each.
 
 ---
 

@@ -12,6 +12,7 @@ Estimated time: 60–90 minutes total, mostly waiting on approvals.
 
 | Item | Where | Notes |
 |---|---|---|
+| **KRX Data Marketplace** | data.krx.co.kr | **Free, minutes, and now mandatory.** Register with a native ID/PW, not social login. Blocks 55% of the rating weight — see API-KEYS.md §0. |
 | DART OpenAPI key | opendart.fss.or.kr | Instant issue. Free. |
 | Naver Developers app | developers.naver.com | Register an application, enable the 검색 (search) API, record client ID and secret. |
 | KIS Open API keys | 한국투자증권 → 트레이딩 → Open API → KIS Developers | Requires a securities account, and the **모의투자** environment is a separate prior signup. Approval is not always instant — **start this one first**. |
@@ -31,8 +32,10 @@ Store all of these in `.env` locally and as GitHub repository secrets. Never pas
 
 **Step-by-step issuance instructions: @API-KEYS.md.** That document covers each provider's signup screen, which options to select, and the non-obvious traps — in particular the KIS `API그룹` selection, which is the strongest available enforcement of absolute rule 2, and the fact that Naver news cannot be backfilled.
 
-> [!note] None of this blocks the first collector
-> `kr_price` and `kr_flow` run on pykrx, which scrapes KRX and needs no credential at all. The genuine blocker for starting code is §2 (watchlist), not this section. Apply for KIS first because it is the only item with an approval queue, then issue the instant ones while it is pending.
+> [!warning] Do the KRX registration first
+> `kr_price` (daily OHLCV) is built and passing without any credential, because pykrx serves OHLCV through a Naver fallback. Everything else pykrx offers — investor flows, short interest, market cap, fundamentals — now requires a KRX Data Marketplace login, verified 2026-08-03.
+>
+> Those four carry 55% of the §2.2⑥ rating weight, and the remainder falls below the confidence floor, so without KRX credentials every ticker rates `관망`. It takes minutes and is free. Do it before anything else here, then start the KIS application since it is the only item with an approval queue.
 
 ---
 

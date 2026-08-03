@@ -19,9 +19,10 @@ from src.collectors.validate import (
     validate,
 )
 
-# Under pandas 3.x a text column is `str`, not `object`. Declaring `object` here
-# would be a schema written from pandas 2.x habit rather than from the data.
-SCHEMA = {"date": "datetime64[s]", "ticker": "str", "close": "float64"}
+# A text column is `object` under pandas 2.x and `str` under 3.x. pyproject.toml
+# pins pandas <3.0 because pykrx requires it, so `object` is correct here — and
+# this line is the first thing to change when that pin is lifted.
+SCHEMA = {"date": "datetime64[s]", "ticker": "object", "close": "float64"}
 
 
 def frame(dates: list[dt.date], ticker: str = "005930", close: float = 55_000.0) -> pd.DataFrame:

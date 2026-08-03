@@ -20,9 +20,10 @@ channels:
   # Neither address is a secret. The password lives in SMTP_PASSWORD, never here.
   - type: email
     to: "rickylee7185@gmail.com"
-    from: "" # TODO(Ricky): the dedicated sending account
+    from: "marketbriefing.0803@gmail.com" # dedicated account, created 2026-08-03
     smtp_secret: SMTP_PASSWORD
     body: summary # summary | full
+
 
   # Generic POST (Slack/Discord/Kakao). SPEC §2.0 specifies it be implemented but
   # left inactive, so it is intentionally absent here rather than disabled — a

@@ -238,13 +238,24 @@ Section IDs ①–⑨ are **stable identifiers**, referenced from `src/report/ra
 
 | Source | Purpose | Auth | Library | Notes |
 |---|---|---|---|---|
-| pykrx | OHLCV, net buying by investor type, short-interest balance, market cap/PER/PBR | None | `pykrx` | Based on KRX scraping. Sleep required between calls |
+| pykrx | OHLCV, net buying by investor type, short-interest balance, market cap/PER/PBR | **KRX account** (was: none) | `pykrx>=1.2.8` | Based on KRX scraping. Sleep required between calls. See the warning below |
 | DART OpenAPI | Filing lists, financial statements | API key (free) | `dart-fss` or direct | Daily call limit applies |
 | KIS Open API | Real-time quotes, balances | App key/secret | `python-kis` | Mock trading environment provided. **Read-only in stage 1** |
 | Naver News API | Ticker news, mention volume | Client ID/secret | Direct | Limited number of search results |
 
 > [!important] A structural edge in the Korean market
 > Daily net buying by investor type (foreign/institutional/retail) doesn't exist as a data source in the US. This pipeline's most differentiated feature comes from here. It's especially notable as a **signal obtained without an LLM**.
+
+> [!danger] KRX now requires a login, and it gates most of the rating
+> Verified 2026-08-03 by direct request: `data.krx.co.kr` answers **HTTP 400 `LOGOUT`** without a session. The old 정보데이터시스템 was replaced by the members-only KRX Data Marketplace. Registration is free, but it is no longer optional.
+>
+> What still works unauthenticated: **daily OHLCV only** — pykrx serves it through a Naver fallback path. What does not: investor flows, short-interest balance, market cap, and fundamentals.
+>
+> That maps onto **55% of the §2.2⑥ rating weight**: `foreign_flow_5d` (0.30), `inst_flow_5d` (0.15), `short_ratio` (0.10), `valuation_band` (0.05). The remaining 45% sits below the `min_weight_coverage: 0.5` floor, so without KRX credentials **every ticker is forced to 관망** — the pipeline runs and produces nothing usable.
+>
+> Credentials go in `KRX_ID` / `KRX_PW`; pykrx ≥1.2.8 reads them. Issuance: API-KEYS.md §0.
+>
+> Note also that **pykrx signals failure by returning an empty DataFrame**, not by raising. `src/collectors/kr_price.py` treats "empty while the calendar says there were trading days" as a validation failure for exactly this reason.
 
 ### 3.2 United States
 
@@ -253,7 +264,7 @@ Section IDs ①–⑨ are **stable identifiers**, referenced from `src/report/ra
 | SEC EDGAR | Full text of 8-K/10-Q/10-K, Form 4 insider trading | None (User-Agent required) | Full-text search API available |
 | FRED | Interest rates, FX, macro | API key (free) | `fredapi` |
 | yfinance | OHLCV backfill | None | Unofficial. **Do not depend on it in production**; backfill only |
-| Alpaca / Tiingo | OHLCV, news | API key (free tier) | Pick one to use as the production quote source |
+| Alpaca / Tiingo | OHLCV, news | API key (free tier) | **Tiingo chosen 2026-08-03.** Its free tier centers on EOD daily bars, which is what this project needs; Alpaca's free market data is limited to the IEX feed, a fraction of consolidated volume, so its closes can differ from the official close |
 | GDELT | Global news volume | None | Useful for computing mention-volume z-scores |
 
 ### 3.3 Storage layout

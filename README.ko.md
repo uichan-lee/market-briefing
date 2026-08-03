@@ -49,7 +49,8 @@ English: [README.md](README.md)
 | AI 총평 가드 (`src/report/consistency.py`) | ✅ 완료 | 총평이 계산된 등급과 모순되면 섹션을 드롭 |
 | Config 파일 | 🟡 템플릿 | `watchlist.yaml`, `aliases.yaml`, `rating.yaml`은 Ricky가 채워야 함 |
 | API 인증 정보 | ⬜ 대기 | [MANUAL-TASKS.md §1](MANUAL-TASKS.md) 참조 |
-| Collector (시세, 수급, 뉴스, 공시, 매크로) | ⬜ 미착수 | 다음 단계 |
+| `kr_price` collector (pykrx OHLCV) | ✅ 완료 | 4가지 검사 + 커밋된 픽스처. 기준값은 네이버 금융과 교차 확인 |
+| `kr_flow` 및 나머지 collector | 🟡 막힘 | KRX가 로그인을 요구하게 됨 — 아래 참조 |
 | 엔티티 해석 | ⬜ 미착수 | |
 | 임베딩 파이프라인 (중복 제거 + 관련성) | ⬜ 미착수 | |
 | 골든셋 (100건 직접 라벨링) | ⬜ 미착수 | Ricky 작업, 모델 선택을 막고 있음 |
@@ -58,7 +59,9 @@ English: [README.md](README.md)
 | 리포트 렌더러 + 전달 | ⬜ 미착수 | |
 | GitHub Actions 워크플로우 | ⬜ 미착수 | |
 
-**당장의 병목:** `config/watchlist.yaml`에 13종목이 더 필요하고, `config/aliases.yaml`에는 종목당 항목 하나씩이 필요하다. watchlist만 채워지면 첫 collector(`kr_price`, pykrx 사용)는 API 키 없이도 바로 만들 수 있다.
+**당장의 병목: KRX Data Marketplace 무료 계정.** 2026-08-03 기준 `data.krx.co.kr`은 세션 없이 요청하면 HTTP 400 `LOGOUT`을 반환한다. 기존의 열린 정보데이터시스템이 회원제로 바뀌었다. 일봉은 여전히 동작하고(pykrx가 네이버로 폴백한다) 그래서 `kr_price`는 이미 만들어져 통과한다. 하지만 투자자별 순매수, 공매도 잔고, 시가총액, 펀더멘털은 안 되고, 이 넷이 **등급 가중치의 55%**를 차지한다. 남는 45%는 신뢰도 하한 아래라 모든 종목이 `관망`으로 나온다. 가입은 무료이고 몇 분이면 된다: [API-KEYS.md §0](API-KEYS.md).
+
+그 다음이 `config/watchlist.yaml` 13종목과 `config/aliases.yaml` 종목당 항목 하나씩이다.
 
 ---
 

@@ -17,7 +17,7 @@ Do **not** wait for all keys before writing code. The first collector needs none
 
 | # | Credential | Issue time | Unblocks | Do it |
 |---|---|---|---|---|
-| 0 | *(none)* | — | `kr_price`, `kr_flow` — pykrx scrapes KRX, no auth | already unblocked |
+| 0 | **KRX Data Marketplace** | minutes | `kr_flow`, short interest, market cap, fundamentals — **55% of the rating weight** | **first** |
 | 1 | **KIS** | **days** — approval is not instant | real-time quotes (§3.1) | **first, because of the wait** |
 | 2 | Naver | instant | `kr_news` → the entire news pipeline | today |
 | 3 | DART | instant | `kr_filings` | today |
@@ -28,8 +28,45 @@ Do **not** wait for all keys before writing code. The first collector needs none
 
 Everything except KIS is same-day. Start the KIS application, then do the rest while it is pending.
 
-> [!note] KIS is less urgent than its position in this table suggests
-> pykrx already supplies OHLCV, net buying by investor type, and short-interest balance without any credential — which is the bulk of what SPEC §3.1 wants from Korea. KIS adds real-time quotes on top. It is listed first only because it is the one item with a queue.
+---
+
+## 0. KRX Data Marketplace — the one that actually blocks the rating
+
+> [!danger] This was not required when this document was first written
+> The old 정보데이터시스템 let anyone query without an account. It has been replaced by the members-only **KRX Data Marketplace**, and login is mandatory. Verified 2026-08-03 by direct request: `data.krx.co.kr` returns **HTTP 400 with the body `LOGOUT`**.
+
+**What still works without it:** daily OHLCV only. pykrx serves that through a Naver fallback, which is why `kr_price` is already built and passing.
+
+**What does not:** net buying by investor type, short-interest balance, market cap, fundamentals.
+
+That is not a minor gap. Those four supply **55% of the §2.2⑥ rating weight**:
+
+| Feature | Weight | Status |
+|---|---|---|
+| `foreign_flow_5d` | 0.30 | blocked — SPEC §3.1 calls this the project's structural edge |
+| `inst_flow_5d` | 0.15 | blocked |
+| `short_ratio` | −0.10 | blocked |
+| `valuation_band` | 0.05 | blocked |
+| `news_polarity`, `rel_strength_20d`, `rev_4w` | 0.50 | available |
+
+The surviving 45% is below `min_weight_coverage: 0.5`, so **every ticker would be forced to 관망**. The pipeline would run, publish, and say nothing.
+
+### Registering
+
+data.krx.co.kr → 회원가입
+
+- Free. Data queries remain free; the change was to stop unauthenticated bulk scraping.
+- Naver/Kakao social login is offered, but **register with a native ID and password.** pykrx performs a form login and needs an actual password; a social account has none it can use.
+
+```
+KRX_ID=
+KRX_PW=
+```
+
+pykrx ≥ 1.2.8 reads these two environment variables and logs in automatically. Older pykrx has no login support at all — and 1.0.51, which is what dependency resolvers pick when pandas 3 is present, fails to import on Python 3.13 entirely.
+
+> [!note] There is also an official API
+> `openapi.krx.co.kr` is a separate, documented KRX Open API requiring an auth key with administrator approval. It is the cleaner long-term answer than scraping, and worth evaluating if the Marketplace login proves unreliable in CI. Not pursued yet.
 
 ---
 
@@ -225,7 +262,7 @@ TIINGO_API_KEY=
 # leave ALPACA_* blank
 ```
 
-Record whichever was chosen, and why, in SPEC §3.2.
+**Decided 2026-08-03: Tiingo.** Recorded in SPEC §3.2; `ALPACA_*` stay blank.
 
 ---
 
