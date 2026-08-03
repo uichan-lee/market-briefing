@@ -10,12 +10,19 @@ channels:
     path: reports/
     commit: true
 
-  # Mobile reading. Fill `to` with the dedicated address from MANUAL-TASKS.md §1;
-  # the password itself lives in the SMTP_PASSWORD secret, never here.
+  # Mobile reading. Two different addresses, and conflating them is exactly the
+  # mistake MANUAL-TASKS.md §1 warns about:
+  #   `to`   — where Ricky reads mail. A personal address is correct here.
+  #   `from` — the dedicated account SMTP_PASSWORD authenticates as. Never a
+  #            primary address: this credential goes into a GitHub Actions
+  #            secret, and a CI secret must not grant access to a personal
+  #            mailbox.
+  # Neither address is a secret. The password lives in SMTP_PASSWORD, never here.
   - type: email
-    to: ""                    # TODO(Ricky): dedicated address, not a primary one
+    to: "rickylee7185@gmail.com"
+    from: "" # TODO(Ricky): the dedicated sending account
     smtp_secret: SMTP_PASSWORD
-    body: summary             # summary | full
+    body: summary # summary | full
 
   # Generic POST (Slack/Discord/Kakao). SPEC §2.0 specifies it be implemented but
   # left inactive, so it is intentionally absent here rather than disabled — a
