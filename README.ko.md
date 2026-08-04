@@ -47,7 +47,7 @@ English: [README.md](README.md)
 | Config 로딩·안전장치 (`src/util/config.py`) | ✅ 완료 | 별칭 충돌, 따옴표 없는 종목코드 차단 |
 | 방향성 등급 (`src/report/rating.py`) | ✅ 완료 | 7단계 등급 + 근거. 가중치는 캘리브레이션 필요 |
 | AI 총평 가드 (`src/report/consistency.py`) | ✅ 완료 | 총평이 계산된 등급과 모순되면 섹션을 드롭 |
-| Config 파일 | 🟡 템플릿 | `watchlist.yaml`, `aliases.yaml`, `rating.yaml`은 Ricky가 채워야 함 — **지금 Claude를 막는 유일한 것** |
+| Config 파일 | 🟡 일부 완료 | `watchlist.yaml` 완료 — KR 19 + US 14, 전부 실데이터로 검증. `aliases.yaml`이 **지금 Claude를 막는 유일한 것** |
 | API 인증 정보 | ✅ 완료 | KRX 실측 검증, 7개 값 전부 Actions secrets에 등록. KIS만 미완이고 아직 아무것도 막지 않는다 |
 | `kr_price` collector (pykrx OHLCV) | ✅ 완료 | 4가지 검사 + 커밋된 픽스처. 기준값은 네이버 금융과 교차 확인 |
 | `macro` collector (FRED) | ✅ 완료 | 6개 시리즈 실측 확인. 기준값은 미 재무부와 교차 확인 |
@@ -66,7 +66,7 @@ English: [README.md](README.md)
 
 **KRX 병목은 해소됐다.** `data.krx.co.kr`이 회원제로 바뀌면서 세션 없는 요청에 HTTP 400 `LOGOUT`을 반환했고, 그 결과 투자자별 순매수·공매도 잔고·시가총액·펀더멘털이 모두 막혀 있었다. **등급 가중치의 55%**이고, 모든 종목을 `관망`으로 몰기에 충분한 양이다. 이제 로그인이 되고, 막혀 있던 6개 엔드포인트를 2026-08-04에 실측으로 확인했다 ([API-KEYS.md §0](API-KEYS.md)). 그 위에 `kr_flow`를 올리는 건 Ricky가 아니라 Claude의 작업이다.
 
-**지금 Claude를 막고 있는 건 config다.** `config/watchlist.yaml`에 13종목, `config/aliases.yaml`에 종목당 항목 하나가 필요하다. 둘 다 기계적인 절반은 `scripts/config_helper.py`가 만들어 준다 — [MANUAL-TASKS.md §2–§3](MANUAL-TASKS.md).
+**지금 Claude를 막고 있는 건 `config/aliases.yaml`이다.** 워치리스트는 채워졌다 — 한국 엔티티 해석을 어렵게 만드는 두산·삼성·한화·LG 클러스터를 포함한 한국 19종목, 그리고 미국 14종목. 한국 종목마다 별칭 항목이 하나씩 필요하고, 기계적인 절반과 결과 감사는 `scripts/config_helper.py`가 맡는다 — [MANUAL-TASKS.md §3](MANUAL-TASKS.md).
 
 ---
 
@@ -265,15 +265,14 @@ Ricky의 작업이고, 무엇을 푸는지 순서대로 정렬했다. 상세 내
 
 | # | 작업 | 예상 시간 | 막고 있는 것 |
 |---|---|---|---|
-| 1 | `config/watchlist.yaml` — KR 15종목 (`config_helper.py find`) | 15분 | `kr_price`, `kr_flow`. `kr_news`·`macro`는 종목과 무관하므로 해당 없음 |
-| 2 | `config/aliases.yaml` — 종목당 항목 1개 (`scaffold` → `audit`) | 40~60분 | 엔티티 해석, 모든 뉴스 피처 |
-| 3 | 골든셋 — 100건 직접 라벨링 | 약 2시간 | 모델 선택 |
-| 4 | 베이크오프 결정 | 30분 | 스코어링 모델 확정 |
-| 5 | `config/rating.yaml` 캘리브레이션 | 30분 | 신뢰할 수 있는 등급 (실데이터 1~2주 쌓인 *후에*) |
+| 1 | `config/aliases.yaml` — KR 종목당 항목 1개 (`scaffold` → `audit`) | 60~75분 | 엔티티 해석, 모든 뉴스 피처 |
+| 2 | 골든셋 — 100건 직접 라벨링 | 약 2시간 | 모델 선택 |
+| 3 | 베이크오프 결정 | 30분 | 스코어링 모델 확정 |
+| 4 | `config/rating.yaml` 캘리브레이션 | 30분 | 신뢰할 수 있는 등급 (실데이터 1~2주 쌓인 *후에*) |
 
-인증 정보와 그에 앞선 `.env` 수정 두 건은 끝났다 — KRX는 막혀 있던 6개 엔드포인트로 검증했고, SPY 기준값은 Yahoo Finance와 교차 확인했고, secrets는 전부 Actions에 올렸다.
+인증 정보, `.env` 수정 두 건, 워치리스트는 끝났다 — KRX는 막혀 있던 6개 엔드포인트로 검증했고, SPY 기준값은 Yahoo Finance와 교차 확인했고, secrets는 전부 Actions에 올렸고, KR 19 + US 14종목이 수집기를 통해 실제 데이터를 반환하는 것까지 확인했다.
 
-3번이 건너뛰고 싶어질 작업이다. 코드를 안 쓰는 유일한 단계이고, 건너뛰면 베이크오프가 불가능해져서 모델 선택이 "Claude가 좋아 보여서"로 끝난다.
+2번이 건너뛰고 싶어질 작업이다. 코드를 안 쓰는 유일한 단계이고, 건너뛰면 베이크오프가 불가능해져서 모델 선택이 "Claude가 좋아 보여서"로 끝난다.
 
 ---
 

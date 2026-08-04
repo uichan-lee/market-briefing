@@ -47,7 +47,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Config loading & safeguards (`src/util/config.py`) | ✅ Done | Rejects alias collisions, unquoted tickers |
 | Directional rating (`src/report/rating.py`) | ✅ Done | 7-point scale + rationale; weights need calibration |
 | AI commentary guard (`src/report/consistency.py`) | ✅ Done | Drops the 총평 if it contradicts the computed rating |
-| Config files | 🟡 Templates | `watchlist.yaml`, `aliases.yaml`, `rating.yaml` need Ricky — **the only thing blocking Claude** |
+| Config files | 🟡 Partial | `watchlist.yaml` done — 19 KR + 14 US, all verified against live data. `aliases.yaml` is **the only thing blocking Claude** |
 | API credentials | ✅ Done | KRX verified live; all 7 values mirrored into Actions secrets. Only KIS outstanding, and it blocks nothing yet |
 | `kr_price` collector (pykrx OHLCV) | ✅ Done | Four checks + committed fixture; known value cross-checked against Naver |
 | `macro` collector (FRED) | ✅ Done | 6 series verified live; known value cross-checked against Treasury |
@@ -66,7 +66,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 
 **The KRX blocker is cleared.** `data.krx.co.kr` went members-only and returned HTTP 400 `LOGOUT` without a session, which withheld investor flows, short interest, market cap and fundamentals — **55% of the rating weight**, enough to force every ticker to `관망`. A login now works and all six gated endpoints were verified live on 2026-08-04 ([API-KEYS.md §0](API-KEYS.md)). Building `kr_flow` on top is Claude's work, not Ricky's.
 
-**What blocks Claude now is config.** `config/watchlist.yaml` needs 13 more tickers and `config/aliases.yaml` one entry each. `scripts/config_helper.py` generates the mechanical half of both — see [MANUAL-TASKS.md §2–§3](MANUAL-TASKS.md).
+**What blocks Claude now is `config/aliases.yaml`.** The watchlist is filled — 19 Korean tickers including the 두산, 삼성, 한화 and LG clusters that make Korean entity resolution hard, plus 14 US names. Each Korean ticker needs an alias entry; `scripts/config_helper.py` generates the mechanical half and audits the result against the news already collected — see [MANUAL-TASKS.md §3](MANUAL-TASKS.md).
 
 ---
 
@@ -265,15 +265,14 @@ These are Ricky's, in the order they unblock work. Full detail in [MANUAL-TASKS.
 
 | # | Task | Est. time | Blocks |
 |---|---|---|---|
-| 1 | `config/watchlist.yaml` — 15 KR tickers (`config_helper.py find`) | 15 min | `kr_price`, `kr_flow`. Not `kr_news` or `macro`, which are ticker-agnostic |
-| 2 | `config/aliases.yaml` — one entry per ticker (`scaffold` → `audit`) | 40–60 min | Entity resolution, all news features |
-| 3 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection |
-| 4 | Bake-off decision | 30 min | Scoring model choice |
-| 5 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
+| 1 | `config/aliases.yaml` — one entry per KR ticker (`scaffold` → `audit`) | 60–75 min | Entity resolution, all news features |
+| 2 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection |
+| 3 | Bake-off decision | 30 min | Scoring model choice |
+| 4 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
 
-Credentials and the two `.env` fixes that preceded them are done — KRX verified against all six gated endpoints, SPY's known value cross-checked against Yahoo Finance, and every secret mirrored to Actions.
+Credentials, the two `.env` fixes, and the watchlist are done — KRX verified against all six gated endpoints, SPY's known value cross-checked against Yahoo Finance, every secret mirrored to Actions, and 19 KR + 14 US tickers confirmed to return real data through the collectors.
 
-Task 3 is the one that will feel skippable. It is the only step involving no code, and skipping it makes the bake-off impossible — model selection then ends at "Claude seemed good."
+Task 2 is the one that will feel skippable. It is the only step involving no code, and skipping it makes the bake-off impossible — model selection then ends at "Claude seemed good."
 
 ---
 

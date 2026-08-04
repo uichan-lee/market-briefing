@@ -60,49 +60,93 @@ def _require_quoted_ticker(ticker: Any, source: str) -> str:
 # --- watchlist -----------------------------------------------------------
 
 
+_US_TICKER = re.compile(r"^[A-Z][A-Z.\-]{0,9}$")
+
+
 @dataclass(frozen=True)
 class WatchlistEntry:
     ticker: str
     name: str
     sector: str | None
     held: bool
+    market: str  # "KR" or "US"
 
 
-def load_watchlist(path: Path | None = None) -> list[WatchlistEntry]:
+def _require_us_ticker(ticker: Any, source: str) -> str:
+    """Validate a US symbol, with the YAML-boolean trap called out by name.
+
+    The Korean side is protected against YAML's octal rule; the US side has the
+    same class of hazard from a different rule. YAML 1.1 reads bare ``ON``,
+    ``NO``, ``Y`` and ``OFF`` as booleans, so an unquoted ticker among those
+    becomes ``True``/``False`` and every downstream lookup for it fails in a way
+    that never mentions YAML. Quoting is required here for the same reason it is
+    required there.
+    """
+    if isinstance(ticker, bool):
+        raise ConfigError(
+            f"{source}: ticker {ticker!r} was parsed as a boolean, which means it was left "
+            "unquoted in YAML. YAML 1.1 reads ON/OFF/YES/NO/Y/N as booleans. Quote it."
+        )
+    if not isinstance(ticker, str):
+        raise ConfigError(f"{source}: ticker {ticker!r} is {type(ticker).__name__}, expected str")
+    if not _US_TICKER.match(ticker):
+        raise ConfigError(
+            f"{source}: ticker {ticker!r} is not a US symbol (uppercase letters, . or -)"
+        )
+    return ticker
+
+
+def load_watchlist(path: Path | None = None, *, market: str | None = None) -> list[WatchlistEntry]:
     """Load ``config/watchlist.yaml``.
 
-    An empty Korean watchlist is allowed — it is the file's committed starting
-    state, and MANUAL-TASKS.md §2 leaves filling it to Ricky. Callers that
-    require a populated list should say so themselves rather than have loading
-    fail here.
+    Both the ``kr`` and ``us`` sections are read. ``market`` filters to one of
+    them; ``None`` returns both. Callers doing Korean-only work — alias
+    scaffolding, news matching — must pass ``"KR"``, because a US symbol has no
+    KRX listing and no Korean news to match against.
+
+    An empty watchlist is allowed. It is the file's committed starting state and
+    MANUAL-TASKS.md §2 leaves filling it to Ricky, so callers that require a
+    populated list say so themselves rather than have loading fail here.
+
+    Tickers are namespaced per market: ``005930`` and ``AAPL`` cannot collide,
+    but two entries within the same market can, and that is rejected.
     """
     path = path or CONFIG_DIR / "watchlist.yaml"
     raw = _read_yaml(path) or {}
     source = path.name
 
+    if market is not None and market not in ("KR", "US"):
+        raise ConfigError(f"market must be 'KR', 'US' or None, got {market!r}")
+
     entries: list[WatchlistEntry] = []
-    seen: set[str] = set()
 
-    for row in raw.get("kr") or []:
-        if not isinstance(row, dict):
-            raise ConfigError(f"{source}: expected a mapping per entry, got {row!r}")
-        missing = {"ticker", "name"} - row.keys()
-        if missing:
-            raise ConfigError(f"{source}: entry {row!r} is missing {sorted(missing)}")
+    for section, validator in (("kr", _require_quoted_ticker), ("us", _require_us_ticker)):
+        code = section.upper()
+        if market is not None and market != code:
+            continue
 
-        ticker = _require_quoted_ticker(row["ticker"], source)
-        if ticker in seen:
-            raise ConfigError(f"{source}: ticker {ticker} listed twice")
-        seen.add(ticker)
+        seen: set[str] = set()
+        for row in raw.get(section) or []:
+            if not isinstance(row, dict):
+                raise ConfigError(f"{source}: expected a mapping per entry, got {row!r}")
+            missing = {"ticker", "name"} - row.keys()
+            if missing:
+                raise ConfigError(f"{source}: entry {row!r} is missing {sorted(missing)}")
 
-        entries.append(
-            WatchlistEntry(
-                ticker=ticker,
-                name=str(row["name"]),
-                sector=row.get("sector"),
-                held=bool(row.get("held", False)),
+            ticker = validator(row["ticker"], source)
+            if ticker in seen:
+                raise ConfigError(f"{source}: {code} ticker {ticker} listed twice")
+            seen.add(ticker)
+
+            entries.append(
+                WatchlistEntry(
+                    ticker=ticker,
+                    name=str(row["name"]),
+                    sector=row.get("sector"),
+                    held=bool(row.get("held", False)),
+                    market=code,
+                )
             )
-        )
 
     return entries
 

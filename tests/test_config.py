@@ -164,6 +164,77 @@ def test_held_defaults_to_false(tmp_path):
     assert load_watchlist(path)[0].held is False
 
 
+# --- watchlist: the US section --------------------------------------------
+
+
+def _both(tmp_path):
+    return write(
+        tmp_path,
+        "watchlist.yaml",
+        'kr:\n  - ticker: "005930"\n    name: 삼성전자\nus:\n  - ticker: "AAPL"\n    name: Apple\n',
+    )
+
+
+def test_both_market_sections_are_read(tmp_path):
+    # The regression this guards: the loader read only `kr`, so US entries were
+    # accepted by YAML and then silently dropped — the exact quiet failure this
+    # project treats as its worst outcome.
+    entries = load_watchlist(_both(tmp_path))
+    assert {(e.ticker, e.market) for e in entries} == {("005930", "KR"), ("AAPL", "US")}
+
+
+def test_market_filters_to_one_section(tmp_path):
+    path = _both(tmp_path)
+    assert [e.ticker for e in load_watchlist(path, market="KR")] == ["005930"]
+    assert [e.ticker for e in load_watchlist(path, market="US")] == ["AAPL"]
+
+
+def test_an_unknown_market_is_rejected(tmp_path):
+    with pytest.raises(ConfigError, match="market must be"):
+        load_watchlist(_both(tmp_path), market="JP")
+
+
+def test_an_unquoted_us_ticker_parsed_as_a_boolean_is_rejected(tmp_path):
+    # YAML 1.1 reads bare ON as True. This is the US-side counterpart of the
+    # octal trap, and it fails identically: a ticker that is no longer a string.
+    path = write(tmp_path, "watchlist.yaml", "us:\n  - ticker: ON\n    name: ON Semiconductor\n")
+    with pytest.raises(ConfigError, match="parsed as a boolean"):
+        load_watchlist(path)
+
+
+def test_a_lowercase_us_ticker_is_rejected(tmp_path):
+    path = write(tmp_path, "watchlist.yaml", 'us:\n  - ticker: "aapl"\n    name: Apple\n')
+    with pytest.raises(ConfigError, match="not a US symbol"):
+        load_watchlist(path)
+
+
+def test_a_us_ticker_may_carry_a_dot_or_dash(tmp_path):
+    # Class-share symbols such as BRK.B and BF-B are legitimate.
+    path = write(tmp_path, "watchlist.yaml", 'us:\n  - ticker: "BRK.B"\n    name: Berkshire\n')
+    assert load_watchlist(path)[0].ticker == "BRK.B"
+
+
+def test_the_same_symbol_in_both_markets_does_not_collide(tmp_path):
+    # Tickers are namespaced per market, so a six-digit KR code and a US symbol
+    # can never conflict — but duplicates *within* one market still must.
+    path = write(
+        tmp_path,
+        "watchlist.yaml",
+        'us:\n  - ticker: "AAPL"\n    name: a\n  - ticker: "AAPL"\n    name: b\n',
+    )
+    with pytest.raises(ConfigError, match="US ticker AAPL listed twice"):
+        load_watchlist(path)
+
+
+def test_the_committed_watchlist_holds_both_markets(tmp_path):
+    kr = load_watchlist(market="KR")
+    us = load_watchlist(market="US")
+    assert len(kr) >= 15, "MANUAL-TASKS.md §2 asks for at least 15 Korean tickers"
+    assert us, "the US section is populated; SPEC §2.2① reads across from it"
+    # Every US symbol was verified against Tiingo when the file was written.
+    assert {"NVDA", "MU", "AAPL"} <= {e.ticker for e in us}
+
+
 # --- delivery -------------------------------------------------------------
 
 

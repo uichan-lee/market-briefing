@@ -1,47 +1,266 @@
-# Watchlist. MANUAL-TASKS.md §2 — Ricky fills this in; it is BLOCKING.
+# Watchlist. MANUAL-TASKS.md §2.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# ALWAYS QUOTE THE TICKER.
+# ALWAYS QUOTE THE TICKER — in both sections, for two different reasons.
 #
-# YAML reads a bare leading-zero number as octal, so an unquoted 000660 becomes
-# the integer 432 and every downstream number for SK하이닉스 is silently wrong.
-# 005930 happens to survive only because 9 is not a valid octal digit — which
-# makes this failure inconsistent and easy to miss. The loader rejects unquoted
-# tickers outright rather than trusting this comment.
+# kr: YAML reads a bare leading-zero number as octal, so an unquoted 000660
+#     becomes the integer 432 and every downstream number for SK하이닉스 is
+#     silently wrong. 005930 survives only because 9 is not a valid octal digit,
+#     which makes this failure inconsistent and easy to miss.
+#
+# us: YAML 1.1 reads bare ON, OFF, YES, NO, Y and N as booleans. An unquoted
+#     ticker among those becomes True/False and every lookup for it fails
+#     without ever mentioning YAML.
+#
+# The loader rejects both rather than trusting this comment.
 # ─────────────────────────────────────────────────────────────────────────────
-#
-# Start with 15 Korean tickers, not 60. A shorter list makes every downstream
-# problem visible faster, and the alias dictionary scales with this number.
-# US tickers come later, once the Korean side is stable.
-#
-# MANUAL-TASKS.md §2 asks for a mix:
-#   - whatever Ricky actually holds
-#   - a few watched-but-not-held names, as a control group
-#   - at least two heavily-covered large caps  → both seeded below
-#   - at least one ambiguous group name (한화 계열, LG 계열)  → still needed
 #
 # `held` separates the real position from the control group. It is read by the
 # report's holdings scan (SPEC §2.2②) and by nothing that places an order —
 # this system does not trade.
+#
+# Holdings are NOT the point of this list. Ricky holds index and dividend ETFs
+# plus a few Korean names; the briefing exists to decide what to add or trim,
+# so watched-but-unheld names carry as much weight as held ones.
 
+# ─────────────────────────────────────────────────────────────────────────────
+# KOREA — 19 tickers
+#
+# Chosen against MANUAL-TASKS.md §2's requirements, which are about what the
+# list stress-tests rather than about coverage:
+#
+#   two heavily-covered large caps  → 삼성전자, SK하이닉스
+#   an ambiguous group parent       → 두산, plus 삼성/한화/LG clusters below
+#
+# The chaebol clusters are deliberate and are the expensive part of the alias
+# work in §3. 두산 is a listed company AND a prefix of 두산에너빌리티 and
+# 두산로보틱스, so an alias of "두산" matches all three unless excluded. Same
+# shape for 삼성, 한화 and LG. This is the hardest case Korean entity
+# resolution has to handle, and having it in the watchlist from the start means
+# it gets solved rather than discovered in week three.
+#
+# Sectors are KRX's own 업종명, read from get_market_sector_classifications.
 kr:
-  # Seeded because MANUAL-TASKS.md §2 requires two heavily-covered large caps:
-  # they are what stress-tests re-report deduplication.
+  # --- semiconductors / memory ---------------------------------------------
+  # The two required large caps. They stress-test re-report deduplication:
+  # a single 삼성전자 story appears across most of the 14 feeds.
   - ticker: "005930"
     name: 삼성전자
-    sector: 반도체
+    sector: 전기·전자
     held: false
 
   - ticker: "000660"
     name: SK하이닉스
-    sector: 반도체
+    sector: 전기·전자
     held: false
 
-  # TODO(Ricky): 13 more. Set `held` honestly — a control group that is quietly
-  # all holdings tells you nothing at the two-week gate.
-  # TODO(Ricky): include at least one 한화 or LG affiliate. Those are what
-  # stress-test entity resolution, which is the step SPEC §4 flags as the one
-  # that invalidates everything downstream if it fails.
+  # --- 두산 cluster (2 of 3 held) ------------------------------------------
+  # The holding company and two subsidiaries. Nuclear/power equipment and
+  # robotics: unrelated businesses under one name, which is exactly the
+  # structure that makes Korean entity resolution hard.
+  - ticker: "000150"
+    name: 두산
+    sector: 전기·전자
+    held: true
 
-us: []
-  # Deliberately empty. SPEC §12 sequences the Korean side first.
+  - ticker: "034020"
+    name: 두산에너빌리티
+    sector: 기계·장비
+    held: true
+
+  - ticker: "454910"
+    name: 두산로보틱스
+    sector: 기계·장비
+    held: false
+
+  # --- autos ----------------------------------------------------------------
+  - ticker: "005380"
+    name: 현대차
+    sector: 운송장비·부품
+    held: true
+
+  - ticker: "000270"
+    name: 기아
+    sector: 운송장비·부품
+    held: false
+
+  # --- 한화 cluster ---------------------------------------------------------
+  # Defence and shipbuilding. 한화 itself (000880) is deliberately left out:
+  # it would add a fourth ambiguous parent without adding a business Ricky
+  # named. Add it later if 한화 group coverage turns out to matter.
+  - ticker: "012450"
+    name: 한화에어로스페이스
+    sector: 운송장비·부품
+    held: false
+
+  - ticker: "042660"
+    name: 한화오션
+    sector: 운송장비·부품
+    held: false
+
+  # --- 삼성 cluster (beyond 삼성전자) ---------------------------------------
+  # All three already appear in 005930's `exclude` list in aliases.yaml, which
+  # is what made them worth promoting to tickers: the misattribution risk
+  # exists whether or not they are tracked, so tracking them costs little.
+  - ticker: "006400"
+    name: 삼성SDI
+    sector: 전기·전자
+    held: false
+
+  - ticker: "009150"
+    name: 삼성전기
+    sector: 전기·전자
+    held: false
+
+  - ticker: "028260"
+    name: 삼성물산
+    sector: 유통
+    held: false
+
+  # --- LG cluster -----------------------------------------------------------
+  - ticker: "066570"
+    name: LG전자
+    sector: 전기·전자
+    held: false
+
+  - ticker: "373220"
+    name: LG에너지솔루션
+    sector: 전기·전자
+    held: false
+
+  # --- platform / finance ---------------------------------------------------
+  - ticker: "035420"
+    name: NAVER
+    sector: IT 서비스
+    held: false
+
+  - ticker: "105560"
+    name: KB금융
+    sector: 기타금융
+    held: false
+
+  # --- mid and small caps ---------------------------------------------------
+  # These earn their place by being thinly covered. If the news pipeline finds
+  # nothing for them, that is a finding about coverage rather than a bug, and
+  # the large caps alone would never have surfaced it.
+  - ticker: "073240"
+    name: 금호타이어
+    sector: 화학
+    held: false
+
+  - ticker: "010170"
+    name: 대한광통신
+    sector: 전기·전자
+    held: false
+
+  - ticker: "003680"
+    name: 한성기업
+    sector: 음식료·담배
+    held: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UNITED STATES — 14 tickers
+#
+# None held. Ricky holds index and dividend ETFs, so every name here is a
+# watch candidate. That is the intended use: SPEC §2.2① opens the briefing
+# with what moved in the US and what it implies for the Korean session, and
+# these are the names that carry that signal.
+#
+# The `us_price` collector separately tracks eight index and sector ETFs
+# (SPY, QQQ, IWM, SMH, XLK, XLE, XLF, XBI). Those are not a watchlist — they
+# are the fixed left-hand side of the transmission mapping, so they live in
+# src/collectors/us_price.py rather than here.
+#
+# Every symbol below was verified against Tiingo on 2026-08-04: name, exchange
+# and available date range all returned.
+us:
+  # --- memory and semis: the direct read-across to 삼성전자 / SK하이닉스 -----
+  - ticker: "NVDA"
+    name: NVIDIA
+    sector: Semiconductors
+    held: false
+
+  - ticker: "MU"
+    name: Micron Technology
+    sector: Semiconductors
+    held: false
+
+  # Spun out of Western Digital in February 2025, so Tiingo history starts
+  # 2025-02-24. That is the shortest series in this file — a touch over 360
+  # trading days — and it clears the 252-day z-score window with little room.
+  # Any feature needing a longer lookback will be unavailable for SNDK first.
+  - ticker: "SNDK"
+    name: Sandisk
+    sector: Semiconductors
+    held: false
+
+  - ticker: "INTC"
+    name: Intel
+    sector: Semiconductors
+    held: false
+
+  # Not on Ricky's list, added deliberately. TSMC is the foundry side of the
+  # same chain: it reads across to 삼성전자's non-memory business the way MU
+  # and SNDK read across to its memory business, and that half would otherwise
+  # be missing. Drop it if the US list feels long.
+  - ticker: "TSM"
+    name: Taiwan Semiconductor
+    sector: Semiconductors
+    held: false
+
+  # --- mega-cap tech --------------------------------------------------------
+  - ticker: "AAPL"
+    name: Apple
+    sector: Technology
+    held: false
+
+  - ticker: "MSFT"
+    name: Microsoft
+    sector: Technology
+    held: false
+
+  # Class A. GOOG (Class C) tracks it closely but carries no vote; one of the
+  # two is enough, and duplicating them would double-count Alphabet news.
+  - ticker: "GOOGL"
+    name: Alphabet Class A
+    sector: Technology
+    held: false
+
+  - ticker: "AMZN"
+    name: Amazon
+    sector: Consumer Discretionary
+    held: false
+
+  - ticker: "META"
+    name: Meta Platforms
+    sector: Technology
+    held: false
+
+  - ticker: "IBM"
+    name: IBM
+    sector: Technology
+    held: false
+
+  - ticker: "PLTR"
+    name: Palantir Technologies
+    sector: Technology
+    held: false
+
+  # --- other ----------------------------------------------------------------
+  - ticker: "TSLA"
+    name: Tesla
+    sector: Consumer Discretionary
+    held: false
+
+  - ticker: "COST"
+    name: Costco Wholesale
+    sector: Consumer Staples
+    held: false
+
+  # SpaceX is NOT here because it is privately held — there is no ticker to
+  # track. Tiingo answers 404 for every plausible symbol. The only listed
+  # vehicles with SpaceX exposure are closed-end funds (DXYZ) that trade at
+  # large and unstable premiums to net asset value, so their price moves on
+  # fund-flow sentiment rather than on SpaceX. Tracking one would put a number
+  # in the briefing that looks like SpaceX and is not. MANUAL-TASKS.md §2
+  # records this so it does not get re-investigated.

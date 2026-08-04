@@ -190,7 +190,8 @@ def _yaml_list(items: list[str]) -> str:
 
 def scaffold(listing: pd.DataFrame, path: Path = DRAFT_PATH) -> None:
     """Write an alias worksheet covering every watchlist ticker."""
-    watchlist = load_watchlist()
+    # KR only: scaffolding reads the KRX listing, and a US symbol has none.
+    watchlist = load_watchlist(market="KR")
     if not watchlist:
         raise SystemExit("config/watchlist.yaml has no kr entries — do MANUAL-TASKS.md §2 first.")
 
@@ -281,7 +282,8 @@ def match_article(text: str, entries: dict[str, AliasEntry]) -> tuple[set[str], 
 def audit(samples: int = 0) -> int:
     """Score aliases.yaml against the news already collected. Returns an exit code."""
     entries = load_aliases()
-    watchlist = {e.ticker: e.name for e in load_watchlist()}
+    # KR only: the corpus is Korean-language news, which US symbols never match.
+    watchlist = {e.ticker: e.name for e in load_watchlist(market="KR")}
     corpus = _read_corpus()
 
     if not corpus:
