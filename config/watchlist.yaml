@@ -19,27 +19,36 @@
 # report's holdings scan (SPEC §2.2②) and by nothing that places an order —
 # this system does not trade.
 #
-# Holdings are NOT the point of this list. Ricky holds index and dividend ETFs
-# plus a few Korean names; the briefing exists to decide what to add or trim,
-# so watched-but-unheld names carry as much weight as held ones.
+# Holdings are NOT the point of this list. The briefing exists to decide what to
+# add or trim, so watched-but-unheld names carry as much weight as held ones.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY EACH SECTOR HAS AT LEAST TWO NAMES
+#
+# A sector represented by one ticker cannot be read. If KB금융 moves 3% and it
+# is the only bank here, nothing in the data distinguishes "banks moved" from
+# "KB moved" — and `rel_strength`, which is a *relative* measure, has nothing to
+# be relative to. Pairs are what make a sector move separable from a stock move,
+# so names were added in pairs rather than to maximise coverage.
+# ─────────────────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────────────────
-# KOREA — 19 tickers
+# KOREA — 31 tickers
 #
-# Chosen against MANUAL-TASKS.md §2's requirements, which are about what the
-# list stress-tests rather than about coverage:
-#
-#   two heavily-covered large caps  → 삼성전자, SK하이닉스
-#   an ambiguous group parent       → 두산, plus 삼성/한화/LG clusters below
+# Codes, official names and sectors all read from the KRX listing on 2026-08-04;
+# every one returns both OHLCV and investor flow through pykrx.
 #
 # The chaebol clusters are deliberate and are the expensive part of the alias
 # work in §3. 두산 is a listed company AND a prefix of 두산에너빌리티 and
 # 두산로보틱스, so an alias of "두산" matches all three unless excluded. Same
 # shape for 삼성, 한화 and LG. This is the hardest case Korean entity
-# resolution has to handle, and having it in the watchlist from the start means
-# it gets solved rather than discovered in week three.
+# resolution has to handle, and having it here from the start means it gets
+# solved rather than discovered in week three.
 #
-# Sectors are KRX's own 업종명, read from get_market_sector_classifications.
+# Sectors are KRX's own 업종명 verbatim, including its oddities: LIG디펜스앤에어
+# 로스페이스 is filed under 금속 and HD한국조선해양 under 기타금융. Those are
+# KRX's classifications, not typos, and config/sector_mapping.yaml is where they
+# get translated into something the report can use.
 kr:
   # --- semiconductors / memory ---------------------------------------------
   # The two required large caps. They stress-test re-report deduplication:
@@ -47,17 +56,38 @@ kr:
   - ticker: "005930"
     name: 삼성전자
     sector: 전기·전자
-    held: false
+    held: true
 
   - ticker: "000660"
     name: SK하이닉스
     sector: 전기·전자
+    held: true
+
+  # --- semiconductor equipment and materials --------------------------------
+  # The memory large caps above are the demand side; these are the supply side,
+  # and they move on the same capex cycle with far more leverage. 한미반도체 is
+  # the closest mid-cap read on SK하이닉스 specifically — its bonding equipment
+  # goes into HBM lines — so a divergence between the two is informative rather
+  # than noise.
+  - ticker: "042700"
+    name: 한미반도체
+    sector: 기계·장비
+    held: false
+
+  - ticker: "058470"
+    name: 리노공업
+    sector: 전기·전자
+    held: false
+
+  - ticker: "403870"
+    name: HPSP
+    sector: 기계·장비
     held: false
 
   # --- 두산 cluster (2 of 3 held) ------------------------------------------
-  # The holding company and two subsidiaries. Nuclear/power equipment and
-  # robotics: unrelated businesses under one name, which is exactly the
-  # structure that makes Korean entity resolution hard.
+  # The holding company and two subsidiaries. Power equipment and robotics:
+  # unrelated businesses under one name, which is exactly the structure that
+  # makes Korean entity resolution hard.
   - ticker: "000150"
     name: 두산
     sector: 전기·전자
@@ -73,6 +103,15 @@ kr:
     sector: 기계·장비
     held: false
 
+  # --- power equipment ------------------------------------------------------
+  # Pairs with 두산에너빌리티: same theme (grid and generation capex driven by
+  # data-centre demand), different company. Without a pair, a move in a held
+  # position cannot be separated from a move in its theme.
+  - ticker: "267260"
+    name: HD현대일렉트릭
+    sector: 전기·전자
+    held: false
+
   # --- autos ----------------------------------------------------------------
   - ticker: "005380"
     name: 현대차
@@ -84,10 +123,12 @@ kr:
     sector: 운송장비·부품
     held: false
 
-  # --- 한화 cluster ---------------------------------------------------------
-  # Defence and shipbuilding. 한화 itself (000880) is deliberately left out:
-  # it would add a fourth ambiguous parent without adding a business Ricky
-  # named. Add it later if 한화 group coverage turns out to matter.
+  # --- defence and shipbuilding ---------------------------------------------
+  # 한화 itself (000880) is deliberately left out: it would add another
+  # ambiguous parent without adding a business being tracked.
+  #
+  # LIG디펜스앤에어로스페이스 is the company formerly listed as LIG넥스원 —
+  # same code, renamed. Anything written against the old name will not match.
   - ticker: "012450"
     name: 한화에어로스페이스
     sector: 운송장비·부품
@@ -98,10 +139,28 @@ kr:
     sector: 운송장비·부품
     held: false
 
+  - ticker: "079550"
+    name: LIG디펜스앤에어로스페이스
+    sector: 금속
+    held: false
+
+  - ticker: "064350"
+    name: 현대로템
+    sector: 운송장비·부품
+    held: false
+
+  # Pairs with 한화오션 on the shipbuilding cycle. HD현대미포 (010620) was
+  # considered and is no longer listed — it left the market through a merger,
+  # so do not re-add it from an old reference.
+  - ticker: "009540"
+    name: HD한국조선해양
+    sector: 기타금융
+    held: false
+
   # --- 삼성 cluster (beyond 삼성전자) ---------------------------------------
   # All three already appear in 005930's `exclude` list in aliases.yaml, which
-  # is what made them worth promoting to tickers: the misattribution risk
-  # exists whether or not they are tracked, so tracking them costs little.
+  # is what made them worth promoting to tickers: the misattribution risk exists
+  # whether or not they are tracked, so tracking them costs little.
   - ticker: "006400"
     name: 삼성SDI
     sector: 전기·전자
@@ -128,15 +187,52 @@ kr:
     sector: 전기·전자
     held: false
 
-  # --- platform / finance ---------------------------------------------------
+  # --- platform -------------------------------------------------------------
   - ticker: "035420"
     name: NAVER
     sector: IT 서비스
     held: false
 
+  # --- financials -----------------------------------------------------------
+  # Four brokers and two bank holdings, so a move in either sub-sector is
+  # separable from a move in one name. 키움증권 is retail-heavy, which makes it
+  # a usable read on individual-investor activity that the bank holdings do not
+  # give.
+  #
+  # 한국투자증권 is not listed; 한국금융지주 (071050) is its listed parent, and
+  # that is what news about 한국투자증권 has to resolve to.
+  #
+  # 삼성증권 sits here rather than in the 삼성 block above because its sector
+  # behaviour is what it is being tracked for — but for alias purposes it is a
+  # 삼성 cluster member and carries the same ambiguity.
   - ticker: "105560"
     name: KB금융
     sector: 기타금융
+    held: false
+
+  - ticker: "055550"
+    name: 신한지주
+    sector: 기타금융
+    held: false
+
+  - ticker: "071050"
+    name: 한국금융지주
+    sector: 기타금융
+    held: false
+
+  - ticker: "006800"
+    name: 미래에셋증권
+    sector: 증권
+    held: false
+
+  - ticker: "039490"
+    name: 키움증권
+    sector: 증권
+    held: false
+
+  - ticker: "016360"
+    name: 삼성증권
+    sector: 증권
     held: false
 
   # --- mid and small caps ---------------------------------------------------
@@ -159,12 +255,11 @@ kr:
     held: false
 
 # ─────────────────────────────────────────────────────────────────────────────
-# UNITED STATES — 14 tickers
+# UNITED STATES — 40 tickers
 #
-# None held. Ricky holds index and dividend ETFs, so every name here is a
-# watch candidate. That is the intended use: SPEC §2.2① opens the briefing
-# with what moved in the US and what it implies for the Korean session, and
-# these are the names that carry that signal.
+# US names cost nothing in §3: aliases exist to match Korean-language news, so
+# a US symbol needs no entry. That asymmetry is why this section is generous
+# and the Korean one is not.
 #
 # The `us_price` collector separately tracks eight index and sector ETFs
 # (SPY, QQQ, IWM, SMH, XLK, XLE, XLF, XBI). Those are not a watchlist — they
@@ -174,6 +269,36 @@ kr:
 # Every symbol below was verified against Tiingo on 2026-08-04: name, exchange
 # and available date range all returned.
 us:
+  # --- space ----------------------------------------------------------------
+  # SPCX is held. RKLB, ASTS and LUNR are here to make it readable: a single
+  # name has no sector to be measured against, so a drawdown in SPCX alone
+  # cannot be told apart from a drawdown in space as a whole.
+  #
+  # ⚠ SPCX listed 2026-06-12, so it has roughly 37 trading days of history.
+  # CLAUDE.md normalizes every feature as a 252-day rolling z-score, which means
+  # SPCX will carry news-derived features but NO price or flow z-scores until
+  # around mid-2027. That is a property of a recent listing, not a bug, and the
+  # report header should say so rather than leave the gap unexplained.
+  - ticker: "SPCX"
+    name: SpaceX Class A
+    sector: Aerospace
+    held: true
+
+  - ticker: "RKLB"
+    name: Rocket Lab USA
+    sector: Aerospace
+    held: false
+
+  - ticker: "ASTS"
+    name: AST SpaceMobile
+    sector: Aerospace
+    held: false
+
+  - ticker: "LUNR"
+    name: Intuitive Machines
+    sector: Aerospace
+    held: false
+
   # --- memory and semis: the direct read-across to 삼성전자 / SK하이닉스 -----
   - ticker: "NVDA"
     name: NVIDIA
@@ -186,11 +311,16 @@ us:
     held: false
 
   # Spun out of Western Digital in February 2025, so Tiingo history starts
-  # 2025-02-24. That is the shortest series in this file — a touch over 360
-  # trading days — and it clears the 252-day z-score window with little room.
-  # Any feature needing a longer lookback will be unavailable for SNDK first.
+  # 2025-02-24 — a touch over 360 trading days, which clears the 252-day
+  # z-score window with little room. WDC is kept alongside it: the two are the
+  # split halves of one former company and their spread is informative.
   - ticker: "SNDK"
     name: Sandisk
+    sector: Semiconductors
+    held: false
+
+  - ticker: "WDC"
+    name: Western Digital
     sector: Semiconductors
     held: false
 
@@ -199,13 +329,126 @@ us:
     sector: Semiconductors
     held: false
 
-  # Not on Ricky's list, added deliberately. TSMC is the foundry side of the
-  # same chain: it reads across to 삼성전자's non-memory business the way MU
-  # and SNDK read across to its memory business, and that half would otherwise
-  # be missing. Drop it if the US list feels long.
+  # The foundry side of the chain. It reads across to 삼성전자's non-memory
+  # business the way MU and SNDK read across to its memory business.
   - ticker: "TSM"
     name: Taiwan Semiconductor
     sector: Semiconductors
+    held: false
+
+  - ticker: "AVGO"
+    name: Broadcom
+    sector: Semiconductors
+    held: false
+
+  - ticker: "AMD"
+    name: Advanced Micro Devices
+    sector: Semiconductors
+    held: false
+
+  - ticker: "QCOM"
+    name: Qualcomm
+    sector: Semiconductors
+    held: false
+
+  - ticker: "MRVL"
+    name: Marvell Technology
+    sector: Semiconductors
+    held: false
+
+  - ticker: "ARM"
+    name: Arm Holdings
+    sector: Semiconductors
+    held: false
+
+  # --- semiconductor equipment ----------------------------------------------
+  # The US counterpart to 한미반도체, 리노공업 and HPSP above. Having both sides
+  # is what lets §2.2① carry a capex signal rather than only a memory-price
+  # signal — the equipment makers turn before the memory makers do.
+  - ticker: "ASML"
+    name: ASML Holding
+    sector: Semiconductor Equipment
+    held: false
+
+  - ticker: "AMAT"
+    name: Applied Materials
+    sector: Semiconductor Equipment
+    held: false
+
+  - ticker: "LRCX"
+    name: Lam Research
+    sector: Semiconductor Equipment
+    held: false
+
+  - ticker: "KLAC"
+    name: KLA Corporation
+    sector: Semiconductor Equipment
+    held: false
+
+  # --- financials -----------------------------------------------------------
+  # Banks, brokers, asset managers and card networks kept as separate groups
+  # rather than one "financials" bucket, because they do not move together and
+  # the Korean side is split the same way (은행지주 vs 증권).
+  - ticker: "JPM"
+    name: JPMorgan Chase
+    sector: Banks
+    held: false
+
+  - ticker: "BAC"
+    name: Bank of America
+    sector: Banks
+    held: false
+
+  - ticker: "GS"
+    name: Goldman Sachs
+    sector: Investment Banks
+    held: false
+
+  - ticker: "MS"
+    name: Morgan Stanley
+    sector: Investment Banks
+    held: false
+
+  # The US counterparts to 키움증권: retail brokerage activity, which is the
+  # cleanest available read on individual-investor risk appetite.
+  - ticker: "SCHW"
+    name: Charles Schwab
+    sector: Brokers
+    held: false
+
+  - ticker: "IBKR"
+    name: Interactive Brokers
+    sector: Brokers
+    held: false
+
+  - ticker: "HOOD"
+    name: Robinhood Markets
+    sector: Brokers
+    held: false
+
+  - ticker: "COIN"
+    name: Coinbase Global
+    sector: Brokers
+    held: false
+
+  - ticker: "BLK"
+    name: BlackRock
+    sector: Asset Management
+    held: false
+
+  - ticker: "KKR"
+    name: KKR & Co
+    sector: Asset Management
+    held: false
+
+  - ticker: "V"
+    name: Visa Class A
+    sector: Payments
+    held: false
+
+  - ticker: "MA"
+    name: Mastercard Class A
+    sector: Payments
     held: false
 
   # --- mega-cap tech --------------------------------------------------------
@@ -256,11 +499,3 @@ us:
     name: Costco Wholesale
     sector: Consumer Staples
     held: false
-
-  # SpaceX is NOT here because it is privately held — there is no ticker to
-  # track. Tiingo answers 404 for every plausible symbol. The only listed
-  # vehicles with SpaceX exposure are closed-end funds (DXYZ) that trade at
-  # large and unstable premiums to net asset value, so their price moves on
-  # fund-flow sentiment rather than on SpaceX. Tracking one would put a number
-  # in the briefing that looks like SpaceX and is not. MANUAL-TASKS.md §2
-  # records this so it does not get re-investigated.

@@ -15,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from src.collectors import us_price
 from src.collectors.us_price import (
     INDEX_ETFS,
     KNOWN_VALUE,
@@ -163,3 +164,59 @@ def test_the_live_api_still_answers_in_the_shape_we_parse():
     df, report = fetch(["SPY"], START, END)
     assert report.ok, report.summary()
     assert len(df) == 13
+
+
+# --- rate limiting --------------------------------------------------------
+
+
+def test_a_429_stops_the_run_and_is_reported_as_a_quota_problem(monkeypatch):
+    """A 429 must not read as "every ticker is broken".
+
+    The free tier allows 50 requests an hour and the endpoint takes one ticker
+    per request, so a watchlist near that size will hit this. Once the quota is
+    gone every remaining ticker 429s too, and listing them all as failures hides
+    the single fact that matters and points at the watchlist instead of at the
+    quota.
+    """
+    seen: list[str] = []
+
+    def fake_fetch_one(ticker, start, end, *, token, timeout):
+        seen.append(ticker)
+        raise us_price.TiingoRateLimit("hourly request allocation")
+
+    monkeypatch.setattr(us_price, "_fetch_one", fake_fetch_one)
+    _, report = us_price.fetch(
+        ["AAPL", "MSFT", "NVDA"], dt.date(2024, 1, 2), dt.date(2024, 1, 5), api_key="x"
+    )
+
+    # Stopped at the first one rather than burning three attempts.
+    assert seen == ["AAPL"]
+
+    limit = next(c for c in report.results if c.name == "rate_limit")
+    assert not limit.passed
+    assert "0 of 3" in limit.detail
+    assert "3 left without data" in limit.detail
+    # Not misreported as individual ticker failures.
+    assert not any(c.name == "fetch" and "MSFT" in c.detail for c in report.results)
+
+
+def test_a_rate_limit_is_a_subclass_of_the_general_error(monkeypatch):
+    # Callers that only care about "the fetch failed" keep working unchanged.
+    assert issubclass(us_price.TiingoRateLimit, us_price.TiingoError)
+
+
+def test_one_bad_ticker_still_only_costs_that_ticker(monkeypatch):
+    """The contrast case: a 404 is per-ticker and must not stop the run."""
+    calls: list[str] = []
+
+    def counting(ticker, start, end, *, token, timeout):
+        calls.append(ticker)
+        raise us_price.TiingoError(f"{ticker}: HTTP 404")
+
+    monkeypatch.setattr(us_price, "_fetch_one", counting)
+    _, report = us_price.fetch(
+        ["BADD", "ALSOBAD"], dt.date(2024, 1, 2), dt.date(2024, 1, 5), api_key="x"
+    )
+    assert calls == ["BADD", "ALSOBAD"]  # kept going
+    fetch = next(c for c in report.results if c.name == "fetch")
+    assert "2 of 2 tickers failed" in fetch.detail

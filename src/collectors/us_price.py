@@ -119,6 +119,18 @@ class TiingoError(RuntimeError):
     """Tiingo answered with something other than usable price data."""
 
 
+class TiingoRateLimit(TiingoError):
+    """The request allowance is exhausted. Distinct from a bad ticker on purpose.
+
+    The free tier allows 50 requests per hour, and the EOD endpoint takes one
+    ticker per request (verified against the documentation 2026-08-04), so a
+    watchlist near 50 symbols sits close to the ceiling. Once a 429 arrives,
+    every remaining ticker in the run will also 429 — reporting them as N failed
+    tickers would read as "the watchlist is broken" when the tickers are fine
+    and the quota is not. The run stops at the first 429 and says so.
+    """
+
+
 # --- validation ----------------------------------------------------------
 
 
@@ -199,6 +211,8 @@ def _fetch_one(
         headers={"Authorization": f"Token {token}"},
         timeout=timeout,
     )
+    if response.status_code == 429:
+        raise TiingoRateLimit(response.text[:200])
     if not response.ok:
         raise TiingoError(f"{ticker}: HTTP {response.status_code} {response.text[:200]}")
     return response.json()
@@ -232,11 +246,20 @@ def fetch(
     tickers = list(tickers)
     frames: list[pd.DataFrame] = []
     failures: list[str] = []
+    rate_limited: str | None = None
 
-    for ticker in tickers:
+    for index, ticker in enumerate(tickers):
         try:
             rows = _fetch_one(ticker, start, end, token=token, timeout=timeout)
             frames.append(normalize(rows, ticker))
+        except TiingoRateLimit as exc:
+            # Stop rather than continue. Every remaining ticker would 429 too,
+            # and a list of 40 "failed" tickers hides the one fact that matters.
+            rate_limited = (
+                f"quota exhausted after {index} of {len(tickers)} tickers; "
+                f"{len(tickers) - index} left without data — {exc}"
+            )
+            break
         except (TiingoError, requests.RequestException) as exc:
             failures.append(f"{ticker} ({type(exc).__name__})")
 
@@ -249,6 +272,8 @@ def fetch(
             df = df[df["known_at_utc"] < to_utc(as_of)].reset_index(drop=True)
 
     report = validate_frame(df, tickers, start, end, known_value=False)
+    if rate_limited:
+        report.add(CheckResult("rate_limit", False, rate_limited))
     if failures:
         report.add(
             CheckResult(
