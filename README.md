@@ -48,12 +48,12 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Directional rating (`src/report/rating.py`) | ✅ Done | 7-point scale + rationale; weights need calibration |
 | AI commentary guard (`src/report/consistency.py`) | ✅ Done | Drops the 총평 if it contradicts the computed rating |
 | Config files | 🟡 Partial | `watchlist.yaml` done — 19 KR + 14 US, all verified against live data. `aliases.yaml` is **the only thing blocking Claude** |
-| API credentials | ✅ Done | KRX verified live; all 7 values mirrored into Actions secrets. Only KIS outstanding, and it blocks nothing yet |
+| API credentials | ✅ Done | KRX and Alpaca verified live; all 9 values mirrored into Actions secrets. Only KIS outstanding, and it blocks nothing yet |
 | `kr_price` collector (pykrx OHLCV) | ✅ Done | Four checks + committed fixture; known value cross-checked against Naver |
 | `macro` collector (FRED) | ✅ Done | 6 series verified live; known value cross-checked against Treasury |
 | `kr_news` collector (outlet RSS) | ✅ Done | 14 feeds via Actions, twice hourly in session; ~950 articles/poll across 8 outlets |
 | `us_price` collector (Tiingo) | ✅ Done | Four checks + committed fixture; known value cross-checked against Yahoo Finance |
-| `us_price` over Alpaca | 🟡 Written, unverified | Tiingo's 50 req/hour cannot serve 48 symbols. Blocked on a key and on one feed question — see [API-KEYS.md §2b](API-KEYS.md) |
+| `us_price` over Alpaca | ✅ Done | The US source in use. SIP confirmed on the free plan; **48 symbols in 2 requests** where Tiingo needed 48 |
 | `kr_flow` and remaining collectors | 🟡 Claude's queue | KRX login cleared 2026-08-04 — no longer blocked on Ricky |
 | Entity resolution | ⬜ Not started | |
 | Embedding pipeline (dedup + relevance) | ⬜ Not started | |
@@ -266,15 +266,14 @@ These are Ricky's, in the order they unblock work. Full detail in [MANUAL-TASKS.
 
 | # | Task | Est. time | Blocks |
 |---|---|---|---|
-| 1 | Alpaca key, then run `probe_feed` | 10 min | Whether `us_price` can serve a 48-symbol watchlist at all |
-| 2 | `config/aliases.yaml` — one entry per KR ticker (`scaffold` → `audit`) | 60–75 min | Entity resolution, all news features |
-| 3 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection |
-| 4 | Bake-off decision | 30 min | Scoring model choice |
-| 5 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
+| 1 | `config/aliases.yaml` — one entry per KR ticker (`scaffold` → `audit`) | 60–75 min | Entity resolution, all news features |
+| 2 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection |
+| 3 | Bake-off decision | 30 min | Scoring model choice |
+| 4 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
 
-Credentials, the two `.env` fixes, and the watchlist are done — KRX verified against all six gated endpoints, SPY's known value cross-checked against Yahoo Finance, every secret mirrored to Actions, and 19 KR + 14 US tickers confirmed to return real data through the collectors.
+Credentials, the `.env` fixes, the watchlist and the Alpaca switch are done — KRX verified against all six gated endpoints, SPY's known value cross-checked against Yahoo Finance, every secret mirrored to Actions, and 19 KR + 14 US tickers confirmed to return real data through the collectors.
 
-Task 3 is the one that will feel skippable. It is the only step involving no code, and skipping it makes the bake-off impossible — model selection then ends at "Claude seemed good."
+Task 2 is the one that will feel skippable. It is the only step involving no code, and skipping it makes the bake-off impossible — model selection then ends at "Claude seemed good."
 
 ---
 

@@ -1,12 +1,18 @@
 """Tests for the Alpaca US price path.
 
-Everything here is offline. The parts that cannot be settled without a live key
-— whether the free plan serves SIP, and which instant Alpaca stamps on a daily
-bar — are marked UNVERIFIED in the module and are answered by
-``probe_feed`` once a key exists, not by a test written from the documentation.
+Split deliberately in two.
 
-What these tests do cover is the logic that is ours rather than Alpaca's: the
-two-pass merge, pagination, and the refusal to fall back to IEX.
+The offline tests cover the logic that is ours rather than Alpaca's: the
+two-pass merge of raw and adjusted bars, pagination, and the refusal to fall
+back to IEX when SIP is unavailable.
+
+The ``network`` tests cover the three facts that were settled by measurement
+rather than from the documentation, because the documentation was either silent
+or self-contradictory on all three: that the free plan serves consolidated SIP
+history, that a daily bar is stamped at Eastern midnight with an offset that
+tracks daylight saving, and that the whole watchlist costs two requests. Each
+is an assumption the collector would be wrong without, so each fails here rather
+than by quietly seeding the report with bad numbers.
 """
 
 from __future__ import annotations
@@ -21,7 +27,16 @@ from src.collectors.us_price import SCHEMA
 
 
 @pytest.fixture(autouse=True)
-def _keys(monkeypatch):
+def _keys(request, monkeypatch):
+    """Placeholder credentials for the offline tests only.
+
+    Network tests need the real key from the environment, so the fixture stands
+    aside for them — otherwise it would substitute a dummy and every live test
+    would fail authentication for a reason that has nothing to do with what it
+    is checking.
+    """
+    if request.node.get_closest_marker("network"):
+        return
     monkeypatch.setenv("ALPACA_API_KEY_ID", "test-key")
     monkeypatch.setenv("ALPACA_API_SECRET_KEY", "test-secret")
 
@@ -218,3 +233,78 @@ def test_symbols_that_return_nothing_are_named(monkeypatch):
     fetch = next(c for c in report.results if c.name == "fetch")
     assert not fetch.passed
     assert "GONE" in fetch.detail
+
+
+# --- live -----------------------------------------------------------------
+
+
+@pytest.mark.network
+def test_the_free_plan_still_serves_consolidated_data():
+    """The one assumption the whole switch rests on.
+
+    If Alpaca ever moves historical SIP behind the paid plan, this fails here
+    rather than by quietly seeding the report with one venue's volume. The
+    pinned close is the discriminator: IEX answered 472.66 on 1.6% of the true
+    volume when this was measured, which is wrong in a way that still looks
+    plausible.
+    """
+    bars = alpaca._fetch_bars(
+        ["SPY"],
+        dt.date(2024, 1, 2),
+        dt.date(2024, 1, 2),
+        adjustment="raw",
+        feed="sip",
+        timeout=30,
+    )
+    spy = bars["SPY"][0]
+    assert spy["c"] == 472.65
+    assert spy["v"] > 50_000_000, "volume this low means IEX bars, not consolidated"
+
+
+@pytest.mark.network
+def test_a_bar_is_stamped_at_eastern_midnight_in_both_dst_states():
+    """The offset must track daylight saving, which is why the date is taken
+    in America/New_York rather than by slicing the string."""
+    winter = alpaca._fetch_bars(
+        ["SPY"],
+        dt.date(2024, 1, 2),
+        dt.date(2024, 1, 2),
+        adjustment="raw",
+        feed="sip",
+        timeout=30,
+    )["SPY"][0]
+    summer = alpaca._fetch_bars(
+        ["SPY"],
+        dt.date(2026, 7, 27),
+        dt.date(2026, 7, 27),
+        adjustment="raw",
+        feed="sip",
+        timeout=30,
+    )["SPY"][0]
+    assert winter["t"].endswith("T05:00:00Z")  # EST
+    assert summer["t"].endswith("T04:00:00Z")  # EDT
+
+
+@pytest.mark.network
+def test_the_whole_watchlist_costs_two_requests():
+    """The entire justification for this module over the Tiingo path."""
+    from src.collectors.us_price import INDEX_ETFS
+    from src.util.config import load_watchlist
+
+    symbols = [e.ticker for e in load_watchlist(market="US")] + list(INDEX_ETFS)
+    calls = {"n": 0}
+    original = alpaca._request
+
+    def counting(params, *, timeout):
+        calls["n"] += 1
+        return original(params, timeout=timeout)
+
+    alpaca._request = counting
+    try:
+        df, report = alpaca.fetch(symbols, dt.date(2026, 7, 27), dt.date(2026, 7, 31))
+    finally:
+        alpaca._request = original
+
+    assert calls["n"] == 2, f"{len(symbols)} symbols should cost 2 requests, not {calls['n']}"
+    assert set(df["ticker"]) == set(symbols)
+    assert next(c for c in report.results if c.name == "fetch").passed

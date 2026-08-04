@@ -1,40 +1,68 @@
-"""US daily OHLCV from Alpaca. SPEC §3.2, the replacement for the Tiingo path.
+"""US daily OHLCV from Alpaca. SPEC §3.2 — the US price source in use.
 
-Why this exists alongside ``us_price.py``
------------------------------------------
-Tiingo's EOD endpoint takes **one ticker per request** and its free tier allows
-**50 requests per hour**. The watchlist is 40 US symbols plus the 8 index ETFs
-in :data:`us_price.INDEX_ETFS`, so a single run costs 48 of those 50. There is
-no headroom for a retry, and a 429 in the middle of a run leaves the rest of the
-watchlist without data.
+Why this replaced the Tiingo path
+---------------------------------
+Tiingo is not broken; it stopped fitting. Its EOD endpoint takes **one ticker
+per request** against a **50-requests-per-hour** free allowance, and the
+watchlist is 40 US symbols plus the 8 index ETFs in
+:data:`us_price.INDEX_ETFS`. 48 of 50 leaves no headroom: one retry pushes the
+run over, and a mid-run 429 leaves the rest of the watchlist without data.
 
-Alpaca's bars endpoint takes a **comma-separated list of symbols** and allows
-**200 requests per minute**, so the same 48 symbols cost one request per page
-instead of 48. That is the entire reason for the switch: it is a shape change,
-not a quality upgrade.
+Alpaca's bars endpoint takes a **comma-separated symbol list** at **200 requests
+per minute**. Measured 2026-08-05 against the real watchlist: **48 symbols in 2
+requests** — one for the raw pass, one for the adjusted. That is a
+request-shape change, not a claim about data quality.
 
-The unresolved question this module cannot answer by itself
------------------------------------------------------------
-Alpaca's own documentation says two things that do not agree:
+The feed question, answered
+---------------------------
+Alpaca's documentation contradicted itself about whether the free plan serves
+IEX only or SIP with a 15-minute lag. It was settled by measurement rather than
+by reading harder, using SPY on 2024-01-02 — the date whose 472.65 close was
+independently confirmed against Yahoo Finance:
 
-* the plan comparison lists the free Basic plan as **IEX only** for equities;
-* the Market Data FAQ says that for *historical* queries, ``end`` merely has to
-  be at least 15 minutes old to query **SIP** without a subscription.
+===== ============== ==============
+feed   close          volume
+===== ============== ==============
+sip    472.65 ✓       123,007,793
+iex    472.66 ✗         1,982,936
+===== ============== ==============
 
-The difference is not cosmetic. IEX is one exchange; SIP is the consolidated
-tape of all of them. Alpaca's own FAQ gives the example of AAPL on 2023-09-29:
-**923,134 shares on IEX against 51,861,083 on SIP**, a factor of 56. IEX-only
-daily bars would give this project the wrong volume for every US name and a
-close that is a single venue's last print rather than the official close.
+**The free plan does serve SIP for historical queries.** The IEX row is why
+:func:`fetch` refuses to fall back: its close is one cent off — a single venue's
+last print rather than the official close — on 1.6% of the true volume. That is
+wrong in a way that still looks entirely plausible, and only an exact pinned
+value catches it.
 
-**This is decided empirically, not by reading harder.** :func:`probe_feed` runs
-the test and is the first thing to run once a key exists; MANUAL-TASKS.md §1
-carries the procedure. The check that settles it already exists — SPY's
-2024-01-02 close of 472.65, independently confirmed against Yahoo Finance — so
-a feed serving IEX bars fails the fourth check rather than passing quietly.
+Two things verified live on 2026-08-05
+--------------------------------------
+**Bar timestamps are ET midnight of the session date, expressed in UTC.**
+``2024-01-02T05:00:00Z`` in winter and ``2026-07-27T04:00:00Z`` in summer, so
+the offset tracks daylight saving. Converting to ``America/New_York`` and taking
+the date is therefore correct year-round, and ``known_at_utc`` lands at 21:00Z
+in winter and 20:00Z in summer without either number appearing in the code.
 
-Until that probe has been run against a real key, every ``# UNVERIFIED`` marker
-below stands and ``us_price.py`` remains the collector in use.
+**Closes agree with Tiingo to the cent; volumes do not, by 0.08–0.58%.** Every
+cross-checked close matched exactly. Volume runs consistently higher here, which
+is vendor trade-condition filtering — which prints count toward consolidated
+volume — rather than either source being wrong. It is a small level shift, not
+noise, so a vendor switch part-way through a 252-day z-score window would put a
+step in any volume-derived feature. That is an argument for switching before
+history accumulates, which is what happened.
+
+Two consequences of the endpoint's shape
+----------------------------------------
+**Two passes are required.** Alpaca adjusts the whole bar rather than adding a
+column, so ``adjustment=raw`` supplies the ``close`` the fourth check pins — a
+value that never moves — and ``adjustment=all`` supplies the ``adj_close`` every
+return uses. Storing one would break either the check or every return.
+
+**Pagination is required, not optional.** A page caps at 10,000 bars and 48
+symbols across a year is roughly 12,000, so a backfill that ignored
+``next_page_token`` would stop mid-year without saying so.
+
+``us_price.py`` (Tiingo) is kept as the cross-check, not retired: two
+independent sources agreeing on the pinned close is a stronger guarantee than
+either alone, and it is what caught the IEX discrepancy above.
 """
 
 from __future__ import annotations
@@ -96,8 +124,7 @@ def _headers() -> dict[str, str]:
             "ALPACA_API_KEY_ID and ALPACA_API_SECRET_KEY are not set. "
             "Configuration error, not a data condition — every symbol would fail alike."
         )
-    # UNVERIFIED: header names are as documented; not yet exercised against a
-    # live key. A wrong header name returns 401/403, which _request surfaces.
+    # Verified live 2026-08-05: these header names authenticate successfully.
     return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
 
 
@@ -177,12 +204,10 @@ def normalize(raw: dict[str, list[dict]], adjusted: dict[str, list[dict]]) -> pd
         if missing:
             raise AlpacaError(f"{symbol}: bars are missing {sorted(missing)}")
 
-        # UNVERIFIED: for 1Day bars `t` is documented as RFC-3339 but the page
-        # does not say which instant of the session it denotes. Converting to
-        # America/New_York and taking the date is correct whether Alpaca stamps
-        # ET midnight or the session open, and wrong only if it stamps the
-        # *close* in UTC — which would shift every bar back a day and is exactly
-        # what the trading-day continuity check would catch.
+        # Verified live 2026-08-05: `t` is ET midnight of the session date in
+        # UTC — 05:00Z under EST, 04:00Z under EDT. Converting to
+        # America/New_York before taking the date is what makes that correct on
+        # both sides of a daylight-saving boundary.
         df["date"] = (
             pd.to_datetime(df["t"], utc=True)
             .dt.tz_convert("America/New_York")

@@ -23,8 +23,8 @@ Four collectors — `kr_price`, `kr_news`, `macro`, `us_price` — are built and
 | DART | ✅ held | `kr_filings` |
 | FRED | ✅ held | `macro` — already built and passing |
 | SEC User-Agent | ✅ held | `us_filings` |
-| **Alpaca** | ⬜ **outstanding** | `us_price` at watchlist scale — see §2b. Tiingo's 50/hour cannot serve 48 symbols with any headroom |
-| Tiingo | ✅ held | `us_price` today, and the cross-check afterwards |
+| **Alpaca** | ✅ **held, verified 2026-08-05** | `us_price`. SIP confirmed on the free plan; 48 symbols in 2 requests |
+| Tiingo | ✅ held | kept as the cross-check — it is what caught the IEX discrepancy |
 | SMTP | ✅ held | email delivery |
 
 Only KIS remains, and it is the least urgent of the set: it adds real-time quotes on top of data pykrx already supplies. Start the application anyway, because its approval queue runs for days in the background.
@@ -327,9 +327,12 @@ Feeds that failed and would need replacing: 서울경제 (404), 헤럴드경제 
 
 ---
 
-## 2b. Alpaca — US market data
+## 2b. Alpaca — US market data ✅ resolved 2026-08-05
 
-> [!warning] One check decides whether this source is usable at all
+> [!tip] The free plan does serve SIP for historical queries
+> Measured against SPY on 2024-01-02: `sip` returned **472.65 on 123,007,793 shares**, matching the Yahoo-confirmed close; `iex` returned **472.66 on 1,982,936**. The switch went ahead, and the collector refuses to fall back to IEX — a one-cent close on 1.6% of true volume is wrong in a way that still looks plausible.
+
+> [!warning] The original question, kept because it is how the answer was found
 > Alpaca's documentation contradicts itself about the free plan. The plan
 > comparison lists Basic as **IEX only** for equities; the Market Data FAQ says
 > a *historical* query needs only an `end` at least 15 minutes old to reach
