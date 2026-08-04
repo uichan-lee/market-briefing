@@ -1,6 +1,12 @@
 # Secrets
 .env
 
+# Alias worksheet written by scripts/config_helper.py scaffold. Deliberately not
+# tracked: config/aliases.yaml is the hand-maintained file CLAUDE.md protects,
+# and a committed near-identical draft beside it is an invitation to edit the
+# wrong one. Regenerate it whenever it is needed.
+config/aliases.draft.yaml
+
 # Generated data. Regenerable from raw or upstream sources — pykrx will serve
 # 2024 prices again in 2030, FRED keeps decades of history.
 #

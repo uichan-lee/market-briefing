@@ -30,7 +30,11 @@
 
 "005930":
   canonical: 삼성전자
-  aliases: [삼성전자, 삼성 전자, Samsung Electronics, SEC]
+  # "SEC" was here and has been removed. `config_helper.py audit` found it
+  # matching exactly one article in 1,155 — about a US nuclear operator, where
+  # SEC meant the Securities and Exchange Commission. A three-letter English
+  # alias inside Korean copy is almost all false positive.
+  aliases: [삼성전자, 삼성 전자, Samsung Electronics]
   exclude: [삼성전자우, 삼성물산, 삼성SDI, 삼성전기]
   ambiguous_parents: [삼성]
 
@@ -40,6 +44,16 @@
   exclude: []
   ambiguous_parents: [SK]
 
-# TODO(Ricky): one entry per watchlist ticker. Budget 60–90 minutes for 15.
+# TODO(Ricky): one entry per watchlist ticker. Budget 40–60 minutes for 15.
 # Include English names (foreign wire coverage gets picked up too) and the
 # spacing/spelling variants that actually appear in Korean headlines.
+#
+# Two tools carry the mechanical half. Neither writes this file:
+#
+#   uv run python scripts/config_helper.py scaffold
+#       → config/aliases.draft.yaml, with canonical/exclude/ambiguous_parents
+#         pre-filled per watchlist ticker and `aliases` left empty. Copy from it.
+#
+#   uv run python scripts/config_helper.py audit --samples 5
+#       → per-alias hit counts against the news already collected, plus sample
+#         headlines. This is how a bad alias gets caught; "SEC" above was.
