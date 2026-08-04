@@ -23,7 +23,8 @@ Four collectors — `kr_price`, `kr_news`, `macro`, `us_price` — are built and
 | DART | ✅ held | `kr_filings` |
 | FRED | ✅ held | `macro` — already built and passing |
 | SEC User-Agent | ✅ held | `us_filings` |
-| Tiingo | ✅ held | `us_price`. Alpaca deliberately blank — SPEC §3.2 says pick one |
+| **Alpaca** | ⬜ **outstanding** | `us_price` at watchlist scale — see §2b. Tiingo's 50/hour cannot serve 48 symbols with any headroom |
+| Tiingo | ✅ held | `us_price` today, and the cross-check afterwards |
 | SMTP | ✅ held | email delivery |
 
 Only KIS remains, and it is the least urgent of the set: it adds real-time quotes on top of data pykrx already supplies. Start the application anyway, because its approval queue runs for days in the background.
@@ -323,6 +324,74 @@ Feeds that failed and would need replacing: 서울경제 (404), 헤럴드경제 
 > The search API caps both results per query and paging depth. Historical news cannot be retrieved in bulk — the corpus only accumulates from the day collection starts.
 >
 > This is why `MANUAL-TASKS.md` §4 places the golden set *after* a week of collection: there is nothing to sample from before then. It also means every day the collector is not running is a day permanently missing from the dataset.
+
+---
+
+## 2b. Alpaca — US market data
+
+> [!warning] One check decides whether this source is usable at all
+> Alpaca's documentation contradicts itself about the free plan. The plan
+> comparison lists Basic as **IEX only** for equities; the Market Data FAQ says
+> a *historical* query needs only an `end` at least 15 minutes old to reach
+> **SIP**. Both were read on 2026-08-04.
+>
+> The gap is not cosmetic. IEX is one exchange, SIP is the consolidated tape of
+> all of them, and Alpaca's own FAQ gives AAPL on 2023-09-29 as **923,134
+> shares on IEX against 51,861,083 on SIP** — a factor of 56. IEX-only bars
+> would give this project the wrong volume for every US name and a close that
+> is one venue's last print rather than the official close.
+>
+> **Settle it empirically, not by reading harder:**
+>
+> ```bash
+> set -a; source .env; set +a
+> uv run python -c "from src.collectors.us_price_alpaca import probe_feed; print(probe_feed())"
+> ```
+>
+> It fetches SPY for 2024-01-02, the date the fourth check pins at a close of
+> **472.65** already confirmed against Yahoo Finance. A matching close with
+> volume in the tens of millions means consolidated data and the switch goes
+> ahead. A volume near a million means IEX, and this source cannot be used on
+> the free plan whatever the `feed` parameter said.
+
+### Why the source changed
+
+Tiingo works and is not broken. It stopped fitting when the US watchlist reached
+40 names:
+
+| | Tiingo free | Alpaca free |
+|---|---|---|
+| Symbols per request | **1** | comma-separated list |
+| Rate limit | **50 / hour** | 200 / minute |
+| Cost of one 48-symbol run | **48 requests** | 1 per page |
+
+48 of 50 leaves no headroom. A single retry pushes the run over, and a 429
+mid-run leaves the rest of the watchlist without data. This is a request-shape
+problem, not a data-quality one — which is exactly why the feed question above
+has to be answered before the switch is worth making.
+
+### Registering
+
+`alpaca.markets` → Sign up → Home → **Generate API Keys**.
+
+- **Paper trading keys are sufficient.** This project never places an order, and
+  CLAUDE.md rule 2 forbids writing code that could. Paper keys make that
+  structural rather than a matter of discipline.
+- The secret is shown **once**. Copy it immediately; regenerating invalidates the
+  previous pair.
+- No card is required for the Basic plan.
+
+```
+ALPACA_API_KEY_ID=
+ALPACA_API_SECRET_KEY=
+```
+
+Push both to Actions secrets afterwards — MANUAL-TASKS.md §1 has the loop.
+
+> [!note] Tiingo is kept, not retired
+> It stays as the collector in use until the probe passes, and afterwards as a
+> second opinion: two independent sources agreeing on the pinned SPY close is a
+> stronger guarantee than either alone. `TIINGO_API_KEY` stays in `.env`.
 
 ---
 

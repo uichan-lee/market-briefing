@@ -569,7 +569,8 @@ market-briefing/
       kr_price.py             # pykrx OHLCV
       kr_flow.py
       kr_news.py              # outlet RSS, twice hourly in session
-      us_price.py             # Tiingo EOD, the §2.2① transmission set
+      us_price.py
+      us_price_alpaca.py        # multi-symbol replacement; see §3.2             # Tiingo EOD, the §2.2① transmission set
       us_filings.py
       macro.py
     entity/
