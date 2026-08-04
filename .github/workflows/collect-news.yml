@@ -1,14 +1,34 @@
 # Hourly Korean news collection. SPEC §1, §3.1.
 name: collect-news
 
-# Hourly is not a preference. RSS serves a rolling 50–120 item buffer with no
-# history, and the fastest feeds measured turn over in well under two hours, so
-# anything missed between runs is gone permanently. This is the only collector
-# in the project whose schedule is a correctness requirement rather than a
-# freshness one.
+# This schedule is a correctness requirement, not a freshness preference. RSS
+# serves a rolling 50–120 item buffer with no history, so anything published
+# between two runs and pushed out of the buffer before the second is gone
+# permanently.
+#
+# Two things were learned the hard way on 2026-08-03 and both are encoded below.
+#
+# 1. `0 * * * *` lost three of its first four runs. GitHub queues scheduled
+#    workflows on a best-effort basis and drops them under load; the top of the
+#    hour is the most contended minute there is. The surviving run fired 50
+#    minutes late, and the collector reported a 3.4h gap. Hence :17 and :47 —
+#    nothing is special about those minutes except that they are not :00.
+#
+# 2. Frequency is not uniform, because buffer *span* is not uniform. A buffer is
+#    a fixed item count, so it holds less time the faster the outlet publishes.
+#    Measured at 22:30 KST, 한국경제 경제 held 4.0 hours and 인포스탁 held 101.6.
+#    During the Korean session the fast feeds hold far less, which is where a
+#    single skipped run starts costing articles — so the session is polled twice
+#    an hour and the rest of the day once.
+#
+# 31 runs/day, ~960 of the 2,000 monthly minutes included on a private
+# repository, leaving room for the report workflow. If check_feed_continuity
+# starts reporting losses outside the session window, raise the off-hours
+# schedule before anything else.
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "17,47 0-6 * * *" # 09:00–15:30 KST — the KRX session, twice an hour
+    - cron: "17 7-23 * * *" #   the rest of the day, hourly
   workflow_dispatch:
 
 # GitHub disables scheduled workflows after 60 days without commit activity.
