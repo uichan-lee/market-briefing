@@ -13,12 +13,12 @@ Screen labels are quoted verbatim in Korean, because that is what the UI actuall
 
 ## Order of work
 
-Three collectors — `kr_price`, `kr_news`, `macro` — are built and running. Two credentials remain outstanding.
+Four collectors — `kr_price`, `kr_news`, `macro`, `us_price` — are built and running. One credential remains outstanding.
 
 | Credential | Status | Unblocks |
 |---|---|---|
-| **KRX Data Marketplace** | ⬜ **outstanding** | `kr_flow`, short interest, market cap, fundamentals — **55% of the rating weight** |
-| **KIS** | ⬜ outstanding | real-time quotes (§3.1). Approval takes days, so start it early |
+| **KRX Data Marketplace** | ✅ **held, verified 2026-08-04** | `kr_flow`, short interest, market cap, fundamentals — **55% of the rating weight**, now clear |
+| **KIS** | ⬜ **outstanding** | real-time quotes (§3.1). Approval takes days, so start it early |
 | ~~Naver~~ | ✖ not needed | outlet RSS replaced it — see §2 |
 | DART | ✅ held | `kr_filings` |
 | FRED | ✅ held | `macro` — already built and passing |
@@ -26,11 +26,24 @@ Three collectors — `kr_price`, `kr_news`, `macro` — are built and running. T
 | Tiingo | ✅ held | `us_price`. Alpaca deliberately blank — SPEC §3.2 says pick one |
 | SMTP | ✅ held | email delivery |
 
-Only KRX and KIS remain. KRX is the one that matters: without it every ticker rates `관망`, because the surviving features fall below the confidence floor. KIS adds real-time quotes on top of data pykrx already supplies, so it is less urgent than its approval queue makes it look.
+Only KIS remains, and it is the least urgent of the set: it adds real-time quotes on top of data pykrx already supplies. Start the application anyway, because its approval queue runs for days in the background.
+
+> [!warning] Held locally is not the same as available to CI
+> As of 2026-08-04 the repository has **no Actions secrets configured at all**. `collect-news.yml` has been running fine only because outlet RSS needs no credential. MANUAL-TASKS.md §1 has a loop that pushes every value from `.env` to `gh secret set` without printing any of them.
 
 ---
 
-## 0. KRX Data Marketplace — the one that actually blocks the rating
+## 0. KRX Data Marketplace — resolved 2026-08-04
+
+> [!tip] Registered, logged in, and verified against live endpoints
+> `login_krx` returns `True`, and all six gated endpoints answer for 005930: investor net-buy by value and volume, short-interest balance, short volume, market cap, and PER/PBR fundamentals. `get_market_sector_classifications` also works and returns 943 KOSPI rows, which is what `scripts/config_helper.py` uses to resolve names to tickers.
+>
+> Two operational facts worth carrying forward:
+>
+> - **The session expires after 60 minutes.** `login_krx` reports 만료 시간 exactly one hour out. A short collector run never notices; a multi-year backfill must re-authenticate rather than assume one login covers the job.
+> - **pykrx prints the login ID to stdout on every login.** It lands in Actions logs verbatim. The repository is private and an ID alone is not a credential, so this is a note rather than an incident — but check it before making the repository public. The password is never printed.
+>
+> The registration trap below is kept because it cost a day, and because the same failure would recur on any re-registration.
 
 > [!danger] This was not required when this document was first written
 > The old 정보데이터시스템 let anyone query without an account. It has been replaced by the members-only **KRX Data Marketplace**, and login is mandatory. Verified 2026-08-03 by direct request: `data.krx.co.kr` returns **HTTP 400 with the body `LOGOUT`**.
@@ -58,7 +71,19 @@ data.krx.co.kr → 회원가입
 > [!warning] Do not register with Kakao or Naver social login
 > pykrx performs a form login and needs an actual password, which a social account does not have. Worse, the recovery path is bad: withdrawing the social account and re-registering natively is blocked by "이미 사용중인 전화번호" — the phone number stays attached after withdrawal. Observed 2026-08-03.
 >
-> If this has already happened, KRX 고객센터 is **1577-0088**. Ask either to have the phone number released for re-registration, or to attach a password to the existing social account — the second is usually simpler and avoids losing the account.
+> If this has already happened, the account is stuck in a state their own recovery flow cannot see: 회원가입 rejects the phone as **"이미 사용중인 전화번호"** while 아이디/비밀번호 찾기 on that same number answers **"관련 정보 없음"**. Observed 2026-08-03. Withdrawal appears to release the member record while leaving the phone number's uniqueness claim behind.
+>
+> Contacts, in the order worth trying:
+>
+> | Route | Detail | Why this order |
+> |---|---|---|
+> | **`krxdata@krx.co.kr`** | the Data Marketplace's own address, from the site footer | Written record, screenshots attach, and it goes to the team that owns the member table. Send it before calling |
+> | 1577-0088 / 02-3774-9000 | KRX 대표번호, Seoul | Business hours. Ask for 정보사업 담당 — the switchboard does not own this system |
+> | 051-662-2000 | Busan headquarters | Only if Seoul routes nowhere |
+>
+> Ask for **the withdrawn record to be purged so the number is freed**, and give both error messages verbatim — the contradiction between them is the evidence that this is their data inconsistency rather than a user mistake. Get a 접수번호.
+>
+> `openapi.krx.co.kr` is a separate registration system and worth trying first anyway; it may not share the member table that is stuck.
 
 - Free. Data queries remain free; the change was to stop unauthenticated bulk scraping.
 - Naver/Kakao social login is offered, but **register with a native ID and password.** pykrx performs a form login and needs an actual password; a social account has none it can use.
@@ -289,7 +314,7 @@ All carry `title`, `link`, and a timezone-aware `pubDate`, which is what the loo
 Three real costs, none fatal:
 
 - **No search.** The firehose arrives per outlet and is filtered locally by `config/aliases.yaml` — which is what Stage 0 entity resolution already does, so the work is not new. It also removes dependence on Naver's search ranking.
-- **No backfill, and a rollover risk Naver does not have.** A feed holds 50–120 items. If an outlet publishes more than that between polls, the excess is lost permanently. Two runs a day is not enough; this needs hourly collection.
+- **No backfill, and a rollover risk Naver does not have.** A feed holds 50–120 items. If an outlet publishes more than that between polls, the excess is lost permanently. Two runs a day is not enough. Measured buffer spans run from 4.0 hours (한국경제 경제) to 101.6 (인포스탁), so collection is twice an hour through the KRX session and hourly otherwise.
 - **Body text varies from empty to ~250 characters.** 한국경제 gives headline only. Scoring SPEC §6.2's five dimensions off a bare headline is materially weaker than off Naver's description passage, unless article bodies are fetched separately.
 
 Feeds that failed and would need replacing: 서울경제 (404), 헤럴드경제 (malformed XML), 이데일리 (connection reset).

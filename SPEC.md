@@ -7,7 +7,7 @@
 > **v0.2** — Removed LLM from Stage 1 (replaced with embeddings) / model adapter layer / golden set + bake-off (§7) / entity resolution (§4) / re-reporting detection switched to embedding-based deduplication
 > **v0.3** — Redesigned the delivery layer (§2.0) as a swappable adapter. Dropped the Telegram dependency; Obsidian vault + email are now the defaults
 > **v0.4** — §8 split out into `PREREGISTRATION.md` and frozen before collection began; §8 here is now a pointer. §10 updated to match the built layout (`src/util/`, `src/collectors/validate.py`, toolchain files)
-> **v0.6** — Naver's search API closed to new registrations; §3.1's Korean news source is now outlet RSS (`config/news_feeds.yaml`), collected hourly because RSS has no backfill. GDELT was measured as an alternative and rejected. `data/raw/kr/news/` is committed rather than gitignored, since it is the one raw source that cannot be re-fetched
+> **v0.6** — Naver's search API closed to new registrations; §3.1's Korean news source is now outlet RSS (`config/news_feeds.yaml`). GDELT was measured as an alternative and rejected. `data/raw/kr/news/` is committed rather than gitignored, since it is the one raw source that cannot be re-fetched. §1's collection cadence was later set from measured per-feed buffer spans rather than assumed, after GitHub dropped three of the first four scheduled runs
 > **v0.5** — Added §2.2⑧ AI 총평 (the synthesis half of the Stage 3 §6.1 always specified) with a deterministic guard, and §2.2⑨ medium-term regime. §5 gained three long-horizon per-ticker features. §2.3 separates stable section IDs from display order. Made while `data/raw/` was still empty, so the composite's changed input is logged in PREREGISTRATION §R rather than contaminating an evaluation in flight
 
 > [!note] Language policy
@@ -32,16 +32,22 @@
 |---|---|---|---|
 | `RUN_MORNING` | 07:00 | US market close (previous day) + KR pre-market | 2 hours before KOSPI open |
 | `RUN_EVENING` | 21:30 | KR market close (same day) + US pre-market | 1 hour before US open (DST) |
-| `COLLECT_NEWS` | hourly, on the hour | Korean outlet RSS | Not a report run — see below |
+| `COLLECT_NEWS` | 09:00–15:30 twice an hour, otherwise hourly | Korean outlet RSS | Not a report run — see below |
 
-> [!important] News collection is hourly, and that is a correctness requirement
-> RSS holds a rolling 50–120 item buffer with no history. The fastest feeds measured turn over in well under two hours, so an hour not collected is gone permanently — unlike prices, which pykrx will re-serve years later. `.github/workflows/collect-news.yml` runs on its own schedule, separate from the two report runs, and writes nothing but `data/raw/kr/news/`.
+> [!important] The news collection schedule is a correctness requirement
+> RSS holds a rolling 50–120 item buffer with no history, so an hour not collected is gone permanently — unlike prices, which pykrx will re-serve years later. `.github/workflows/collect-news.yml` runs on its own schedule, separate from the two report runs, and writes nothing but `data/raw/kr/news/`.
+>
+> **The cadence follows a measurement, not a round number.** A buffer is a fixed item count, so it holds less *time* the faster the outlet publishes. Measured 2026-08-03 at 22:30 KST: 한국경제 경제 held 4.0 hours of history, 전자신문 4.5, 연합뉴스 10.3, 뉴시스 17.9, 인포스탁 101.6. The fast feeds hold materially less during the KRX session, which is why the session is polled twice an hour and the rest of the day once.
+>
+> **Loss is detected, not assumed.** `check_feed_continuity` compares where each feed's buffer now begins against the newest article already stored from it. If the first has passed the second, articles were lost and the check names the feed and the hours. This is the signal to raise the schedule — before that, extra runs are spent on a guess.
 
 > [!warning] Daylight saving time
 > US market close is 05:00 KST during DST and 06:00 KST outside it. Fix the schedule in UTC and determine the session with a market calendar. Use `pandas_market_calendars`.
 
-> [!note] GitHub Actions cron delay
-> On-time execution is not guaranteed and can slip tens of minutes during peak hours. If the target is 07:00, trigger at 21:20 UTC to leave margin. On run failure, retry once; if it still fails, send a failure notice through the configured delivery channels and **publish a partial report anyway** — a silent failure is the worst outcome.
+> [!warning] GitHub Actions scheduled runs are dropped, not merely delayed
+> Observed 2026-08-03: of the first four `0 * * * *` firings, **three never ran at all** and the fourth started 50 minutes late. Scheduled workflows are queued best-effort and shed under load, and the top of the hour is the most contended minute.
+>
+> Two consequences, both applied: never schedule on `:00`, and never treat a schedule as a guarantee of coverage. On run failure, retry once; if it still fails, send a failure notice through the configured delivery channels and **publish a partial report anyway** — a silent failure is the worst outcome.
 
 ---
 
@@ -290,7 +296,7 @@ data/
   raw/
     kr/price/2026-07-29.parquet
     kr/investor_flow/2026-07-29.parquet
-    kr/news/2026-07-29/0900.jsonl.gz   # one file per hourly run, gzipped
+    kr/news/2026-07-29/0917.jsonl.gz   # one file per collection run, gzipped
     us/price/2026-07-29.parquet
     us/filings/2026-07-29.jsonl
   embeddings/
@@ -562,8 +568,8 @@ market-briefing/
       validate.py             # the four checks every collector must pass
       kr_price.py             # pykrx OHLCV
       kr_flow.py
-      kr_news.py              # outlet RSS, hourly
-      us_price.py
+      kr_news.py              # outlet RSS, twice hourly in session
+      us_price.py             # Tiingo EOD, the §2.2① transmission set
       us_filings.py
       macro.py
     entity/
@@ -597,6 +603,8 @@ market-briefing/
       bakeoff.py               # model comparison
       ic.py
       shadow_portfolio.py
+  scripts/
+    config_helper.py          # find / scaffold / audit for watchlist + aliases
   data/
     golden/v1.jsonl
   tests/
@@ -607,13 +615,14 @@ market-briefing/
     test_consistency.py
     test_kr_price.py
     test_kr_news.py
+    test_us_price.py
     test_macro.py
     test_collectors.py
     test_entity.py
     test_features.py
   .github/workflows/
     briefing.yml
-    collect-news.yml          # hourly; the only schedule that is a correctness requirement
+    collect-news.yml          # the only schedule that is a correctness requirement
 ```
 
 ---

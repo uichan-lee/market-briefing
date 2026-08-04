@@ -1,113 +1,313 @@
 # MANUAL-TASKS.md
 
-Work that Claude cannot do. Ricky does these. Everything else in this project is delegable.
+Claude가 대신할 수 없는 작업. Ricky가 직접 하는 것들이고, 이 프로젝트의 나머지 전부는 위임 가능하다.
 
-Ordered by when it blocks progress. Items marked **BLOCKING** stop the pipeline until they are done.
+진행을 막는 순서대로 정렬했다. **BLOCKING** 표시가 붙은 항목은 끝날 때까지 파이프라인을 멈춰 세운다.
+
+> 이 문서는 의도적으로 한글로 쓴다. 저장소의 다른 문서·코드·커밋 메시지는 영어이지만, 이 파일은 Ricky가 읽고 그대로 따라 하기 위한 것이므로 사용자 메모리의 언어 정책에서 "Ricky가 읽을 산출물" 예외에 해당한다.
 
 ---
 
-## 1. Accounts and credentials — **BLOCKING**
+## 다음에 할 일, 순서대로
 
-Most of this is done. Two remain.
+각 항목의 상세는 아래 해당 절에 있다. 이 표는 휴대폰으로 볼 짧은 버전이다.
 
-| Item | Status | Notes |
+| # | 할 일 | 시간 | 절 |
+|---|---|---|---|
+| ~~1~~ | ~~`.env`의 `SEC_USER_AGENT` 따옴표 처리~~ | ✅ **완료 2026-08-04** | [§0](#0-끝난-확인-작업) |
+| ~~2~~ | ~~SPY 2024-01-02 종가 확인~~ | ✅ **완료 2026-08-04** | [§0](#0-끝난-확인-작업) |
+| ~~3~~ | ~~`.env` 값을 GitHub secrets로 등록~~ | ✅ **완료 2026-08-04** | [§1](#1-계정과-인증-정보) |
+| **4** | **`config/watchlist.yaml`에 13종목 추가** | **15분** | [§2](#2-워치리스트--blocking) |
+| **5** | **`config/aliases.yaml` 작성** | **40~60분** | [§3](#3-별칭-사전--blocking) |
+| 6 | KIS 신청 시작 (승인 대기가 며칠 걸림) | 15분 | [§1](#1-계정과-인증-정보) |
+
+**4번과 5번 두 개만이 Claude를 막고 있다.** 나머지는 아무것도 막지 않는다.
+
+---
+
+## 0. 끝난 확인 작업
+
+이 절은 기록으로 남긴다. 같은 문제가 다시 생겼을 때 어떤 증상이었는지 알아보기 위해서다.
+
+### ✅ `.env`의 `SEC_USER_AGENT` — 해결
+
+**증상이 고약했던 이유:** 값에 공백이 있는데 따옴표가 없으면, 셸은 그 줄을 대입문이 아니라 **명령어 앞에 붙는 환경변수 접두사**로 읽는다. 즉 `KEY=두 단어`는 존재하지도 않는 `단어`라는 명령에만 적용되는 일회성 대입이 되고, **변수는 셸에 아예 남지 않는다.** 잘려서 들어가는 게 아니라 통째로 사라진다.
+
+게다가 `source`는 그 줄을 지나 계속 진행하므로 나머지 인증 정보는 전부 정상 로드된다. 그래서 이 구멍은 몇 주 뒤 `us_filings`가 SEC EDGAR 인증에 실패하는 형태로만 드러났을 것이다.
+
+확인 결과:
+
+```
+SEC_USER_AGENT length after source: 38   (수정 전: 0)
+quoted: yes
+```
+
+살아 있는 EDGAR에 실제로 던져서 값이 받아들여지는 것까지 확인했다:
+
+```
+SEC EDGAR HTTP 200
+  -> Apple Inc. | tickers: ['AAPL']
+```
+
+SEC는 연락처가 포함된 설명적 User-Agent를 요구하고, 없거나 형식이 안 맞으면 요청을 거부한다. 200이 돌아왔으므로 `us_filings`를 만들 때 이 값으로 바로 동작한다.
+
+### ✅ SPY 2024-01-02 종가 — 교차 확인 완료
+
+`src/collectors/us_price.py`의 네 번째 검사가 SPY의 2024-01-02 종가를 **472.65**로 고정한다. 문제는 그 값을 Tiingo 자신에게서 읽었다는 것이었다. 그러면 컬럼이나 종목코드가 잘못 매핑된 건 잡지만, **Tiingo가 애초에 그 날짜를 틀렸을 경우는 못 잡는다.**
+
+Ricky가 Yahoo Finance Historical Data로 확인 → **일치.** 독립된 출처이므로 순환 참조가 끊겼고, `# UNVERIFIED` 마커를 지웠다. `kr_price`가 삼성전자 종가를 네이버 금융과 교차 확인하는 것과 같은 이유다.
+
+라이브 재확인:
+
+```
+[ok] known_value: close at (date=2024-01-02, ticker='SPY') == 472.65
+```
+
+**코드에 남은 `UNVERIFIED` 마커는 이제 없다.** API-KEYS.md에 KIS 관련으로 3개가 남아 있지만, 그건 KIS 키를 받은 뒤 확인할 항목으로 문서에 적어둔 것이지 코드가 아니다.
+
+> `close`를 고정하고 `adj_close`를 안 쓴 건 의도적이다. Tiingo는 배당이 지급될 때마다 `adj_close`의 과거 값을 전부 다시 계산한다. 그걸 고정했으면 분기 배당마다 검사가 실패했을 것이다. `close`는 움직이지 않는다.
+
+---
+
+## 1. 계정과 인증 정보
+
+### 로컬 `.env`
+
+| 항목 | 상태 | 비고 |
 |---|---|---|
-| **KRX Data Marketplace** | ⬜ **outstanding** | Free and takes minutes, but now mandatory. Register with a native ID/PW — **not** social login; see the trap in API-KEYS.md §0. Blocks 55% of the rating weight, which makes it the one that matters. |
-| KIS Open API keys | ⬜ outstanding | Requires a 한국투자증권 account, and 모의투자 is a separate prior signup. Approval takes days, so start it early — but it only adds real-time quotes on top of data pykrx already gives, so it blocks less than the queue suggests. |
-| ~~Naver Developers app~~ | ✖ not needed | Korean news comes from outlet RSS, which requires no credential. API-KEYS.md §2 explains why, and keeps Naver as the documented fallback. |
-| DART OpenAPI key | ✅ held | |
-| FRED API key | ✅ held | `macro` is built and passing against it. |
-| US market data key | ✅ held | Tiingo. Alpaca left blank deliberately — SPEC §3.2 says pick one. |
-| Email sending credential | ✅ held | Dedicated account, separate from the reading address. |
+| **KRX Data Marketplace** | ✅ **보유·검증 완료 2026-08-04** | 재가입 성공. 아래 검증 결과 참조 — 등급 가중치 55%를 막고 있던 항목이고, 이제 풀렸다 |
+| KIS Open API 키 | ⬜ **미완료** | **한국투자증권** 계좌가 필요하고, 모의투자는 그보다 앞선 별도 신청이다. 승인에 며칠 걸리니 일찍 시작할 것. 다만 pykrx가 이미 주는 데이터 위에 실시간 시세를 얹는 것뿐이라, 대기열 길이가 주는 인상만큼 급하지는 않다 |
+| DART OpenAPI 키 | ✅ 보유 | |
+| FRED API 키 | ✅ 보유 | `macro` 완성, 검증 통과 |
+| Tiingo | ✅ 보유 | `us_price` 완성, 검증 통과. Alpaca는 의도적으로 비워둠 — SPEC §3.2가 둘 중 하나만 쓰라고 명시 |
+| SEC User-Agent | ✅ 보유·검증 완료 | §0 참조. EDGAR가 실제로 받아들이는 것까지 확인 |
+| 이메일 발송 계정 | ✅ 보유 | 읽는 주소와 분리된 전용 계정 |
+| ~~Naver Developers 앱~~ | ✖ 불필요 | 한국 뉴스는 언론사 RSS에서 오고 인증이 필요 없다. API-KEYS.md §2가 Naver를 문서화된 대체 경로로 남겨둔다 |
 
-Store all of these in `.env` locally and as GitHub repository secrets. Never paste a key into a chat session with any AI tool, including Claude Code.
+### ✅ GitHub Actions secrets — 등록 완료
 
-> **Use `.env.example` as the checklist.** It lists every key above with its issuing URL, in the exact variable names the code expects. Copy it to `.env` and fill in the values:
->
-> ```
-> cp .env.example .env
-> ```
->
-> `.gitignore` already covers `.env` and `data/`, so neither can be staged by accident. `.env.example` itself holds no values and is committed deliberately.
+2026-08-04 이전까지 **secrets가 하나도 설정돼 있지 않았다.** 지금까지 아무것도 안 깨진 건 `collect-news.yml`이 언론사 RSS만 읽어서 인증이 필요 없었기 때문이다. KRX·FRED·Tiingo·DART·SMTP를 쓰는 워크플로우가 하나라도 생기는 순간 전부 실패했을 것이다.
 
-**Step-by-step issuance instructions: @API-KEYS.md.** That document covers each provider's signup screen, which options to select, and the non-obvious traps — in particular the KIS `API그룹` selection, which is the strongest available enforcement of absolute rule 2, and the fact that Naver news cannot be backfilled.
+7개 전부 등록했다:
 
-> [!warning] KRX first — it is the only one still blocking real work
-> Three collectors already run without it: `kr_price` (pykrx serves OHLCV through a Naver fallback), `kr_news` (outlet RSS, no credential), and `macro` (FRED). What KRX gates is investor flows, short interest, market cap and fundamentals — 55% of the §2.2⑥ rating weight. The surviving 45% falls below the confidence floor, so until this is done **every ticker rates `관망`**: the pipeline runs, publishes, and says nothing.
->
-> Free, minutes, verified 2026-08-03. Start KIS afterwards, since its approval queue runs in the background while you do everything else.
+```
+DART_API_KEY  FRED_API_KEY  KRX_ID  KRX_PW  SEC_USER_AGENT  SMTP_PASSWORD  TIINGO_API_KEY
+```
+
+`.env` 값을 바꿨을 때 다시 밀어넣는 방법 (**값이 화면에 찍히지 않는다**):
+
+```bash
+set -a; source .env; set +a
+for k in KRX_ID KRX_PW DART_API_KEY FRED_API_KEY TIINGO_API_KEY SEC_USER_AGENT SMTP_PASSWORD; do
+  if [ -n "${(P)k}" ]; then
+    gh secret set "$k" --body "${(P)k}" && echo "set $k (${#${(P)k}} chars)"
+  else
+    echo "SKIP $k (empty in .env)"
+  fi
+done
+```
+
+`${(P)k}`는 zsh의 간접 참조 — 변수 *이름*을 담은 변수에서 그 *값*을 꺼낸다. bash라면 `${!k}`다.
+
+`gh secret list`로 확인할 수 있다. GitHub은 이름과 수정 시각만 보여주고 값은 절대 다시 보여주지 않는다. 덮어쓰기만 가능하다.
+
+> AI 도구 채팅창에 키를 붙여넣지 말 것. Claude Code도 포함이다. 위 루프는 어떤 값도 터미널에 도달하지 않도록 짜여 있다.
+
+### KRX 로그인이 실제로 푼 것
+
+2026-08-04에 삼성전자·2026-07-20~07-31 구간으로 실측했다. 전에 HTTP 400 `LOGOUT`을 반환하던 엔드포인트가 전부 응답한다:
+
+| 엔드포인트 | 결과 | 공급하는 피처 |
+|---|---|---|
+| `get_market_trading_value_by_investor` | 13×3, `매도/매수/순매수` | `foreign_flow_5d` (0.30), `inst_flow_5d` (0.15) |
+| `get_market_trading_volume_by_investor` | 13×3 | 위와 동일, 주식 수 기준 |
+| `get_shorting_balance_by_date` | 9×5, `공매도잔고/상장주식수/…/비중` | `short_ratio` (−0.10) |
+| `get_shorting_volume_by_date` | 10×3 | 공매도 플로우 변형 |
+| `get_market_cap_by_date` | 10×4, `시가총액/거래량/거래대금/상장주식수` | 사이즈 통제 변수 |
+| `get_market_fundamental_by_date` | 10×6, `BPS/PER/PBR/EPS/DIV/DPS` | `valuation_band` (0.05) |
+| `get_market_sector_classifications` | KOSPI 943행, `종목명/업종명/…` | 업종 배정, 그리고 §2의 `find` 도구 |
+
+모든 종목을 `관망`으로 강제하던 §2.2⑥ 등급 가중치 **55%가 전부 열렸다.** **`kr_flow`를 막고 있는 Ricky 쪽 작업은 이제 없다** — 남은 건 Claude의 일이다.
+
+### pykrx 로그인에 대해 알아둘 것 두 가지
+
+**세션은 60분 뒤 만료된다.** `login_krx`가 정확히 1시간 뒤를 만료 시각으로 보고한다. 짧은 수집 실행은 눈치채지 못하지만 다년치 백필은 걸린다. `kr_flow`는 한 번 로그인으로 작업 전체를 커버한다고 가정하지 말고 재인증해야 한다. Claude가 처리할 문제이고, 여기 적어두는 건 나중에 놀라지 않기 위해서다.
+
+**pykrx가 로그인할 때마다 로그인 ID를 stdout에 출력한다.** Actions 로그에 그대로 남는다. 저장소가 비공개이고 ID만으로는 자격증명이 아니므로 사고는 아니지만, **저장소를 공개로 바꾸기 전에 확인할 것.** 비밀번호는 출력되지 않는다.
+
+**각 발급처의 단계별 안내: @API-KEYS.md** — 가입 화면, 선택해야 할 옵션, 눈에 안 띄는 함정까지 다룬다. 특히 KIS의 `API그룹` 선택은 절대 규칙 2(주문·체결·취소 엔드포인트 금지)를 강제할 수 있는 가장 강한 수단이다.
 
 ---
 
-## 2. Watchlist — **BLOCKING**
+## 2. 워치리스트 — **BLOCKING**
 
-File: `config/watchlist.yaml` — exists, with the schema and the two required large caps seeded. Ricky extends it.
+파일: `config/watchlist.yaml`. 대형주 2종목이 심어져 있고, Ricky가 13개를 더한다.
 
-> **Always quote the ticker.** YAML reads a bare leading-zero number as octal, so an unquoted `000660` silently becomes the integer `432`. `005930` survives only because `9` is not a valid octal digit, which makes the failure inconsistent and easy to miss. The loader rejects unquoted tickers with an explanatory error rather than relying on anyone remembering this.
+> **종목코드는 항상 따옴표로 감쌀 것.** YAML은 앞자리가 0인 맨숫자를 8진수로 읽는다. 따옴표 없는 `000660`은 조용히 정수 `432`가 된다. `005930`이 살아남는 건 `9`가 8진수 자릿수가 아니어서일 뿐이고, 그래서 이 실패는 일관성이 없고 놓치기 쉽다. 로더가 따옴표 없는 종목코드를 설명과 함께 거부하므로, 누가 이걸 기억하는지에 의존하지는 않는다.
 
-Start with **15 Korean tickers**. Not 60. A smaller list makes every downstream problem visible faster, and the alias dictionary in the next section scales with this number.
+**15종목으로 시작한다. 60개가 아니다.** 목록이 짧을수록 하류의 모든 문제가 빨리 보이고, §3의 별칭 사전 작업량이 이 숫자에 정비례한다.
 
-Include:
-- Whatever Ricky actually holds
-- A few names Ricky watches but does not hold, as a control group
-- At least two large caps with heavy news coverage (삼성전자, SK하이닉스) — these stress-test deduplication
-- At least one name with an ambiguous group name (한화 계열, LG 계열) — these stress-test entity resolution
+개수보다 구성이 중요하다:
 
-US tickers come later, after the Korean side is stable.
+- **실제로 보유한 종목** — `held: true`를 정직하게 설정할 것. 조용히 전부 보유 종목인 "대조군"은 2주 게이트에서 아무것도 측정하지 못한다
+- **보지만 사지 않은 종목 몇 개** — 이게 진짜 대조군이다
+- **뉴스가 많이 나오는 대형주 최소 2개** — 삼성전자·SK하이닉스가 이미 들어 있고, 재보도 중복 제거를 시험하는 역할이다
+- **그룹명이 모호한 종목 최소 1개** (한화 계열, LG 계열) — 엔티티 해석을 시험한다. SPEC §4가 "여기서 실패하면 하류 전체가 무효"라고 지목한 단계다
+
+미국 종목은 한국 쪽이 안정된 다음이다.
+
+### 종목코드를 손으로 찾지 말 것
+
+`scripts/config_helper.py find`가 살아 있는 KRX 상장 목록에 이름을 조회해서, 공식 종목명과 KRX 업종까지 채운 채로 붙여넣을 수 있는 형태로 출력한다:
+
+```bash
+set -a; source .env; set +a
+uv run python scripts/config_helper.py find 한화에어로스페이스 LG에너지솔루션 현대차 카카오 셀트리온
+```
+
+```yaml
+  - ticker: "012450"
+    name: 한화에어로스페이스
+    sector: 운송장비·부품
+    held: false
+```
+
+부분 이름도 된다. **정확한 회사명이 자기 부분문자열을 이긴다** — `현대차`는 005380을 주지, 현대차증권과 우선주 3종에도 걸린다며 튕기지 않는다. 진짜로 여러 종목에 걸리는 경우만 추측 없이 보고한다:
+
+```
+  # AMBIGUOUS: '카카오' matches 4 listings — 035720=카카오, 323410=카카오뱅크, 377300=카카오페이, 293490=카카오게임즈
+```
+
+의도한 게 뭔지 정해지면 구체적인 이름으로 다시 실행하면 된다. 그다음 출력을 `kr:` 아래에 붙여넣고 `held`만 손보면 끝이다.
+
+**시간: 약 15분**, 그중 거의 전부가 "어떤 13개를 고를까" 고민이다.
 
 ---
 
-## 3. Alias dictionary — **BLOCKING**
+## 3. 별칭 사전 — **BLOCKING**
 
-File: `config/aliases.yaml` — exists, with the schema and the two entries below already transcribed from this section. Ricky adds one entry per watchlist ticker.
+파일: `config/aliases.yaml`. 워치리스트 종목당 항목 하나.
 
-This is the single highest-leverage manual task in the project. Korean financial news identifies companies inconsistently, and if this file is wrong, every news-derived number downstream is wrong in a way that is hard to detect.
+**이 프로젝트에서 레버리지가 가장 큰 수작업이다.** 한국 금융 기사는 회사를 일관성 없이 지칭하고, 이 파일이 틀리면 뉴스에서 나온 모든 숫자가 **발견하기 어려운 방식으로** 틀린다.
 
-**Estimated time:** 60–90 minutes for 15 tickers.
+**시간: 15종목 기준 40~60분.** 기계적인 절반이 자동 생성되면서 기존 60~90분에서 줄었다.
 
-Format:
+### 3단계 루프
+
+#### 1단계 — 워크시트 생성
+
+워치리스트를 채운 다음 실행한다:
+
+```bash
+set -a; source .env; set +a
+uv run python scripts/config_helper.py scaffold
+```
+
+`config/aliases.draft.yaml`이 만들어진다. 워크시트이고, gitignore돼 있고, 아무것도 이 파일을 읽지 않는다:
 
 ```yaml
 "005930":
   canonical: 삼성전자
-  aliases: [삼성전자, 삼성 전자, Samsung Electronics, SEC]
-  exclude: [삼성전자우, 삼성물산, 삼성SDI, 삼성전기]
-  ambiguous_parents: [삼성]     # 이 단어만 등장하면 매칭하지 않는다
-
-"000660":
-  canonical: SK하이닉스
-  aliases: [SK하이닉스, 하이닉스, SK Hynix, Hynix]
-  exclude: []
-  ambiguous_parents: [SK]
+  aliases: []   # TODO(Ricky): 한글 표기, 띄어쓰기 변형, 영문명, 약칭
+  exclude: [삼성전자우]
+  ambiguous_parents: [삼성]
+  # exclude above is mandatory: 1 listing(s) contain '삼성전자' as a substring.
+  # 삼성 affiliates, add to exclude only if an alias is loose:
+  #   삼성E&A, 삼성SDI, 삼성물산, 삼성바이오로직스, 삼성생명, … (+12 more)
 ```
 
-Rules Ricky should follow while writing it:
+`canonical`·`exclude`·`ambiguous_parents`는 KRX 상장 목록에서 가져온다. `aliases`는 **의도적으로 비어 있다** — 이유는 아래 "도구가 멈추는 지점" 참조.
 
-- **`exclude` matters more than `aliases`.** The failure mode is not missing an article, it is attributing 삼성물산 news to 삼성전자.
-- Preferred shares (우선주) are separate tickers. List them in `exclude`, never in `aliases`.
-- Group names (삼성, SK, LG, 한화, 현대) go in `ambiguous_parents`. An article that mentions only the group name gets dropped, not guessed.
-- Include English names. Foreign wire coverage gets picked up too.
-- Include common misspellings and spacing variants that actually appear in Korean headlines.
+#### 2단계 — `aliases`를 손으로 채우고, 항목을 `config/aliases.yaml`로 옮긴다
 
-**Maintenance:** the pipeline reports a daily `ambiguous` ratio. When it exceeds 30%, come back and extend this file. Do not let Claude auto-generate entries — an incorrect alias is worse than a missing one, and auto-generation produces incorrect aliases silently.
+규칙:
 
-**Checked on load.** `src/util/config.py` rejects the mistakes that are easy to make by hand and impossible to spot afterward: the same alias claimed by two different tickers, an alias that also appears in its own `exclude` list, an entry with no aliases at all, and unquoted tickers. These are hard errors at startup, not warnings — a collision would otherwise misattribute every article containing that alias, silently, and differently depending on file ordering.
+- **`exclude`가 `aliases`보다 중요하다.** 실패 양상은 기사를 놓치는 게 아니라 **삼성물산 뉴스를 삼성전자에 붙이는 것**이다.
+- **우선주는 별개 종목코드다.** `exclude`에 들어가야지 `aliases`에 들어가면 안 된다. 워크시트가 이미 canonical을 부분문자열로 포함하는 종목을 잡아준다 — 그건 **필수**다. canonical과 같은 별칭은 그런 이름에 자동으로 걸리기 때문이다.
+- **그룹명**(삼성, SK, LG, 한화, 현대)은 `ambiguous_parents`로. 그룹명만 나온 기사는 추측하지 않고 버린다.
+- **실제 헤드라인에 쓰이는 구어체 약칭을 넣을 것** — 삼전, 하이닉스, 엘지. 한국 시장 기사가 실제로 쓰는 표기다.
+- **영문명도 넣을 것.** 외신 기사도 잡힌다.
+- **짧은 영문 약어는 의심할 것.** 아래 실제 사례 참조.
+
+#### 3단계 — 실제 뉴스로 감사
+
+**이 단계가 파일을 "썼다"에서 "믿을 수 있다"로 바꾼다:**
+
+```bash
+uv run python scripts/config_helper.py audit --samples 5
+```
+
+인증 불필요. `data/raw/kr/news/`에 이미 수집된 기사를 읽는다.
+
+```
+corpus: 1155 unique articles under data/raw/kr/news
+aliases.yaml: 2 ticker(s); watchlist has 2
+ambiguous-only (group name, no alias): 48 (4.2%)
+articles matching 2+ tickers: 12
+
+ticker   canonical         articles
+005930   삼성전자                 23
+000660   SK하이닉스               26
+
+never matched (4) — dead weight, or the corpus is still too small:
+  005930  삼성 전자
+  005930  Samsung Electronics
+```
+
+**네 숫자를 이렇게 읽는다:**
+
+- **종목별 `articles`가 0** → 별칭이 헤드라인의 실제 표기 방식과 안 맞는다. 초안에서 가장 흔한 실패이고, 이 감사 도구가 존재하는 이유다.
+- **`never matched`는 자동으로 틀린 게 아니다.** 영문명이 0인 건 피드가 전부 한국어라서다. 나중에 올 외신 기사를 위해 남겨둔다. **한글 별칭이 0인 게 의심스러운 쪽이다.**
+- **`ambiguous-only`가 30%를 넘으면** `aliases`가 너무 좁다는 뜻이다 — 진짜 커버리지가 모호 버킷으로 버려지고 있다. SPEC §4.2가 이 비율을 매일 브리핑 헤더에 보고한다.
+- **`--samples`가 종목별 매칭된 헤드라인을 출력한다. 이걸 읽을 것.** 숫자만으로는 23건이 다 맞는지 다 틀린지 구분할 수 없다. 헤드라인은 구분해준다.
+
+샘플이 깨끗하게 읽힐 때까지 2~3단계를 반복한다.
+
+### 실제 사례 — 감사 도구 첫 실행에서 나온 것
+
+삼성전자 항목에 `SEC`가 별칭으로 들어 있었다. 1,155건 중 **정확히 1건**에 매칭됐다:
+
+> 파산신청 9년만에 '제2의 키옥시아' 재평가…AI 덕보는 美원전기업
+
+미국 원전 기업 기사이고, 여기서 SEC는 증권거래위원회다. **1건 매칭, 정답 0건.** 별칭을 제거하고 이유를 파일에 기록했다.
+
+교훈은 일반화된다. **한글 기사 안의 두세 글자 영문 약어는 거의 전부 오탐이다.** 그리고 카운트만으로는 무해해 보였을 것이다 — 1,155건 중 1건은 "깨진 별칭"이 아니라 "희귀한 별칭"으로 읽힌다. 어느 쪽인지는 헤드라인만이 알려줬다.
+
+### 도구가 멈추는 지점, 그리고 그 이유
+
+CLAUDE.md는 `config/aliases.yaml`의 자동 생성·자동 확장을 금지한다. **틀린 별칭은 하류의 모든 숫자를 조용히 오염시키지만, 빠진 별칭은 커버리지만 잃기 때문이다.** `scaffold`는 그 규칙을 우회하는 게 아니라 그 **비대칭성을 중심으로** 설계했다:
+
+- **`config/aliases.yaml`을 절대 쓰지 않는다.** 출력은 gitignore된 별도 초안으로 가고, Ricky가 읽고 고치고 손으로 옮긴다.
+- **`aliases`를 비워둔다.** 기사를 오귀속시킬 수 있는 유일한 필드이고, 한국 금융 헤드라인을 읽는 사람이 필요한 필드다.
+- **`exclude`와 `ambiguous_parents`만 채운다.** 둘 다 매칭을 *줄이는* 것만 가능하므로, 틀려도 커버리지를 잃을 뿐 정확성은 해치지 못한다 — 규칙이 지키려는 바로 그 비대칭의 안전한 쪽이다.
+
+`audit`은 아무것도 쓰지 않는다.
+
+**이 경계를 옮길 만하다고 판단되면, 이 절을 먼저 고칠 것.**
+
+### 로드 시점에 검사되는 것
+
+`src/util/config.py`가 손으로 편집할 때 저지르기 쉽고 나중에 발견하기는 불가능한 실수를 거부한다: 같은 별칭을 두 종목이 주장하는 경우, 별칭이 자기 `exclude`에도 있는 경우, 별칭이 하나도 없는 항목, 따옴표 없는 종목코드. 경고가 아니라 **시작 시점의 하드 에러**다 — 충돌을 방치하면 그 별칭이 든 모든 기사가 파일 순서에 따라 다르게, 조용히 오귀속된다.
+
+### 유지보수
+
+매일 나오는 `ambiguous` 비율이 30%를 넘으면 이 파일을 확장하고 `audit`을 다시 돌린다. Claude가 항목을 자동 생성하게 두지 말 것.
 
 ---
 
-## 4. Golden set — **BLOCKING for model selection**
+## 4. 골든셋 — **모델 선택을 막는 항목**
 
-File: `data/golden/v1.jsonl`
+파일: `data/golden/v1.jsonl`
 
-Without this, the choice of scoring model is guesswork. With it, the choice is measured.
+이게 없으면 스코어링 모델 선택은 추측이다. 있으면 측정이 된다.
 
-**Estimated time:** about 2 hours. This is the only step in the project that involves no code, and it will be tempting to skip.
+**시간: 약 2시간.** 이 프로젝트에서 코드가 전혀 안 들어가는 유일한 단계이고, 그래서 건너뛰고 싶어질 것이다.
 
-### Procedure
+### 절차
 
-1. Run the collectors for one week. Do not run any LLM yet. News collection is already hourly and automatic once `collect-news.yml` is on the default branch, so this week accumulates by itself — but it only starts accumulating from the day it is merged, because RSS cannot be backfilled.
-2. Sample 100 articles from the collected pool: 25 clearly positive, 25 clearly negative, 25 ambiguous, 25 irrelevant. Sample the ambiguous and irrelevant buckets honestly — the temptation is to pick easy cases, which makes every model look good.
-3. For each article, assign the five dimensions from SPEC §6.2 by hand:
+1. **수집기를 일주일 돌린다.** 아직 LLM은 돌리지 않는다. `collect-news.yml`이 기본 브랜치에 올라가 있으면 뉴스는 자동으로 쌓인다 — 다만 **RSS는 소급 수집이 안 되므로 머지된 날부터만** 쌓인다. 2026-08-04 기준 **1,155건**이 모여 있고, 이미 표본을 뽑기에 충분하다.
+2. **100건을 표본 추출한다:** 명백한 긍정 25, 명백한 부정 25, 애매 25, 무관 25. **애매·무관 버킷을 정직하게 뽑을 것** — 쉬운 사례만 고르고 싶어지는데, 그러면 모든 모델이 좋아 보인다.
+3. 각 기사에 SPEC §6.2의 5개 차원을 손으로 매긴다:
 
 ```json
 {"article_id": "...", "ticker": "005930",
@@ -115,92 +315,94 @@ Without this, the choice of scoring model is guesswork. With it, the choice is m
  "uncertainty": 0.3, "forwardness": 0.8}
 ```
 
-4. Label without looking at what happened to the price afterward. Labeling with hindsight produces a golden set that no model can match and that measures nothing.
-5. Commit the file.
+4. **그 뒤 주가가 어떻게 됐는지 보지 말고 라벨링할 것.** 사후 정보로 라벨링하면 어떤 모델도 못 맞추는, 그래서 아무것도 측정하지 못하는 골든셋이 나온다.
+5. 커밋한다.
 
-### Calibration notes
+### 각 차원의 기준
 
-- `relevance` — does this article bear on the company's earnings or share price specifically? Sector-wide commentary scores low.
-- `polarity` — direction only, not magnitude.
-- `intensity` — magnitude of financial impact. A large contract win is high. A CEO's conference appearance is low even if the tone is positive.
-- `uncertainty` — how likely is the stated outcome to actually occur? An MOU is high uncertainty. A signed contract is low.
-- `forwardness` — 0 means the article reports something already priced in, 1 means it changes expectations about the future.
+- `relevance` — 이 기사가 **그 회사의** 실적이나 주가에 관계되는가? 업종 전반 논평은 낮게.
+- `polarity` — 방향만. 크기는 아니다.
+- `intensity` — 재무적 충격의 크기. 대형 수주는 높다. CEO의 컨퍼런스 참석은 톤이 긍정적이어도 낮다.
+- `uncertainty` — 언급된 결과가 실제로 일어날 가능성. MOU는 불확실성이 높다. 체결된 계약은 낮다.
+- `forwardness` — 0은 이미 주가에 반영된 걸 보도하는 기사, 1은 미래에 대한 기대를 바꾸는 기사.
 
-### Re-labeling check
+### 재라벨링 검사
 
-Label 10 of the 100 twice, a day apart, without looking at the first pass. If Ricky's own two passes disagree more than the models disagree with each other, the schema is underspecified and needs tightening before any model comparison is meaningful.
-
----
-
-## 5. Model bake-off decision
-
-After the golden set exists, Claude runs the bake-off (SPEC §7.4) and produces a comparison table. **Ricky makes the call**, applying the decision rule: among models that pass the golden-set correlation and self-consistency thresholds, pick the cheapest per useful signal.
-
-Record the decision and its date in `config/models.yaml` as a comment. When revisiting model choice in three months, that note explains why the current model was chosen.
+100건 중 10건을 하루 간격으로 **두 번** 라벨링한다. 첫 번째 결과를 보지 않고. Ricky 자신의 두 회차가 모델들끼리의 불일치보다 더 많이 어긋나면, 스키마가 덜 정의된 것이고 모델 비교가 의미를 갖기 전에 스키마부터 조여야 한다.
 
 ---
 
-## 6. Rating calibration — **Ricky's judgment, not Claude's**
+## 5. 모델 베이크오프 결정
 
-File: `config/rating.yaml`
+골든셋이 생기면 Claude가 베이크오프(SPEC §7.4)를 돌려 비교표를 만든다. **결정은 Ricky가 한다.** 결정 규칙: 골든셋 상관계수와 자기일관성 기준을 통과한 모델 중에서, **유효 신호당 비용이 가장 싼 것**을 고른다.
 
-The briefing states a directional opinion on a seven-point scale (강한 매수 … 강한 매도). That opinion is a weighted sum of z-scores bucketed by cut points, and both the weights and the cut points currently hold **starting values that nobody has calibrated** — no data has been collected yet, so they are informed guesses, not measurements.
+결정과 그 날짜를 `config/models.yaml`에 주석으로 남긴다. 석 달 뒤 모델 선택을 다시 볼 때, 그 메모가 현재 모델을 왜 골랐는지 설명해준다.
 
-Claude built the mechanism. Ricky owns the numbers, because the weights encode a view about what actually moves Korean equities, and that view should be Ricky's.
+---
 
-**When to do this:** after the collectors have run for a week or two and real feature distributions exist. Not before — calibrating against imagined distributions is worse than leaving the defaults.
+## 6. 등급 캘리브레이션 — **Claude가 아니라 Ricky의 판단**
 
-**What to look at:**
+파일: `config/rating.yaml`
 
-- **Distribution.** If nearly every ticker lands in `관망`, the cut points are too wide and the scale carries no information. If nothing ever lands there, they are too narrow. A usable scale puts most tickers in the middle and a few at each extreme.
-- **Weights.** `foreign_flow_5d` starts highest because SPEC §3.1 argues investor-flow data is the most differentiated feature available in Korea and one obtained without an LLM. That is a hypothesis, not a finding.
-- **Signs.** `short_ratio` carries a negative weight — rising short interest reads bearish. Confirm that matches how the data actually behaves before trusting it.
-- **The three medium-term features** (`rel_strength_120d`, `flow_persistence_60d`, `rev_trend_12w`) sit commented out in the file with starting values that are guesses like all the others. Activating them means rebalancing the existing seven, not appending — weights are relative shares, so adding weight on top silently rescales what every existing weight means.
+브리핑은 7점 척도(강한 매수 … 강한 매도)로 방향성 의견을 낸다. 그 의견은 z-score의 가중합을 구분점으로 버킷팅한 것이고, **가중치와 구분점 모두 지금은 아무도 캘리브레이션하지 않은 시작값**이다. 측정이 아니라 정보에 근거한 추측이다.
 
-> [!danger] The one way to get this wrong
-> Adjusting weights or cut points because the ratings they produce look agreeable. That is fitting the dial to the answer, and it converts the whole evaluation into circular reasoning.
+메커니즘은 Claude가 만들었다. **숫자는 Ricky의 것이다.** 가중치는 "무엇이 한국 주식을 실제로 움직이는가"에 대한 견해를 담고 있고, 그 견해는 Ricky의 것이어야 하기 때문이다.
+
+**시점:** 수집기가 1~2주 돌아서 실제 피처 분포가 생긴 뒤. 그 전은 안 된다 — 상상한 분포에 맞춰 캘리브레이션하는 건 기본값을 두는 것보다 나쁘다. KRX가 풀렸으니 `kr_flow`가 올라가는 대로 플로우 피처의 실제 분포가 쌓이기 시작한다.
+
+**볼 것:**
+
+- **분포.** 거의 모든 종목이 `관망`에 몰리면 구분점이 너무 넓어서 척도가 정보를 담지 못한다. 아무것도 `관망`에 안 들어가면 너무 좁다. 쓸 만한 척도는 대부분을 가운데에, 몇 개를 양 끝에 놓는다.
+- **가중치.** `foreign_flow_5d`가 가장 높게 시작하는 건 SPEC §3.1이 투자자별 플로우 데이터를 한국에서 얻을 수 있는 가장 차별화된 피처이자 LLM 없이 얻는 피처라고 논증하기 때문이다. **그건 가설이지 발견이 아니다.**
+- **부호.** `short_ratio`는 음의 가중치다 — 공매도 증가를 약세로 읽는다. 데이터가 실제로 그렇게 움직이는지 확인한 뒤 신뢰할 것.
+- **중기 피처 3개**(`rel_strength_120d`, `flow_persistence_60d`, `rev_trend_12w`)는 주석 처리된 채로, 나머지와 마찬가지로 추측인 시작값을 달고 있다. **활성화한다는 건 기존 7개에 얹는 게 아니라 재배분한다는 뜻이다** — 가중치는 상대적 비중이므로, 위에 더하면 기존 가중치 전부의 의미가 조용히 재조정된다.
+
+> [!danger] 이걸 망치는 단 하나의 방법
+> **나온 등급이 그럴듯해 보인다는 이유로 가중치나 구분점을 조정하는 것.** 그건 답에 맞춰 다이얼을 맞추는 것이고, 평가 전체를 순환 논증으로 바꾼다.
 >
-> PREREGISTRATION.md §8.4 permits revising cut points for **distributional** reasons — a scale where everything is `관망` is broken regardless of returns — but never against outcome data. Every change gets a row in PREREGISTRATION §R stating which of the two reasons applied.
+> PREREGISTRATION.md §8.4는 **분포상의** 이유로 구분점을 고치는 건 허용한다 — 전부 `관망`인 척도는 수익률과 무관하게 고장난 것이므로. 하지만 **결과 데이터에 맞춰서는 절대 안 된다.** 모든 변경은 둘 중 어느 이유였는지를 밝히는 행을 PREREGISTRATION §R에 남긴다.
 
 ---
 
-## 7. Obsidian wiring
+## 7. Obsidian 연결
 
-One-time setup:
+일회성 설정:
 
-1. Clone the repository into a folder inside the Obsidian vault.
-2. Install the Obsidian Git community plugin.
-3. Configure it to pull automatically. Do not configure it to push — the repository is written by CI, and a bidirectional sync will produce conflicts.
-4. Confirm `reports/` renders correctly, including the callout blocks and LaTeX.
+1. 저장소를 Obsidian 볼트 안 폴더로 클론한다.
+2. Obsidian Git 커뮤니티 플러그인을 설치한다.
+3. **pull만 자동으로 설정한다. push는 설정하지 말 것** — 저장소는 CI가 쓰고, 양방향 동기화는 충돌을 만든다.
+4. `reports/`가 콜아웃 블록과 LaTeX까지 제대로 렌더링되는지 확인한다.
 
-Mobile reading goes through email, not Obsidian. Obsidian Git on mobile is unreliable enough that it is not worth depending on for a daily habit.
-
----
-
-## 8. Daily, during the two-week trial
-
-Five minutes a day. This is the actual experiment.
-
-- [ ] Read the briefing. Note whether it was read at all — if Ricky stops reading it by day 8, that is the most important finding of the trial and it means the format is wrong.
-- [ ] **Note whether only §2.2⑧ (AI 총평) got read.** That section exists so a rushed reader gets something; if it becomes the *only* thing read, the other seven sections are costing money and attention for nothing. Either finding is useful — the failure is not recording which one happened.
-- [ ] **Note whether ⑧ was dropped for contradicting the ratings** (the header says so when it happens). Rare is expected. Frequent means either the prompt or `src/report/consistency.py` needs work, and the two must be fixed together.
-- [ ] Log anything that looked wrong: a misattributed article, a stale number, a section that was noise.
-- [ ] Record the daily `ambiguous` ratio and the run cost.
-
-Keep this log in `notes/trial-log.md`. It is the input to the two-week gate decision in PREREGISTRATION §8.5.
-
-**Do not change any trade based on the briefing during these two weeks.** The sample is far too small to carry information, and acting on it converts a measurement into a bias.
+모바일에서 읽는 건 Obsidian이 아니라 이메일로 한다. 모바일 Obsidian Git은 매일의 습관을 걸기에는 불안정하다.
 
 ---
 
-## 9. Repository growth — nothing to do, but worth knowing
+## 8. 2주 트라이얼 동안 매일
 
-`data/raw/kr/news/` is committed rather than gitignored, because RSS has no backfill and the collector runs on an Actions runner that is destroyed after each job. Committing is the only thing that makes yesterday's news exist today.
+하루 5분. **이게 실제 실험이다.**
 
-Measured at roughly **300–450 KB/day gzipped**, so about 110–165 MB/year, and 5–7 MB across the two-week trial. No action is needed now. Revisit at the three-month gate if the repository has become unpleasant to clone.
+- [ ] 브리핑을 읽는다. **읽었는지 여부 자체를 기록한다** — 8일차쯤 안 읽게 됐다면 그게 이 트라이얼의 가장 중요한 발견이고, 포맷이 틀렸다는 뜻이다.
+- [ ] **§2.2⑧(AI 총평)만 읽었는지 기록한다.** 그 섹션은 바쁜 독자도 뭔가는 얻으라고 있는 것인데, *유일하게* 읽는 것이 되면 나머지 7개 섹션이 돈과 주의력만 쓰고 있는 것이다. 어느 쪽이든 유용한 발견이다 — 실패는 **어느 쪽이었는지 기록하지 않는 것**이다.
+- [ ] **⑧이 등급과 모순돼서 삭제됐는지 기록한다** (그럴 때 헤더에 표시된다). 드문 게 정상이다. 잦다면 프롬프트나 `src/report/consistency.py` 중 하나가 손봐야 하는 상태이고, 둘은 같이 고쳐야 한다.
+- [ ] 잘못돼 보인 것을 기록한다: 오귀속된 기사, 낡은 숫자, 잡음이었던 섹션.
+- [ ] 매일의 `ambiguous` 비율과 실행 비용을 기록한다.
+
+기록은 `notes/trial-log.md`에 남긴다. PREREGISTRATION §8.5의 2주 게이트 결정의 입력이다.
+
+> **이 2주 동안은 브리핑을 근거로 매매를 바꾸지 말 것.** 표본이 정보를 담기에는 턱없이 작고, 그에 따라 행동하면 측정이 편향으로 바뀐다.
 
 ---
 
-## 10. Not on this list
+## 9. 저장소 용량 — 할 일은 없지만 알아둘 것
 
-Everything else — collectors, entity resolution, embeddings, features, the report renderer, delivery adapters, the Actions workflow, tests — is Claude's work. If Ricky finds himself writing that code by hand, something has gone wrong with the delegation, not with the plan.
+`data/raw/kr/news/`는 gitignore가 아니라 커밋된다. **RSS는 소급 수집이 안 되고**, 수집기는 작업이 끝나면 파괴되는 Actions 러너에서 돈다. 커밋이 어제의 뉴스를 오늘도 존재하게 만드는 **유일한** 방법이다.
+
+측정값은 **gzip 기준 하루 300~450KB**, 연 110~165MB, 2주 트라이얼 전체로 5~7MB다. 지금 할 일은 없다. 석 달 게이트에서 클론이 불쾌해졌다면 다시 볼 것.
+
+---
+
+## 10. 이 목록에 없는 것
+
+나머지 전부 — 수집기, 엔티티 해석, 임베딩, 피처, 리포트 렌더러, 전달 어댑터, Actions 워크플로우, 테스트 — 는 Claude의 일이다. Ricky가 그 코드를 손으로 쓰고 있다면 계획이 아니라 위임이 잘못된 것이다.
+
+KRX가 풀렸으므로 Claude의 다음 대기열은 `kr_flow`(투자자 플로우, 공매도 잔고, 시가총액, 펀더멘털 — 그 55%), 그다음 `us_filings`와 `kr_filings`, 그다음 `aliases.yaml`이 최종적으로 뭐라고 말하든 그것에 맞춘 엔티티 해석이다.

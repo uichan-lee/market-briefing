@@ -47,12 +47,13 @@ English: [README.md](README.md)
 | Config 로딩·안전장치 (`src/util/config.py`) | ✅ 완료 | 별칭 충돌, 따옴표 없는 종목코드 차단 |
 | 방향성 등급 (`src/report/rating.py`) | ✅ 완료 | 7단계 등급 + 근거. 가중치는 캘리브레이션 필요 |
 | AI 총평 가드 (`src/report/consistency.py`) | ✅ 완료 | 총평이 계산된 등급과 모순되면 섹션을 드롭 |
-| Config 파일 | 🟡 템플릿 | `watchlist.yaml`, `aliases.yaml`, `rating.yaml`은 Ricky가 채워야 함 |
-| API 인증 정보 | ⬜ 대기 | [MANUAL-TASKS.md §1](MANUAL-TASKS.md) 참조 |
+| Config 파일 | 🟡 템플릿 | `watchlist.yaml`, `aliases.yaml`, `rating.yaml`은 Ricky가 채워야 함 — **지금 Claude를 막는 유일한 것** |
+| API 인증 정보 | ✅ 완료 | KRX 실측 검증, 7개 값 전부 Actions secrets에 등록. KIS만 미완이고 아직 아무것도 막지 않는다 |
 | `kr_price` collector (pykrx OHLCV) | ✅ 완료 | 4가지 검사 + 커밋된 픽스처. 기준값은 네이버 금융과 교차 확인 |
 | `macro` collector (FRED) | ✅ 완료 | 6개 시리즈 실측 확인. 기준값은 미 재무부와 교차 확인 |
-| `kr_news` collector (언론사 RSS) | ✅ 완료 | 14개 피드, Actions 시간당 실행. 1회 수집당 8개 매체 ~909건 |
-| `kr_flow` 및 나머지 collector | 🟡 막힘 | KRX 로그인 — 아래 참조 |
+| `kr_news` collector (언론사 RSS) | ✅ 완료 | 14개 피드, Actions 실행 — 장중 30분마다, 그 외 시간당. 1회 수집당 8개 매체 ~950건 |
+| `us_price` collector (Tiingo) | ✅ 완료 | 4개 검사 + 커밋된 fixture. §2.2①이 대응시키는 지수/섹터 ETF 8종 |
+| `kr_flow` 및 나머지 collector | 🟡 Claude 대기열 | KRX 로그인 2026-08-04 해결 — 더 이상 Ricky에게 막혀 있지 않다 |
 | 엔티티 해석 | ⬜ 미착수 | |
 | 임베딩 파이프라인 (중복 제거 + 관련성) | ⬜ 미착수 | |
 | 골든셋 (100건 직접 라벨링) | ⬜ 미착수 | Ricky 작업, 모델 선택을 막고 있음 |
@@ -61,11 +62,11 @@ English: [README.md](README.md)
 | 리포트 렌더러 + 전달 | ⬜ 미착수 | |
 | GitHub Actions 워크플로우 | ⬜ 미착수 | |
 
-**한국 뉴스 수집은 이미 동작하고 막힌 게 없다** — `kr_news`가 언론사 RSS 14개를 GitHub Actions로 시간당 읽는다. 인증 정보가 전혀 필요 없다. 다만 RSS는 소급 수집이 안 되므로, `collect-news.yml`이 기본 브랜치에 올라간 시점부터만 쌓인다.
+**한국 뉴스 수집은 이미 동작하고 막힌 게 없다** — `kr_news`가 언론사 RSS 14개를 GitHub Actions로 읽는다 — 장중에는 30분마다, 그 외 시간에는 시간당. 인증 정보가 전혀 필요 없다. 다만 RSS는 소급 수집이 안 되므로, `collect-news.yml`이 기본 브랜치에 올라간 시점부터만 쌓인다.
 
-**당장의 병목: KRX Data Marketplace 무료 계정.** 2026-08-03 기준 `data.krx.co.kr`은 세션 없이 요청하면 HTTP 400 `LOGOUT`을 반환한다. 기존의 열린 정보데이터시스템이 회원제로 바뀌었다. 일봉은 여전히 동작하고(pykrx가 네이버로 폴백한다) 그래서 `kr_price`는 이미 만들어져 통과한다. 하지만 투자자별 순매수, 공매도 잔고, 시가총액, 펀더멘털은 안 되고, 이 넷이 **등급 가중치의 55%**를 차지한다. 남는 45%는 신뢰도 하한 아래라 모든 종목이 `관망`으로 나온다. 가입은 무료이고 몇 분이면 된다: [API-KEYS.md §0](API-KEYS.md).
+**KRX 병목은 해소됐다.** `data.krx.co.kr`이 회원제로 바뀌면서 세션 없는 요청에 HTTP 400 `LOGOUT`을 반환했고, 그 결과 투자자별 순매수·공매도 잔고·시가총액·펀더멘털이 모두 막혀 있었다. **등급 가중치의 55%**이고, 모든 종목을 `관망`으로 몰기에 충분한 양이다. 이제 로그인이 되고, 막혀 있던 6개 엔드포인트를 2026-08-04에 실측으로 확인했다 ([API-KEYS.md §0](API-KEYS.md)). 그 위에 `kr_flow`를 올리는 건 Ricky가 아니라 Claude의 작업이다.
 
-그 다음이 `config/watchlist.yaml` 13종목과 `config/aliases.yaml` 종목당 항목 하나씩이다.
+**지금 Claude를 막고 있는 건 config다.** `config/watchlist.yaml`에 13종목, `config/aliases.yaml`에 종목당 항목 하나가 필요하다. 둘 다 기계적인 절반은 `scripts/config_helper.py`가 만들어 준다 — [MANUAL-TASKS.md §2–§3](MANUAL-TASKS.md).
 
 ---
 
@@ -202,7 +203,8 @@ market-briefing/
 │   ├── collectors/
 │   │   │   ├── validate.py    ✅ 모든 collector가 통과해야 하는 4가지 검사
 │   │   ├── kr_price.py    ✅ pykrx 일봉
-│   │   ├── kr_news.py     ✅ 언론사 RSS, 시간당 수집
+│   │   ├── kr_news.py     ✅ 언론사 RSS, 측정된 주기로 수집
+│   │   ├── us_price.py    ✅ Tiingo 일별 OHLCV
 │   │   └── macro.py       ✅ FRED 국면 지표
 │   ├── entity/                ⬜ 종목 매칭
 │   ├── embed/                 ⬜ 중복 제거 + 관련성
@@ -218,7 +220,9 @@ market-briefing/
 │   ├── notify/                ⬜ vault, email, webhook 어댑터
 │   └── eval/                  ⬜ 골든셋, 베이크오프, IC, 섀도 포트폴리오
 │
-├── tests/                     233개 테스트, 전부 오프라인
+├── scripts/
+│   └── config_helper.py       ✅ 수기 config용 find / scaffold / audit
+├── tests/                     272개 테스트, 전부 오프라인
 └── data/                      gitignore 대상 — raw, embeddings, features, scores
 ```
 
@@ -231,6 +235,8 @@ market-briefing/
 **`src/report/rating.py`** — 피처 z-score를 7단계 방향성 등급과 그 등급을 만든 분해 내역으로 바꾼다. 순수 산술이고 완전히 재현 가능하다. 같은 입력이면 항상 같은 등급이 나오는데, LLM이 쓴 등급은 이걸 보장할 수 없다.
 
 **`src/report/consistency.py`** — AI 총평에 대한 가드. LLM이 쓴 산문에서 등급 라벨을 전부 찾아, 별칭 사전으로 종목에 귀속시킨 뒤 계산된 등급과 대조한다. 흥미로운 부분은 *매칭하지 않는* 쪽이다. `순매수`, `매수세`, `매도호가`는 등급 주장이 아니라 일반적인 시장 어휘이므로, 앞뒤에 한글 음절이 붙은 라벨은 거부한다 — 다만 뒤에 붙는 조사(`매수는`, `매수로`)는 허용한다. 조사는 닫힌 집합이지만 복합명사는 그렇지 않기 때문이다.
+
+**`scripts/config_helper.py`** — Ricky가 손으로 쓰는 config 파일 두 개를 위한 운영 도구. `find`는 회사명을 종목코드·KRX 업종으로 바꾸고, `scaffold`는 별칭 항목의 기계적인 절반을 gitignore된 워크시트에 채워 넣고, `audit`은 이미 수집된 뉴스에 `aliases.yaml`을 돌려 매칭된 헤드라인까지 보여준다. `config/aliases.yaml`을 직접 쓰지 않고 `aliases` 값을 제안하지도 않는다 — 커버리지만 줄일 뿐 오귀속은 불가능한 `exclude`와 `ambiguous_parents`만 채운다.
 
 **`src/util/config.py`** — 로딩이 곧 검증이다. 손으로 편집할 때 저지르기 쉽고 나중에 발견하기는 불가능한 실수들을 거부한다. 두 종목이 같은 별칭을 주장하는 경우, 별칭이 자기 자신의 exclude 목록에도 있는 경우, 따옴표 없는 종목코드, 그리고 순서가 뒤집힌 등급 구분점.
 
@@ -259,14 +265,15 @@ Ricky의 작업이고, 무엇을 푸는지 순서대로 정렬했다. 상세 내
 
 | # | 작업 | 예상 시간 | 막고 있는 것 |
 |---|---|---|---|
-| 1 | KRX Data Marketplace 계정 ([API-KEYS.md §0](API-KEYS.md)) | 몇 분 | `kr_flow` — 그리고 등급 가중치의 55% |
-| 2 | `config/watchlist.yaml` — KR 15종목 | 20분 | `kr_price`, `kr_flow`. `kr_news`·`macro`는 종목과 무관하므로 해당 없음 |
-| 3 | `config/aliases.yaml` — 종목당 항목 1개 | 60~90분 | 엔티티 해석, 모든 뉴스 피처 |
-| 4 | 골든셋 — 100건 직접 라벨링 | 약 2시간 | 모델 선택 |
-| 5 | 베이크오프 결정 | 30분 | 스코어링 모델 확정 |
-| 6 | `config/rating.yaml` 캘리브레이션 | 30분 | 신뢰할 수 있는 등급 (실데이터 1~2주 쌓인 *후에*) |
+| 1 | `config/watchlist.yaml` — KR 15종목 (`config_helper.py find`) | 15분 | `kr_price`, `kr_flow`. `kr_news`·`macro`는 종목과 무관하므로 해당 없음 |
+| 2 | `config/aliases.yaml` — 종목당 항목 1개 (`scaffold` → `audit`) | 40~60분 | 엔티티 해석, 모든 뉴스 피처 |
+| 3 | 골든셋 — 100건 직접 라벨링 | 약 2시간 | 모델 선택 |
+| 4 | 베이크오프 결정 | 30분 | 스코어링 모델 확정 |
+| 5 | `config/rating.yaml` 캘리브레이션 | 30분 | 신뢰할 수 있는 등급 (실데이터 1~2주 쌓인 *후에*) |
 
-4번이 건너뛰고 싶어질 작업이다. 코드를 안 쓰는 유일한 단계이고, 건너뛰면 베이크오프가 불가능해져서 모델 선택이 "Claude가 좋아 보여서"로 끝난다.
+인증 정보와 그에 앞선 `.env` 수정 두 건은 끝났다 — KRX는 막혀 있던 6개 엔드포인트로 검증했고, SPY 기준값은 Yahoo Finance와 교차 확인했고, secrets는 전부 Actions에 올렸다.
+
+3번이 건너뛰고 싶어질 작업이다. 코드를 안 쓰는 유일한 단계이고, 건너뛰면 베이크오프가 불가능해져서 모델 선택이 "Claude가 좋아 보여서"로 끝난다.
 
 ---
 

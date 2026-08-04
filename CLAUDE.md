@@ -12,6 +12,8 @@ Generate a daily market briefing for Korean and US equities. Full specification:
 
 This system **does not execute trades**. It produces a document that a human reads and acts on.
 
+> **`MANUAL-TASKS.md` is written in Korean, deliberately.** User memory defaults repository documents to English but excepts output artifacts written for Ricky to read, and that file is a checklist Ricky follows step by step rather than reference material for an agent. Keep it Korean; do not "correct" it. Everything else — SPEC, README.md, code, comments, commit messages — stays English, with README.ko.md as the maintained Korean translation.
+
 ---
 
 ## Absolute rules
@@ -113,7 +115,7 @@ Silent failure is the worst outcome in this project.
 - A partial report is published rather than no report.
 - A run that produces no report at all sends a failure notice through the configured delivery channels.
 
-**News is the one source where a missed run is unrecoverable.** Prices and macro can be re-fetched years later; RSS holds a rolling buffer with no history, so an hour not collected is permanently absent from the backtest dataset. That is why `kr_news` collects hourly, why `data/raw/kr/news/` is committed rather than gitignored, and why a long gap between collection runs is a validation *failure* rather than an idle period.
+**News is the one source where a missed run is unrecoverable.** Prices and macro can be re-fetched years later; RSS holds a rolling buffer with no history, so an hour not collected is permanently absent from the backtest dataset. That is why `kr_news` collects twice an hour through the KRX session and hourly otherwise, why `data/raw/kr/news/` is committed rather than gitignored, and why a long gap between collection runs is a validation *failure* rather than an idle period.
 
 ---
 

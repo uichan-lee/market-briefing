@@ -47,12 +47,13 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Config loading & safeguards (`src/util/config.py`) | ✅ Done | Rejects alias collisions, unquoted tickers |
 | Directional rating (`src/report/rating.py`) | ✅ Done | 7-point scale + rationale; weights need calibration |
 | AI commentary guard (`src/report/consistency.py`) | ✅ Done | Drops the 총평 if it contradicts the computed rating |
-| Config files | 🟡 Templates | `watchlist.yaml`, `aliases.yaml`, `rating.yaml` need Ricky |
-| API credentials | ⬜ Blocked | See [MANUAL-TASKS.md §1](MANUAL-TASKS.md) |
+| Config files | 🟡 Templates | `watchlist.yaml`, `aliases.yaml`, `rating.yaml` need Ricky — **the only thing blocking Claude** |
+| API credentials | ✅ Done | KRX verified live; all 7 values mirrored into Actions secrets. Only KIS outstanding, and it blocks nothing yet |
 | `kr_price` collector (pykrx OHLCV) | ✅ Done | Four checks + committed fixture; known value cross-checked against Naver |
 | `macro` collector (FRED) | ✅ Done | 6 series verified live; known value cross-checked against Treasury |
-| `kr_news` collector (outlet RSS) | ✅ Done | 14 feeds, hourly via Actions; ~909 articles/poll across 8 outlets |
-| `kr_flow` and remaining collectors | 🟡 Blocked | KRX login — see below |
+| `kr_news` collector (outlet RSS) | ✅ Done | 14 feeds via Actions, twice hourly in session; ~950 articles/poll across 8 outlets |
+| `us_price` collector (Tiingo) | ✅ Done | Four checks + committed fixture; the 8 index/sector ETFs §2.2① reads across from |
+| `kr_flow` and remaining collectors | 🟡 Claude's queue | KRX login cleared 2026-08-04 — no longer blocked on Ricky |
 | Entity resolution | ⬜ Not started | |
 | Embedding pipeline (dedup + relevance) | ⬜ Not started | |
 | Golden set (100 hand-labeled articles) | ⬜ Not started | Ricky's task, blocks model selection |
@@ -61,11 +62,11 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Report renderer + delivery | ⬜ Not started | |
 | GitHub Actions workflow | ⬜ Not started | |
 
-**Korean news collection is live and unblocked** — `kr_news` reads 14 outlet RSS feeds hourly via GitHub Actions, needing no credential at all. Because RSS cannot be backfilled, that clock only starts once `collect-news.yml` is on the default branch.
+**Korean news collection is live and unblocked** — `kr_news` reads 14 outlet RSS feeds via GitHub Actions — twice an hour through the KRX session, hourly otherwise — needing no credential at all. Because RSS cannot be backfilled, that clock only starts once `collect-news.yml` is on the default branch.
 
-**Immediate blocker: a free KRX Data Marketplace account.** As of 2026-08-03 `data.krx.co.kr` returns HTTP 400 `LOGOUT` without a session — the old open 정보데이터시스템 became members-only. Daily OHLCV still works (pykrx falls back to Naver), which is why `kr_price` is built and passing. Investor flows, short interest, market cap and fundamentals do not, and those carry **55% of the rating weight**; the remaining 45% sits under the confidence floor, so every ticker would rate `관망`. Registration takes minutes and is free: [API-KEYS.md §0](API-KEYS.md).
+**The KRX blocker is cleared.** `data.krx.co.kr` went members-only and returned HTTP 400 `LOGOUT` without a session, which withheld investor flows, short interest, market cap and fundamentals — **55% of the rating weight**, enough to force every ticker to `관망`. A login now works and all six gated endpoints were verified live on 2026-08-04 ([API-KEYS.md §0](API-KEYS.md)). Building `kr_flow` on top is Claude's work, not Ricky's.
 
-After that, `config/watchlist.yaml` needs 13 more tickers and `config/aliases.yaml` one entry each.
+**What blocks Claude now is config.** `config/watchlist.yaml` needs 13 more tickers and `config/aliases.yaml` one entry each. `scripts/config_helper.py` generates the mechanical half of both — see [MANUAL-TASKS.md §2–§3](MANUAL-TASKS.md).
 
 ---
 
@@ -202,7 +203,8 @@ market-briefing/
 │   ├── collectors/
 │   │   │   ├── validate.py    ✅ the four checks every collector must pass
 │   │   ├── kr_price.py    ✅ pykrx daily OHLCV
-│   │   ├── kr_news.py     ✅ outlet RSS, collected hourly
+│   │   ├── kr_news.py     ✅ outlet RSS, collected on a measured cadence
+│   │   ├── us_price.py    ✅ Tiingo daily OHLCV
 │   │   └── macro.py       ✅ FRED regime series
 │   ├── entity/                ⬜ ticker matching
 │   ├── embed/                 ⬜ dedup + relevance
@@ -218,8 +220,10 @@ market-briefing/
 │   ├── notify/                ⬜ vault, email, webhook adapters
 │   └── eval/                  ⬜ golden set, bake-off, IC, shadow portfolio
 │
-├── tests/                     233 tests, all offline
-└── data/                      gitignored — raw, embeddings, features, scores
+├── scripts/
+│   └── config_helper.py       ✅ find / scaffold / audit for the hand-written config
+├── tests/                     272 tests, all offline
+└── data/                      gitignored except data/raw/kr/news/ — RSS has no backfill
 ```
 
 ### What the built modules actually do
@@ -231,6 +235,8 @@ market-briefing/
 **`src/report/rating.py`** — Turns feature z-scores into a seven-point directional rating plus the decomposition that produced it. Pure arithmetic and fully reproducible; the same inputs always give the same rating, which an LLM-authored one could not guarantee.
 
 **`src/report/consistency.py`** — The guard on the AI commentary. Finds every rating label in the LLM's prose, attributes it to a ticker through the alias dictionary, and compares it against the computed rating. The interesting part is what it *doesn't* match: `순매수`, `매수세`, `매도호가` are ordinary market vocabulary, not rating claims, so a label glued to an adjacent Hangul syllable is rejected — with an allowlist for trailing particles (`매수는`, `매수로`), which are a closed class where compound nouns are not.
+
+**`scripts/config_helper.py`** — Operator tooling for the two config files Ricky writes by hand. `find` resolves company names to tickers and KRX sectors; `scaffold` pre-fills the mechanical half of an alias entry into a gitignored worksheet; `audit` scores `aliases.yaml` against the news already collected and prints matched headlines. It deliberately never writes `config/aliases.yaml` and never proposes an `aliases` value — only `exclude` and `ambiguous_parents`, which can lose coverage but cannot misattribute.
 
 **`src/util/config.py`** — Loading is also validation. It rejects the mistakes that are easy to make by hand and impossible to spot later: an alias claimed by two different tickers, an alias that also appears in its own exclude list, unquoted tickers, and out-of-order rating cut points.
 
@@ -259,14 +265,15 @@ These are Ricky's, in the order they unblock work. Full detail in [MANUAL-TASKS.
 
 | # | Task | Est. time | Blocks |
 |---|---|---|---|
-| 1 | KRX Data Marketplace account ([API-KEYS.md §0](API-KEYS.md)) | minutes | `kr_flow` — and with it 55% of the rating weight |
-| 2 | `config/watchlist.yaml` — 15 KR tickers | 20 min | `kr_price`, `kr_flow`. Not `kr_news` or `macro`, which are ticker-agnostic |
-| 3 | `config/aliases.yaml` — one entry per ticker | 60–90 min | Entity resolution, all news features |
-| 4 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection |
-| 5 | Bake-off decision | 30 min | Scoring model choice |
-| 6 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
+| 1 | `config/watchlist.yaml` — 15 KR tickers (`config_helper.py find`) | 15 min | `kr_price`, `kr_flow`. Not `kr_news` or `macro`, which are ticker-agnostic |
+| 2 | `config/aliases.yaml` — one entry per ticker (`scaffold` → `audit`) | 40–60 min | Entity resolution, all news features |
+| 3 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection |
+| 4 | Bake-off decision | 30 min | Scoring model choice |
+| 5 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
 
-Task 4 is the one that will feel skippable. It is the only step involving no code, and skipping it makes the bake-off impossible — model selection then ends at "Claude seemed good."
+Credentials and the two `.env` fixes that preceded them are done — KRX verified against all six gated endpoints, SPY's known value cross-checked against Yahoo Finance, and every secret mirrored to Actions.
+
+Task 3 is the one that will feel skippable. It is the only step involving no code, and skipping it makes the bake-off impossible — model selection then ends at "Claude seemed good."
 
 ---
 
