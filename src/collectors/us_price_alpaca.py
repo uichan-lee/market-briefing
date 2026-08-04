@@ -33,6 +33,20 @@ last print rather than the official close — on 1.6% of the true volume. That i
 wrong in a way that still looks entirely plausible, and only an exact pinned
 value catches it.
 
+The free plan will not serve *recent* SIP
+-----------------------------------------
+Measured 2026-08-05 by walking ``end`` backwards: anything at or after the
+current UTC day answers ``HTTP 403 "subscription does not permit querying recent
+SIP data"``, and the previous UTC day onwards is served. So consolidated history
+is available with roughly a one-UTC-day lag, not the 15 minutes the FAQ implies.
+
+This does not affect a backfill, which is what this collector was built for. It
+does constrain the daily run: a US session closing at 21:00 UTC on day D is
+still inside the refused window until UTC rolls into D+1, which is 09:00 KST. A
+briefing that wants the session that just closed therefore cannot be scheduled
+before then on the free plan — or must take that one session from Tiingo, which
+has no such restriction and is already kept as the cross-check.
+
 Two things verified live on 2026-08-05
 --------------------------------------
 **Bar timestamps are ET midnight of the session date, expressed in UTC.**

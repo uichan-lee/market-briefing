@@ -30,6 +30,12 @@ dependencies = [
     "pandas-market-calendars>=4.4",
     # SPEC §3.1: KR OHLCV, net buying by investor type, short-interest balance,
     # market cap/PER/PBR. No credential — it scrapes KRX. Sleep between calls.
+    # SPEC §3.3 specifies .parquet for every raw price/flow path. pandas has no
+    # parquet engine of its own, and none was installed — writing the backfill
+    # would have failed at the first save. pyarrow is the engine pandas
+    # documents first and the one that reads the nullable Int64 columns kr_flow
+    # produces without silently widening them to float.
+    "pyarrow>=16",
     "pykrx>=1.2.8",
     "pyyaml>=6.0",
     # Not a new dependency — kr_news and us_price already import it. It was
