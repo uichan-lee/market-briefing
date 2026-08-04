@@ -140,6 +140,20 @@ def _backfill_kr(source: str, fetch, start: dt.date, end: dt.date, *, revise: bo
                 f"{source:<9} STOPPED at {chunk_start}: {exc} "
                 f"[{written} files written; re-run to continue]"
             )
+
+        # The collectors *report* a refused KRX session rather than raising it,
+        # which is what CLAUDE.md wants of a collector but not what a backfill
+        # driver can act on. Without this the loop walked every chunk, wrote
+        # nothing, and returned "0 rows -> 0 files" as though that were a
+        # normal outcome — a silent failure produced by the very script meant
+        # to fill the dataset. Observed on 2026-08-05: forty scheduled attempts
+        # over three hours, all no-ops, none of them saying why.
+        refused = next((c for c in report.failures if c.name == "krx_session"), None)
+        if refused:
+            return (
+                f"{source:<9} STOPPED at {chunk_start}: {refused.detail} "
+                f"[{written} files written; re-run to continue]"
+            )
         if not report.ok:
             named = ", ".join(c.name for c in report.failures[:3])
             print(f"    {chunk_start}..{chunk_end}: {len(report.failures)} failed — {named}")
