@@ -89,6 +89,15 @@ MISSING_THRESHOLDS = {"value": 0.0, "date": 0.0, "series": 0.0}
 # and a stray suspension without tolerating a half-broken fetch.
 MIN_COVERAGE = 0.95
 
+# How far behind the last session a series may be before it counts as stopped
+# rather than lagging. WTI measured 4 trading days on 2026-08-05 — FRED
+# redistributes an EIA series that publishes days behind — and the other five
+# were current. 10 leaves room for a holiday week without letting a genuinely
+# dead series pass unnoticed. The features these feed are 20- to 120-day
+# trends, so a few stale days at the tail cost nothing; a series that quietly
+# stopped six months ago would cost everything.
+MAX_STALE_TRADING_DAYS = 10
+
 # Cross-checked against home.treasury.gov, which publishes H.15 itself and which
 # FRED redistributes. Verifying FRED against FRED would prove nothing.
 KNOWN_VALUE = {
@@ -116,6 +125,12 @@ def check_coverage(
     the bond market observes holidays NYSE does not, so a correct FRED series is
     missing a couple of NYSE days every year. Requiring exactness would fail
     real data annually, and a check that cries wolf is one that stops being read.
+
+    A gap in the middle and a stale tail are judged separately, because they are
+    different failures. An interior gap is missing data. A stale tail is a
+    publication lag: WTI is an EIA series FRED redistributes days behind, and it
+    is legitimately several sessions short of the present on every run. Measuring
+    them together failed the check daily for data that was not missing anything.
     """
     expected = trading_days("US", start, end)
     if not expected:
@@ -127,12 +142,41 @@ def check_coverage(
     for name in series:
         subset = df[df["series"] == name] if "series" in df.columns else df.iloc[0:0]
         present = {d.date() for d in pd.to_datetime(subset["date"])} if len(subset) else set()
-        ratio = len(present & set(expected)) / len(expected)
-        details.append(f"{name} {ratio:.1%}")
+
+        if not present:
+            problems.append(f"{name} has no rows at all")
+            continue
+
+        # A hole in the middle and a stale tail are different failures and are
+        # judged separately. Measured 2026-08-05 over 2026-01-01..07-31: WTI had
+        # 0 interior gaps and a 4-trading-day trailing lag, because FRED
+        # redistributes an EIA series that publishes days behind. The other five
+        # were complete to the last session.
+        #
+        # Counting the two together made the check fail on every run whose
+        # window reached the present, for a series that was not missing anything
+        # — and a check that fails daily is one that stops being read. Splitting
+        # them makes it *more* sensitive to the failure that matters: a single
+        # interior gap now shows up instead of being diluted by 140 good days.
+        last = max(present)
+        interior = [d for d in expected if d <= last and d not in present]
+        trailing = [d for d in expected if d > last]
+
+        covered = [d for d in expected if d <= last]
+        ratio = (len(covered) - len(interior)) / len(covered) if covered else 0.0
+        details.append(f"{name} {ratio:.1%}" + (f" (+{len(trailing)}d stale)" if trailing else ""))
 
         if ratio < MIN_COVERAGE:
             problems.append(
-                f"{name} covers {ratio:.1%} of US trading days, need {MIN_COVERAGE:.0%}"
+                f"{name} covers {ratio:.1%} of US trading days up to its last observation "
+                f"({last}), need {MIN_COVERAGE:.0%} — {len(interior)} interior gap(s)"
+            )
+
+        if len(trailing) > MAX_STALE_TRADING_DAYS:
+            problems.append(
+                f"{name} last published {last}, {len(trailing)} trading days ago; "
+                f"a lag beyond {MAX_STALE_TRADING_DAYS} means the series stopped rather "
+                "than lagged"
             )
 
         # Stray dates are judged against weekends, not against the exchange

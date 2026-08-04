@@ -23,7 +23,7 @@ from src.collectors.macro import (
     check_coverage,
     validate_frame,
 )
-from src.util.session import next_tradeable_open, session_close_utc
+from src.util.session import next_tradeable_open, session_close_utc, trading_days
 
 FIXTURE = Path(__file__).parent / "fixtures" / "macro_fred_2024.json"
 
@@ -132,7 +132,11 @@ def test_a_half_broken_fetch_fails_coverage(frame):
     half = frame[frame["date"] < pd.Timestamp("2024-07-01")]
     result = check_coverage(half, ["us_10y"], START, END)
     assert not result.passed
-    assert "US trading days" in result.detail
+    # Caught by the staleness bound rather than the coverage ratio, which is the
+    # more precise diagnosis: a fetch truncated at mid-year is a series that
+    # stopped, not one with holes in it. Splitting the two made the message
+    # match the actual failure.
+    assert "stopped rather than lagged" in result.detail
 
 
 def test_a_series_that_returned_nothing_fails_coverage(frame):
@@ -217,3 +221,71 @@ def test_live_fetch_matches_the_committed_fixture():
 
     row = df[df["date"] == pd.Timestamp("2024-01-02")].iloc[0]
     assert row["value"] == pytest.approx(KNOWN_VALUE["expected"], abs=KNOWN_VALUE["tolerance"])
+
+
+# --- lag is not a gap -----------------------------------------------------
+
+
+def _series_frame(name: str, dates: list[dt.date]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(dates).astype("datetime64[s]"),
+            "series": name,
+            "series_id": "TEST",
+            "value": 1.0,
+        }
+    )
+
+
+def test_a_publication_lag_is_reported_but_does_not_fail():
+    """WTI is an EIA series FRED redistributes days behind.
+
+    Counting its stale tail as missing coverage failed this check on every run
+    whose window reached the present, for a series with no gaps at all. A check
+    that fails daily is one that stops being read.
+    """
+    days = trading_days("US", dt.date(2026, 7, 1), dt.date(2026, 7, 31))
+    lagging = _series_frame("wti", days[:-4])
+
+    result = check_coverage(lagging, ["wti"], dt.date(2026, 7, 1), dt.date(2026, 7, 31))
+    assert result.passed
+    assert "stale" in result.detail
+
+
+def test_an_interior_gap_still_fails():
+    """The failure that matters, and which the old form diluted.
+
+    Splitting lag from gaps makes this *more* sensitive: a hole no longer hides
+    behind a long run of good days.
+    """
+    days = trading_days("US", dt.date(2026, 7, 1), dt.date(2026, 7, 31))
+    holed = _series_frame("wti", days[:2] + days[10:])
+
+    result = check_coverage(holed, ["wti"], dt.date(2026, 7, 1), dt.date(2026, 7, 31))
+    assert not result.passed
+    assert "interior gap" in result.detail
+
+
+def test_a_series_that_stopped_publishing_fails():
+    """A lag is tolerated; a series that quietly died is not.
+
+    The distinction is the bound: a few sessions cost nothing to a 120-day
+    trend, six months of silence would cost everything.
+    """
+    days = trading_days("US", dt.date(2026, 1, 1), dt.date(2026, 7, 31))
+    dead = _series_frame("wti", days[:60])
+
+    result = check_coverage(dead, ["wti"], dt.date(2026, 1, 1), dt.date(2026, 7, 31))
+    assert not result.passed
+    assert "stopped rather than lagged" in result.detail
+
+
+def test_a_series_with_no_rows_at_all_is_named():
+    result = check_coverage(
+        pd.DataFrame(columns=["date", "series", "series_id", "value"]),
+        ["wti"],
+        dt.date(2026, 7, 1),
+        dt.date(2026, 7, 31),
+    )
+    assert not result.passed
+    assert "no rows at all" in result.detail
