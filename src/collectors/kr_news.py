@@ -11,10 +11,17 @@ equivalent in the price collectors.
 
 **Nothing here can be re-fetched.** A feed holds a rolling buffer with no
 history. An hour not collected is gone permanently — unlike pykrx, which will
-serve 2024 prices again in 2030. This single fact drives hourly collection, the
-un-ignoring of ``data/raw/kr/news/`` in ``.gitignore``, and why
+serve 2024 prices again in 2030. This single fact drives the collection
+schedule, the un-ignoring of ``data/raw/kr/news/`` in ``.gitignore``, and why
 :func:`check_collection_gap` treats a long silence as a validation failure
 rather than as an idle period.
+
+Because that loss is silent, it gets a check of its own.
+:func:`check_feed_continuity` compares where each feed's buffer now starts
+against the newest article already stored from it; if the first has passed the
+second, the window moved past everything known and the articles between them
+were lost. Unlike the gap check it names which feeds and how much, which matters
+because the measured buffers range from 4 hours of history to 101.
 
 **Consecutive polls overlap almost entirely.** A 50-item feed publishing ~60
 articles a day, polled hourly, re-delivers roughly 48 items already stored.
@@ -50,7 +57,7 @@ import json
 import re
 import time
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -87,9 +94,17 @@ SCHEMA = {
 # threshold at all. The other three are what makes an article usable.
 MISSING_THRESHOLDS = {"title": 0.0, "link": 0.0, "published_at": 0.0}
 
-# The fastest feed measured turned its buffer over in well under two hours.
-# Collection runs hourly; two consecutive misses is the point at which articles
-# have provably been lost rather than merely delayed.
+# An early warning, not the loss detector — :func:`check_feed_continuity` is
+# that, and it reads evidence rather than a clock.
+#
+# Measured 2026-08-03 at 22:30 KST, hours of history held per feed: 한국경제 경제
+# 4.0, 전자신문 4.5 and 7.0, 연합뉴스 10.3 and 12.2, 한국경제 증권 12.3, 뉴시스 17.9,
+# 매일경제 26.6–58.2, and everything else past 70. So two hours costs nothing at
+# that time of day. It was set at two anyway, because the measurement was taken
+# during the Korean night: a buffer is a fixed item count, so its span shrinks in
+# proportion to how fast the outlet is publishing, and the fastest feeds hold
+# 50 items. This threshold is deliberately tighter than any measurement supports
+# until the same measurement exists for a market-hours peak.
 MAX_COLLECTION_GAP = dt.timedelta(hours=2)
 
 # A published_at outside this window means the date parse produced garbage.
@@ -157,6 +172,50 @@ def check_collection_gap(
     )
 
 
+def check_feed_continuity(
+    buffer_oldest: Mapping[str, pd.Timestamp],
+    newest_stored: Mapping[str, pd.Timestamp],
+) -> CheckResult:
+    """Detect articles that were actually lost, rather than inferring it.
+
+    :func:`check_collection_gap` compares a clock against a constant, so it can
+    only guess: it fires on a long gap that cost nothing, and stays quiet on a
+    short gap that emptied a fast feed. This check reads the evidence instead.
+
+    A feed's buffer is a window over its own output. If the *oldest* item still
+    in that window was published *after* the newest item already stored, then the
+    window has moved past everything known and whatever fell between the two is
+    gone — not delayed, gone, because RSS has no backfill. Anything else means
+    the windows overlap and nothing was missed.
+
+    Reported per feed rather than in aggregate: 한국경제 경제 held 4.0 hours of
+    history when 인포스탁 held 101.6, so a gap that is harmless for most of the
+    fourteen can still be lossy for two of them.
+    """
+    losses: list[str] = []
+    compared = 0
+
+    for feed, oldest in sorted(buffer_oldest.items()):
+        previous = newest_stored.get(feed)
+        if previous is None:
+            continue  # nothing stored for this feed yet; no window to compare
+        compared += 1
+        if oldest > previous:
+            missed = (oldest - previous).total_seconds() / 3600
+            losses.append(f"{feed} lost {missed:.1f}h (buffer starts at {oldest:%Y-%m-%d %H:%M}Z)")
+
+    if losses:
+        return CheckResult(
+            "feed_continuity",
+            False,
+            f"{len(losses)} of {compared} feeds rolled past the last stored article — "
+            + "; ".join(losses),
+        )
+    if not compared:
+        return CheckResult("feed_continuity", True, "no feed has prior articles to compare against")
+    return CheckResult("feed_continuity", True, f"{compared} feeds overlap the stored history")
+
+
 def check_structural_invariants(
     df: pd.DataFrame, feeds: Sequence[NewsFeed], *, now: pd.Timestamp | None = None
 ) -> CheckResult:
@@ -206,8 +265,16 @@ def validate_frame(
     *,
     previous_run: pd.Timestamp | None = None,
     now: pd.Timestamp | None = None,
+    buffer_oldest: Mapping[str, pd.Timestamp] | None = None,
+    newest_stored: Mapping[str, pd.Timestamp] | None = None,
 ) -> ValidationReport:
-    """Run the four checks, one of them substituted. See the module docstring."""
+    """Run the four checks, one of them substituted. See the module docstring.
+
+    ``buffer_oldest`` and ``newest_stored`` are what :func:`check_feed_continuity`
+    needs. They default to empty, which makes that check a no-op — the right
+    behaviour for callers validating a frame in isolation, since a frame carries
+    no record of what its feeds were holding at the time.
+    """
     return validate(
         COLLECTOR,
         [
@@ -216,6 +283,7 @@ def validate_frame(
             if len(df)
             else CheckResult("missing_ratio", True, "no rows"),
             check_collection_gap(df, previous_run, now=now),
+            check_feed_continuity(buffer_oldest or {}, newest_stored or {}),
             check_structural_invariants(df, feeds, now=now),
         ],
     )
@@ -336,30 +404,62 @@ def run_path(root: Path, at: pd.Timestamp) -> Path:
     return root / "kr" / "news" / at.strftime("%Y-%m-%d") / f"{at.strftime('%H%M')}.jsonl.gz"
 
 
-def seen_ids(root: Path, day: dt.date) -> set[str]:
-    """Article ids already stored for ``day``."""
-    directory = root / "kr" / "news" / day.isoformat()
-    if not directory.exists():
-        return set()
+def _stored_files(root: Path, day: dt.date) -> list[tuple[dt.date, Path]]:
+    """Run files for ``day`` and the day before, oldest first.
 
-    ids: set[str] = set()
-    for path in sorted(directory.glob("*.jsonl.gz")):
+    The previous day is not optional. Reading only ``day`` makes the collector
+    forget everything at 00:00 UTC — 09:00 KST, the Korean market open, the
+    busiest hour there is. Every buffered article would re-read as new, and
+    :func:`last_run_at` would report "first run" and skip the gap check exactly
+    when it matters most. One day of lookback closes that while keeping the read
+    bounded; feeds hold hours of history, never days.
+    """
+    directory = root / "kr" / "news"
+    files: list[tuple[dt.date, Path]] = []
+    for offset in (1, 0):
+        stamp = day - dt.timedelta(days=offset)
+        day_dir = directory / stamp.isoformat()
+        if day_dir.exists():
+            files.extend((stamp, path) for path in sorted(day_dir.glob("*.jsonl.gz")))
+    return files
+
+
+def _read_stored(root: Path, day: dt.date) -> Iterator[dict]:
+    for _, path in _stored_files(root, day):
         with gzip.open(path, "rt", encoding="utf-8") as handle:
             for line in handle:
                 if line.strip():
-                    ids.add(json.loads(line)["article_id"])
-    return ids
+                    yield json.loads(line)
+
+
+def seen_ids(root: Path, day: dt.date) -> set[str]:
+    """Article ids already stored for ``day`` or the day before."""
+    return {row["article_id"] for row in _read_stored(root, day)}
+
+
+def newest_stored_per_feed(root: Path, day: dt.date) -> dict[str, pd.Timestamp]:
+    """Latest ``published_at`` already stored, per feed.
+
+    This is the reference point for :func:`check_feed_continuity`: anything a
+    feed published after this instant that is no longer in its buffer was missed.
+    """
+    newest: dict[str, pd.Timestamp] = {}
+    for row in _read_stored(root, day):
+        published = to_utc(pd.Timestamp(row["published_at"]))
+        current = newest.get(row["feed"])
+        if current is None or published > current:
+            newest[row["feed"]] = published
+    return newest
 
 
 def last_run_at(root: Path, day: dt.date) -> pd.Timestamp | None:
-    """Timestamp of the most recent run stored for ``day``, if any."""
-    directory = root / "kr" / "news" / day.isoformat()
-    if not directory.exists():
+    """Timestamp of the most recent run stored for ``day`` or the day before."""
+    files = _stored_files(root, day)
+    if not files:
         return None
-    stamps = sorted(p.stem.removesuffix(".jsonl") for p in directory.glob("*.jsonl.gz"))
-    if not stamps:
-        return None
-    return to_utc(pd.Timestamp(f"{day.isoformat()} {stamps[-1][:2]}:{stamps[-1][2:]}", tz="UTC"))
+    stamp, path = files[-1]
+    clock = path.stem.removesuffix(".jsonl").split("-")[0]
+    return to_utc(pd.Timestamp(f"{stamp.isoformat()} {clock[:2]}:{clock[2:]}", tz="UTC"))
 
 
 def write_run(df: pd.DataFrame, root: Path, at: pd.Timestamp) -> Path:
@@ -456,6 +556,13 @@ def fetch(
 
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=list(SCHEMA))
 
+    # Taken before dedup, and it has to be: dedup removes exactly the overlap
+    # with stored history, so the surviving rows would place every buffer's
+    # start after the last stored article and report total loss every run.
+    buffer_oldest = (
+        {} if df.empty else df.groupby("feed")["published_at"].min().to_dict()  # type: ignore[assignment]
+    )
+
     fetched = len(df)
     if not df.empty:
         df = df.drop_duplicates(subset="article_id", keep="first")
@@ -463,7 +570,12 @@ def fetch(
         df = df[~df["article_id"].isin(already)].reset_index(drop=True)
 
     report = validate_frame(
-        df, feeds, previous_run=last_run_at(root, collected_at.date()), now=collected_at
+        df,
+        feeds,
+        previous_run=last_run_at(root, collected_at.date()),
+        now=collected_at,
+        buffer_oldest=buffer_oldest,
+        newest_stored=newest_stored_per_feed(root, collected_at.date()),
     )
     report.add(
         CheckResult(

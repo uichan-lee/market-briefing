@@ -21,9 +21,11 @@ from src.collectors.kr_news import (
     FeedError,
     article_id,
     check_collection_gap,
+    check_feed_continuity,
     check_structural_invariants,
     fetch,
     last_run_at,
+    newest_stored_per_feed,
     parse_feed,
     parse_pubdate,
     run_path,
@@ -213,6 +215,61 @@ def test_a_long_silence_is_a_failure(frame):
     assert "cannot be re-fetched" in result.detail
 
 
+# --- lost-article detection -----------------------------------------------
+#
+# The gap check above infers loss from a clock. These assert the check that
+# measures it: a buffer whose oldest surviving item postdates the newest stored
+# one has rolled past everything known, and RSS cannot serve the difference.
+
+
+def test_overlapping_buffers_report_no_loss():
+    oldest = {"hankyung_finance": NOW - dt.timedelta(hours=4)}
+    stored = {"hankyung_finance": NOW - dt.timedelta(hours=1)}
+    result = check_feed_continuity(oldest, stored)
+    assert result.passed
+    assert "1 feeds overlap" in result.detail
+
+
+def test_a_buffer_that_rolled_past_the_stored_history_is_a_failure():
+    oldest = {"hankyung_finance": NOW - dt.timedelta(hours=1)}
+    stored = {"hankyung_finance": NOW - dt.timedelta(hours=4)}
+    result = check_feed_continuity(oldest, stored)
+    assert not result.passed
+    assert "hankyung_finance lost 3.0h" in result.detail
+
+
+def test_only_the_feeds_that_actually_lost_articles_are_named():
+    """The point of doing this per feed: the measured buffers span 4 hours to
+    101, so one gap is simultaneously lossy and harmless."""
+    oldest = {
+        "hankyung_finance": NOW - dt.timedelta(hours=1),
+        "infostock_all": NOW - dt.timedelta(hours=90),
+    }
+    stored = {
+        "hankyung_finance": NOW - dt.timedelta(hours=4),
+        "infostock_all": NOW - dt.timedelta(hours=4),
+    }
+    result = check_feed_continuity(oldest, stored)
+    assert not result.passed
+    assert "1 of 2 feeds" in result.detail
+    assert "infostock_all" not in result.detail
+
+
+def test_a_feed_with_no_stored_history_is_skipped_not_failed():
+    """A newly added feed has nothing to compare against. That is not loss."""
+    result = check_feed_continuity({"brand_new": NOW}, {})
+    assert result.passed
+    assert "no feed has prior articles" in result.detail
+
+
+def test_feed_continuity_is_inert_when_the_caller_supplies_nothing(frame):
+    """validate_frame is also called on frames in isolation, which carry no
+    record of what the buffers held."""
+    report = validate_frame(frame, list(FEEDS.values()), previous_run=None, now=NOW)
+    assert report.ok, report.summary()
+    assert any(r.name == "feed_continuity" and r.passed for r in report.results)
+
+
 # --- check four's substitute ----------------------------------------------
 
 
@@ -301,6 +358,51 @@ def test_last_run_at_finds_the_most_recent_run(tmp_path, frame):
 
 def test_last_run_at_is_none_before_any_run(tmp_path):
     assert last_run_at(tmp_path, NOW.date()) is None
+
+
+def test_a_rerun_suffix_does_not_break_the_run_timestamp(tmp_path, frame):
+    """``1251-v2.jsonl.gz`` is the path CLAUDE.md rule 1 produces. Parsing the
+    whole stem as a clock would raise on it."""
+    write_run(frame, tmp_path, NOW)
+    write_run(frame, tmp_path, NOW)
+    assert last_run_at(tmp_path, NOW.date()) == NOW
+
+
+def test_newest_stored_is_tracked_per_feed(tmp_path, frame):
+    other = frame.copy()
+    other["feed"] = "mk_stock"
+    other["article_id"] = other["article_id"] + "x"
+    other["published_at"] = other["published_at"] - dt.timedelta(days=1)
+    write_run(pd.concat([frame, other], ignore_index=True), tmp_path, NOW)
+
+    newest = newest_stored_per_feed(tmp_path, NOW.date())
+    assert newest["newsis_economy"] == frame["published_at"].max()
+    assert newest["mk_stock"] == other["published_at"].max()
+
+
+# The 00:00 UTC rollover is 09:00 KST — the Korean market open, and the busiest
+# hour of the day. Reading only the current day's directory would make the
+# collector forget everything at exactly that moment: every buffered article
+# would re-read as new, and the gap check would report a first run.
+
+
+def test_dedup_survives_the_day_boundary(tmp_path, frame):
+    yesterday = NOW - dt.timedelta(hours=1)  # 2026-08-02 23:00Z
+    write_run(frame, tmp_path, yesterday)
+    assert seen_ids(tmp_path, NOW.date()) == set(frame["article_id"])
+
+
+def test_the_gap_check_still_has_a_reference_across_the_day_boundary(tmp_path, frame):
+    yesterday = NOW - dt.timedelta(hours=1)
+    write_run(frame, tmp_path, yesterday)
+    assert last_run_at(tmp_path, NOW.date()) == yesterday
+
+
+def test_the_lookback_stops_at_one_day(tmp_path, frame):
+    """Bounded on purpose. Feeds hold hours of history, never days, so reading
+    further back costs time every run and buys nothing."""
+    write_run(frame, tmp_path, NOW - dt.timedelta(days=2))
+    assert seen_ids(tmp_path, NOW.date()) == set()
 
 
 # --- config ---------------------------------------------------------------
