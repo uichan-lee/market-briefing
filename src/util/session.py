@@ -108,8 +108,46 @@ def to_kst(ts: pd.Timestamp | dt.datetime | str) -> pd.Timestamp:
 # --- sessions ------------------------------------------------------------
 
 
+# Sessions the calendar library reports that the exchange did not actually hold.
+#
+# CLAUDE.md says never to hardcode holidays, and this does not: the calendar
+# still supplies every session, and this only *removes* days it is known to have
+# wrong. The rule exists so nobody re-derives Seollal and Chuseok by hand, which
+# is a different thing from correcting a library that is demonstrably behind.
+#
+# Removal-only is deliberate and is the safe direction. A spurious extra session
+# makes every continuity check report a gap that is not there, and invites a
+# feature to be computed for a day with no data behind it. Adding a session the
+# library omits would be the dangerous direction, and nothing here does that —
+# the diff below found no day KRX traded that the calendar called closed.
+#
+# Derived on 2026-08-05 by diffing the calendar against KRX itself over
+# 2026-01-01..2026-08-04: 146 calendar sessions against 144 real ones, and these
+# are the two. Both are confirmed by KRX's own closure notice.
+#
+#   2026-06-03  전국동시지방선거 — Korean election days close the exchange, and
+#               the date moves every cycle, so no library encodes it in advance.
+#   2026-07-17  제헌절 — restored as a public holiday in 2026, eighteen years
+#               after being dropped in 2008. exchange_calendars 4.13.2 and
+#               pandas_market_calendars 5.4.0 both still treat it as a session.
+#
+# `test_the_calendar_corrections_still_match_krx` re-derives this against live
+# KRX data, so the list fails loudly rather than rotting once the libraries
+# catch up or a new ad-hoc closure appears.
+_CALENDAR_CORRECTIONS: dict[str, frozenset[dt.date]] = {
+    "KR": frozenset({dt.date(2026, 6, 3), dt.date(2026, 7, 17)}),
+    "US": frozenset(),
+}
+
+
 def _schedule(market: Market, start: dt.date, end: dt.date) -> pd.DataFrame:
-    return _calendar(market).schedule(start_date=start, end_date=end)
+    schedule = _calendar(market).schedule(start_date=start, end_date=end)
+    wrong = _CALENDAR_CORRECTIONS.get(market)
+    if wrong:
+        keep = [ts for ts in schedule.index if ts.date() not in wrong]
+        if len(keep) != len(schedule.index):
+            schedule = schedule.loc[keep]
+    return schedule
 
 
 def trading_days(market: Market, start: dt.date, end: dt.date) -> list[dt.date]:

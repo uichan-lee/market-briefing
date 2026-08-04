@@ -567,7 +567,7 @@ market-briefing/
     collectors/
       validate.py             # the four checks every collector must pass
       kr_price.py             # pykrx OHLCV
-      kr_flow.py
+      kr_flow.py                # investor flows, short interest, cap, fundamentals
       kr_news.py              # outlet RSS, twice hourly in session
       us_price.py
       us_price_alpaca.py        # the US source in use — multi-symbol, SIP             # Tiingo EOD, the §2.2① transmission set

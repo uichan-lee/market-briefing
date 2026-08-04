@@ -54,7 +54,8 @@ English: [README.md](README.md)
 | `kr_news` collector (언론사 RSS) | ✅ 완료 | 14개 피드, Actions 실행 — 장중 30분마다, 그 외 시간당. 1회 수집당 8개 매체 ~950건 |
 | `us_price` collector (Tiingo) | ✅ 완료 | 4개 검사 + 커밋된 fixture. 기준값은 Yahoo Finance와 교차 확인 |
 | `us_price` Alpaca 버전 | ✅ 완료 | 현재 사용 중인 미국 소스. 무료 플랜에서 SIP 확인. **48종목을 요청 2개로** — Tiingo는 48개 필요했다 |
-| `kr_flow` 및 나머지 collector | 🟡 Claude 대기열 | KRX 로그인 2026-08-04 해결 — 더 이상 Ricky에게 막혀 있지 않다 |
+| `kr_flow` collector (pykrx) | ✅ 완료 | 투자자별 순매수·공매도 잔고·시가총액·펀더멘털 — **KRX가 막고 있던 등급 가중치 55%**. 회계 항등식과 수집기 간 교차검증을 포함한 6개 검사 |
+| `us_filings`, `kr_filings` | ⬜ 미착수 | SEC EDGAR, DART |
 | 엔티티 해석 | ⬜ 미착수 | |
 | 임베딩 파이프라인 (중복 제거 + 관련성) | ⬜ 미착수 | |
 | 골든셋 (100건 직접 라벨링) | ⬜ 미착수 | Ricky 작업, 모델 선택을 막고 있음 |
@@ -65,7 +66,7 @@ English: [README.md](README.md)
 
 **한국 뉴스 수집은 이미 동작하고 막힌 게 없다** — `kr_news`가 언론사 RSS 14개를 GitHub Actions로 읽는다 — 장중에는 30분마다, 그 외 시간에는 시간당. 인증 정보가 전혀 필요 없다. 다만 RSS는 소급 수집이 안 되므로, `collect-news.yml`이 기본 브랜치에 올라간 시점부터만 쌓인다.
 
-**KRX 병목은 해소됐다.** `data.krx.co.kr`이 회원제로 바뀌면서 세션 없는 요청에 HTTP 400 `LOGOUT`을 반환했고, 그 결과 투자자별 순매수·공매도 잔고·시가총액·펀더멘털이 모두 막혀 있었다. **등급 가중치의 55%**이고, 모든 종목을 `관망`으로 몰기에 충분한 양이다. 이제 로그인이 되고, 막혀 있던 6개 엔드포인트를 2026-08-04에 실측으로 확인했다 ([API-KEYS.md §0](API-KEYS.md)). 그 위에 `kr_flow`를 올리는 건 Ricky가 아니라 Claude의 작업이다.
+**KRX 병목은 해소됐다.** `data.krx.co.kr`이 회원제로 바뀌면서 세션 없는 요청에 HTTP 400 `LOGOUT`을 반환했고, 그 결과 투자자별 순매수·공매도 잔고·시가총액·펀더멘털이 모두 막혀 있었다. **등급 가중치의 55%**이고, 모든 종목을 `관망`으로 몰기에 충분한 양이다. 이제 로그인이 되고, 막혀 있던 6개 엔드포인트를 2026-08-04에 실측으로 확인했다 ([API-KEYS.md §0](API-KEYS.md)). 그 위에 `kr_flow`를 올렸고 검증을 통과했다.
 
 **지금 Claude를 막고 있는 건 `config/aliases.yaml`이다.** 워치리스트는 채워졌다 — 한국 엔티티 해석을 어렵게 만드는 두산·삼성·한화·LG 클러스터를 포함한 한국 19종목, 그리고 미국 14종목. 한국 종목마다 별칭 항목이 하나씩 필요하고, 기계적인 절반과 결과 감사는 `scripts/config_helper.py`가 맡는다 — [MANUAL-TASKS.md §3](MANUAL-TASKS.md).
 

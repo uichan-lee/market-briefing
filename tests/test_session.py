@@ -169,3 +169,77 @@ def test_session_times_on_a_holiday_raise_rather_than_return_a_wrong_value():
         session_close_utc("KR", dt.date(2026, 2, 17))
     with pytest.raises(NoSessionFoundError):
         session_open_utc("KR", dt.date(2026, 2, 17))
+
+
+# --- calendar corrections -------------------------------------------------
+
+
+def test_krx_closures_the_library_misses_are_excluded():
+    """2026-06-03 (지방선거) and 2026-07-17 (제헌절) were not sessions.
+
+    Both are days pandas_market_calendars 5.4.0 reports as open. Election days
+    move every cycle and 제헌절 was restored in 2026 after eighteen years, so
+    neither is encoded upstream. Left uncorrected, every continuity check
+    reports a gap that is not there.
+    """
+    assert not is_trading_day("KR", dt.date(2026, 6, 3))
+    assert not is_trading_day("KR", dt.date(2026, 7, 17))
+    assert dt.date(2026, 6, 3) not in trading_days("KR", dt.date(2026, 6, 1), dt.date(2026, 6, 5))
+    assert dt.date(2026, 7, 17) not in trading_days(
+        "KR", dt.date(2026, 7, 13), dt.date(2026, 7, 20)
+    )
+
+
+def test_a_corrected_day_is_skipped_when_stepping_between_sessions():
+    """The correction has to reach every navigation helper, not just the list.
+
+    2026-07-17 was a Friday, so the session after Thursday the 16th is Monday
+    the 20th. A helper that stepped onto the 17th would stamp news as tradeable
+    on a day the market never opened.
+    """
+    assert next_trading_day("KR", dt.date(2026, 7, 16)) == dt.date(2026, 7, 20)
+    assert previous_trading_day("KR", dt.date(2026, 7, 20)) == dt.date(2026, 7, 16)
+
+
+def test_corrections_only_remove_and_never_add():
+    """Removal loses coverage; addition invents a session that never happened.
+
+    Only the first is safe, so the structure must make the second impossible.
+    """
+    from src.util.session import _CALENDAR_CORRECTIONS, _calendar
+
+    for market, wrong in _CALENDAR_CORRECTIONS.items():
+        if not wrong:
+            continue
+        raw = _calendar(market).schedule(start_date=min(wrong), end_date=max(wrong))
+        library_days = {ts.date() for ts in raw.index}
+        assert wrong <= library_days, (
+            f"{market}: {sorted(wrong - library_days)} are not sessions the library "
+            "reports, so removing them corrects nothing and may hide a real bug"
+        )
+
+
+@pytest.mark.network
+def test_the_calendar_corrections_still_match_krx():
+    """Re-derive the correction list against KRX itself.
+
+    The list is hand-maintained, so it rots: the libraries will eventually ship
+    these dates, and Korea will add ad-hoc closures nobody encoded. KRX is the
+    only authority, and OHLCV exists only on days it actually traded. This fails
+    when the list drifts either way rather than leaving it quietly wrong.
+    """
+    from pykrx import stock
+
+    start, end = dt.date(2026, 1, 1), dt.date(2026, 8, 4)
+    raw = stock.get_market_ohlcv_by_date(start.strftime("%Y%m%d"), end.strftime("%Y%m%d"), "005930")
+    actual = {d.date() for d in raw.index}
+    ours = set(trading_days("KR", start, end))
+
+    assert not (ours - actual), (
+        f"days this project calls sessions that KRX did not trade: {sorted(ours - actual)} "
+        "— add them to _CALENDAR_CORRECTIONS"
+    )
+    assert not (actual - ours), (
+        f"days KRX traded that this project calls closed: {sorted(actual - ours)} "
+        "— a correction has gone stale and is now removing a real session"
+    )

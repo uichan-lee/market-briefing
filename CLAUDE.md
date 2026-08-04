@@ -84,6 +84,7 @@ All features are normalized as a 252-trading-day rolling z-score per ticker. Raw
 
 - Store everything in UTC. Display in KST.
 - Determine market sessions with `pandas_market_calendars`. Never hardcode holidays or DST transitions.
+- **One narrow exception, in `_CALENDAR_CORRECTIONS` in `src/util/session.py`.** The library is behind on two 2026 KRX closures — 지방선거일 and 제헌절, the latter restored after eighteen years. Both were found by diffing the calendar against KRX itself, and a network test re-derives the list so it fails rather than rots. The exception is **removal-only**: it may delete a session the library wrongly reports, never add one it omits, because a spurious session produces a false continuity gap while a missing one would invent data. Extending it requires the same evidence — a diff against the exchange, not a holiday table.
 - US market close is 05:00 KST during DST and 06:00 KST outside it. Derive this; do not assume either value.
 
 ---

@@ -54,7 +54,8 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | `kr_news` collector (outlet RSS) | ✅ Done | 14 feeds via Actions, twice hourly in session; ~950 articles/poll across 8 outlets |
 | `us_price` collector (Tiingo) | ✅ Done | Four checks + committed fixture; known value cross-checked against Yahoo Finance |
 | `us_price` over Alpaca | ✅ Done | The US source in use. SIP confirmed on the free plan; **48 symbols in 2 requests** where Tiingo needed 48 |
-| `kr_flow` and remaining collectors | 🟡 Claude's queue | KRX login cleared 2026-08-04 — no longer blocked on Ricky |
+| `kr_flow` collector (pykrx) | ✅ Done | Investor flows, short interest, cap, fundamentals — **the 55% of rating weight KRX was gating**. Six checks incl. an accounting identity and a cross-collector price check |
+| `us_filings`, `kr_filings` | ⬜ Not started | SEC EDGAR and DART |
 | Entity resolution | ⬜ Not started | |
 | Embedding pipeline (dedup + relevance) | ⬜ Not started | |
 | Golden set (100 hand-labeled articles) | ⬜ Not started | Ricky's task, blocks model selection |
@@ -65,7 +66,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 
 **Korean news collection is live and unblocked** — `kr_news` reads 14 outlet RSS feeds via GitHub Actions — twice an hour through the KRX session, hourly otherwise — needing no credential at all. Because RSS cannot be backfilled, that clock only starts once `collect-news.yml` is on the default branch.
 
-**The KRX blocker is cleared.** `data.krx.co.kr` went members-only and returned HTTP 400 `LOGOUT` without a session, which withheld investor flows, short interest, market cap and fundamentals — **55% of the rating weight**, enough to force every ticker to `관망`. A login now works and all six gated endpoints were verified live on 2026-08-04 ([API-KEYS.md §0](API-KEYS.md)). Building `kr_flow` on top is Claude's work, not Ricky's.
+**The KRX blocker is cleared.** `data.krx.co.kr` went members-only and returned HTTP 400 `LOGOUT` without a session, which withheld investor flows, short interest, market cap and fundamentals — **55% of the rating weight**, enough to force every ticker to `관망`. A login now works and all six gated endpoints were verified live on 2026-08-04 ([API-KEYS.md §0](API-KEYS.md)). `kr_flow` is now built on top of it and passing.
 
 **What blocks Claude now is `config/aliases.yaml`.** The watchlist is filled — 19 Korean tickers including the 두산, 삼성, 한화 and LG clusters that make Korean entity resolution hard, plus 14 US names. Each Korean ticker needs an alias entry; `scripts/config_helper.py` generates the mechanical half and audits the result against the news already collected — see [MANUAL-TASKS.md §3](MANUAL-TASKS.md).
 
@@ -229,7 +230,7 @@ market-briefing/
 
 ### What the built modules actually do
 
-**`src/util/session.py`** — Everything is stored in UTC and displayed in KST. Market sessions come from `pandas_market_calendars`, never a hardcoded holiday list, which matters because Korean lunar holidays (Seollal, Chuseok) shift every year. The US close is *derived*, so it correctly lands at 05:00 KST during daylight saving and 06:00 KST outside it without either number appearing in the code. `next_tradeable_open()` implements the look-ahead rule.
+**`src/util/session.py`** — Everything is stored in UTC and displayed in KST. It also carries a removal-only correction for two 2026 KRX closures the calendar library still reports as sessions (지방선거일, 제헌절), found by diffing against KRX itself and re-derived by a network test. Market sessions come from `pandas_market_calendars`, never a hardcoded holiday list, which matters because Korean lunar holidays (Seollal, Chuseok) shift every year. The US close is *derived*, so it correctly lands at 05:00 KST during daylight saving and 06:00 KST outside it without either number appearing in the code. `next_tradeable_open()` implements the look-ahead rule.
 
 **`src/collectors/validate.py`** — Every collector must pass four checks, written before its fetching logic: schema (column names and dtypes), missing-value ratio against a declared threshold, trading-day continuity with holidays excluded, and at least one hardcoded known value. Results are *reported*, not just raised — a failing collector records the failure and lets the pipeline continue, so a partial report still gets published with the gap named in its header.
 
