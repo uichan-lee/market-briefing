@@ -76,7 +76,13 @@ def _listing(as_of: dt.date | None = None) -> pd.DataFrame:
             "`find` and `scaffold` read the KRX listing. `audit` needs neither."
         )
 
-    from pykrx import stock  # imported lazily; audit must not require a login
+    from src.util.krx import KrxSessionError, import_pykrx_stock
+
+    try:
+        # Imported lazily; `audit` must not require a login at all.
+        stock = import_pykrx_stock()
+    except KrxSessionError as exc:
+        raise SystemExit(str(exc)) from exc
 
     day = as_of or previous_trading_day("KR", dt.date.today())
     stamp = day.strftime("%Y%m%d")

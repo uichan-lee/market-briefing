@@ -41,6 +41,7 @@ from src.collectors.validate import (
     check_trading_day_continuity,
     validate,
 )
+from src.util.krx import KrxSessionError, import_pykrx_stock
 from src.util.session import session_close_utc, to_utc, trading_days
 
 COLLECTOR = "kr_price"
@@ -174,9 +175,19 @@ def fetch(
     failing collector can record the failure and let the pipeline publish a
     partial report.
     """
-    from pykrx import stock  # imported here so the module is importable offline
-
     tickers = list(tickers)
+
+    try:
+        stock = import_pykrx_stock()
+    except KrxSessionError as exc:
+        # Same guard as kr_flow, for the same reason: pykrx logs in during
+        # import, so a refused login would abort the pipeline instead of leaving
+        # a recorded failure behind. See src/util/krx.py.
+        report = validate_frame(
+            pd.DataFrame(columns=list(SCHEMA)), tickers, start, end, known_value=False
+        )
+        report.add(CheckResult("krx_session", False, str(exc)))
+        return pd.DataFrame(columns=list(SCHEMA)), report
     frames: list[pd.DataFrame] = []
     failures: list[str] = []
 

@@ -14,6 +14,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from src.collectors import kr_price
 from src.collectors.kr_price import (
     KNOWN_VALUE,
     SCHEMA,
@@ -186,3 +187,24 @@ def test_live_fetch_matches_the_committed_fixture():
 
     row = df[df["date"] == pd.Timestamp("2024-01-02")].iloc[0]
     assert int(row["close"]) == KNOWN_VALUE["expected"]
+
+
+def test_a_blocked_krx_login_is_reported_rather_than_raised(monkeypatch):
+    """pykrx logs in during import, so a refused login raises from inside it.
+
+    Unguarded that aborts the pipeline run, when CLAUDE.md requires a failing
+    collector to record the failure and let a partial report publish. kr_flow
+    carries the same guard for the same reason.
+    """
+    from src.util.krx import KrxSessionError
+
+    def refuse():
+        raise KrxSessionError("could not establish a KRX session: rate limiting.")
+
+    monkeypatch.setattr(kr_price, "import_pykrx_stock", refuse)
+
+    df, report = kr_price.fetch(["005930"], dt.date(2024, 1, 2), dt.date(2024, 1, 19))
+
+    assert df.empty
+    session = next(c for c in report.results if c.name == "krx_session")
+    assert not session.passed

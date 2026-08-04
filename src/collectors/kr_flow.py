@@ -54,6 +54,7 @@ from src.collectors.validate import (
     check_trading_day_continuity,
     validate,
 )
+from src.util.krx import KrxSessionError, import_pykrx_stock
 from src.util.session import session_close_utc, to_utc, trading_days
 
 COLLECTOR = "kr_flow"
@@ -376,28 +377,15 @@ def fetch(
     tickers = list(tickers)
 
     try:
-        # Imported here so the module stays importable offline — and guarded,
-        # because pykrx logs in to KRX during import. A blocked or failed login
-        # makes `import pykrx` raise JSONDecodeError from deep inside the
-        # library, which would abort the whole pipeline run rather than record
-        # a failed collector. Observed 2026-08-05 after enough requests from one
-        # address that KRX served an HTML error page to the login endpoint.
-        # CLAUDE.md requires a failing collector to be reported so the pipeline
-        # can publish a partial report, so this becomes a check result.
-        from pykrx import stock
-    except Exception as exc:  # noqa: BLE001 - the library raises several types
+        stock = import_pykrx_stock()
+    except KrxSessionError as exc:
+        # Reported, not raised: CLAUDE.md requires a failing collector to let the
+        # pipeline publish a partial report. See src/util/krx.py for why this
+        # surfaces at import time at all.
         report = validate_frame(
             pd.DataFrame(columns=list(SCHEMA)), tickers, start, end, known_value=False
         )
-        report.add(
-            CheckResult(
-                "krx_session",
-                False,
-                f"could not establish a KRX session: {type(exc).__name__}: {exc}. "
-                "KRX serves an HTML error page instead of JSON when it is rate-limiting "
-                "an address; the usual cause is too many requests, and it clears on its own.",
-            )
-        )
+        report.add(CheckResult("krx_session", False, str(exc)))
         return pd.DataFrame(columns=list(SCHEMA)), report
     frames: list[pd.DataFrame] = []
     failures: list[str] = []

@@ -215,20 +215,19 @@ def test_a_blocked_krx_login_is_reported_rather_than_raised(monkeypatch):
     run, when CLAUDE.md requires a failing collector to record the failure and
     let a partial report be published.
     """
-    import builtins
+    from src.util.krx import KrxSessionError
 
-    real_import = builtins.__import__
+    def refuse():
+        raise KrxSessionError(
+            "could not establish a KRX session: JSONDecodeError: Expecting value: "
+            "line 13 column 1. credentials are set, so the usual cause is rate limiting."
+        )
 
-    def refuse(name, *args, **kwargs):
-        if name == "pykrx":
-            raise ValueError("Expecting value: line 13 column 1 (char 25)")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", refuse)
+    monkeypatch.setattr(kr_flow, "import_pykrx_stock", refuse)
 
     df, report = kr_flow.fetch(["005930"], dt.date(2024, 1, 2), dt.date(2024, 1, 19))
 
     assert df.empty
     session = next(c for c in report.results if c.name == "krx_session")
     assert not session.passed
-    assert "rate-limiting" in session.detail
+    assert "rate limiting" in session.detail
