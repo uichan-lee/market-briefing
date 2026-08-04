@@ -418,6 +418,7 @@ dependencies = [
     { name = "pandas-market-calendars" },
     { name = "pykrx" },
     { name = "pyyaml" },
+    { name = "requests" },
 ]
 
 [package.dev-dependencies]
@@ -432,6 +433,7 @@ requires-dist = [
     { name = "pandas-market-calendars", specifier = ">=4.4" },
     { name = "pykrx", specifier = ">=1.2.8" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "requests", specifier = ">=2.31" },
 ]
 
 [package.metadata.requires-dev]

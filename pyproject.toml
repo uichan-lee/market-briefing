@@ -32,6 +32,11 @@ dependencies = [
     # market cap/PER/PBR. No credential — it scrapes KRX. Sleep between calls.
     "pykrx>=1.2.8",
     "pyyaml>=6.0",
+    # Not a new dependency — kr_news and us_price already import it. It was
+    # arriving transitively through pykrx, which means a pykrx release that
+    # switched HTTP clients would break both collectors with an ImportError and
+    # no indication why. Declared so the lockfile pins it on its own terms.
+    "requests>=2.31",
 ]
 
 [dependency-groups]
