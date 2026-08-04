@@ -92,10 +92,17 @@ SCHEMA = {
     "ticker": "object",
     # Net purchases in KRW. SPEC §5: foreign_flow_5d and inst_flow_5d are these
     # accumulated over 5 days and divided by 5-day cumulative trading_value.
-    "foreign_net": "int64",
-    "inst_net": "int64",
-    "retail_net": "int64",
-    "other_corp_net": "int64",
+    #
+    # Nullable, though MISSING_THRESHOLDS still requires them complete. A halted
+    # session gets a genuine zero (see normalize), but a session that traded and
+    # has no flow row is a real gap — and a non-nullable dtype would turn that
+    # into an IntCastingNaNError from inside the cast, which is a raise rather
+    # than the recorded failure CLAUDE.md asks for. The nullable type lets the
+    # gap survive long enough for missing_ratio to report it.
+    "foreign_net": "Int64",
+    "inst_net": "Int64",
+    "retail_net": "Int64",
+    "other_corp_net": "Int64",
     # The denominator for both flow features, and the size controls.
     "trading_value": "int64",
     "volume": "int64",
@@ -322,19 +329,42 @@ def normalize(
 ) -> pd.DataFrame:
     """Merge the four endpoints into one row per session.
 
-    Flows and market cap are joined inner: both exist for every session, and a
-    row missing either is a fetch that went wrong rather than a quiet market.
-    Short interest and fundamentals are joined left, because both are
-    legitimately absent — KRX publishes no PER against negative earnings, and
-    short balance does not exist for every name. Making those inner would delete
-    otherwise-good sessions and understate coverage.
+    **Market cap is the spine, not flows.** A halted session appears in the cap
+    and OHLCV endpoints with zero volume and an unchanged price, but is absent
+    from the flow endpoint entirely — there were no trades, so there is no net
+    purchase to report. Observed for 003680 on 2026-07-16, which hit the upper
+    limit three sessions running, was suspended for a day, then hit the lower
+    limit.
+
+    Joining flows inner dropped that session, and that is not a cosmetic gap.
+    ``foreign_flow_5d`` is a five-*session* window; silently removing a session
+    turns it into "five sessions that happened to have flow data", sliding the
+    window an extra day back and doing so only for the names that were halted —
+    exactly the tickers whose flows are most worth reading.
+
+    On a halted session the flows are filled with zero rather than left null,
+    because zero is what actually happened: no trades means no net purchase.
+    Where flows are missing but volume is *not* zero, the null is kept, since
+    that is a real gap rather than a halt and should reach the missing-ratio
+    check.
+
+    Short interest and fundamentals are joined left for a different reason —
+    KRX publishes no PER against negative earnings and no short balance for
+    every name. Making those inner would delete otherwise-good sessions.
     """
     flow = _frame(flow, _RENAME_FLOW)
     cap = _frame(cap, _RENAME_CAP)
     if flow.empty or cap.empty:
         return pd.DataFrame(columns=list(SCHEMA))
 
-    df = flow.merge(cap, on="date", how="inner")
+    df = cap.merge(flow, on="date", how="left")
+
+    # A session present in cap but absent from flows is a halt if nothing
+    # traded. Zero is the correct value, and keeping the row is what keeps the
+    # five-session flow windows aligned to sessions rather than to data.
+    halted = df["foreign_net"].isna() & (df["volume"] == 0)
+    for column in _RENAME_FLOW.values():
+        df.loc[halted, column] = 0
     for extra, rename in ((short, _RENAME_SHORT), (fundamental, _RENAME_FUND)):
         frame = _frame(extra, rename)
         if not frame.empty:

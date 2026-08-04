@@ -231,3 +231,58 @@ def test_a_blocked_krx_login_is_reported_rather_than_raised(monkeypatch):
     session = next(c for c in report.results if c.name == "krx_session")
     assert not session.passed
     assert "rate limiting" in session.detail
+
+
+# --- halted sessions ------------------------------------------------------
+
+
+def _halt(frames):
+    """Reproduce 003680 on 2026-07-16: cap has the session, flows do not."""
+    cap = frames["cap"].copy()
+    cap.loc[cap.index[3], "거래량"] = 0
+    cap.loc[cap.index[3], "거래대금"] = 0
+    flow = frames["flow"].drop(index=frames["flow"].index[3])
+    return flow, cap
+
+
+def test_a_halted_session_survives_the_merge(frames):
+    """A halt exists in cap and OHLCV but not in flows — there were no trades.
+
+    Dropping it is not a cosmetic gap. foreign_flow_5d is a five-*session*
+    window, so removing a session slides that window an extra day back, and only
+    for the names that were halted — the ones whose flows most want reading.
+    """
+    flow, cap = _halt(frames)
+    merged = kr_flow.normalize(flow, cap, frames["short"], frames["fundamental"], "003680")
+    assert len(merged) == 14
+
+
+def test_flows_on_a_halted_session_are_zero_not_null(frames):
+    # Zero is what happened: no trades means no net purchase. A null would reach
+    # the missing-ratio check and read as a broken fetch.
+    flow, cap = _halt(frames)
+    merged = kr_flow.normalize(flow, cap, frames["short"], frames["fundamental"], "003680")
+    row = merged.iloc[3]
+    assert row["volume"] == 0
+    assert row["foreign_net"] == 0
+    assert row["inst_net"] == 0
+
+
+def test_the_identity_still_holds_across_a_halt(frames):
+    flow, cap = _halt(frames)
+    merged = kr_flow.normalize(flow, cap, frames["short"], frames["fundamental"], "003680")
+    assert kr_flow.check_flow_identity(merged).passed
+
+
+def test_missing_flows_on_a_traded_session_stay_null(frames):
+    """The contrast case: absent flows where volume is non-zero is a real gap.
+
+    Filling that with zero would invent a day of no foreign buying, which is a
+    statement about the market rather than about the data.
+    """
+    flow = frames["flow"].drop(index=frames["flow"].index[3])
+    merged = kr_flow.normalize(
+        flow, frames["cap"], frames["short"], frames["fundamental"], "003680"
+    )
+    assert merged.iloc[3]["volume"] > 0
+    assert pd.isna(merged.iloc[3]["foreign_net"])
