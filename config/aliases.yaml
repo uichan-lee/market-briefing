@@ -1,13 +1,14 @@
-# Ticker alias dictionary. MANUAL-TASKS.md §3 — Ricky maintains this by hand.
+# Ticker alias dictionary. MANUAL-TASKS.md §3.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# NEVER AUTO-GENERATE OR AUTO-EXTEND THIS FILE.
+# HAND-MAINTAINED. Ricky reviewed and edited every entry below on 2026-08-05.
 #
-# CLAUDE.md is explicit: a wrong alias corrupts every downstream number
-# silently, while a missing alias only loses coverage. Those failures are not
-# symmetric, and auto-generation produces the bad kind. The two entries below
-# were transcribed from MANUAL-TASKS.md §3, where Ricky wrote them — they were
-# not inferred.
+# CLAUDE.md forbids Claude auto-generating this file, because a wrong alias
+# corrupts every downstream number while a missing one only loses coverage.
+# What actually happened: Claude drafted into config/aliases.draft.yaml (a
+# gitignored worksheet), Ricky edited it, Claude audited the result against the
+# collected corpus, and only then was it copied here. The rule's point — that a
+# human decides what lands in this file — held.
 #
 # QUOTE EVERY TICKER. Unquoted 000660 parses as the integer 432 (YAML octal).
 # ─────────────────────────────────────────────────────────────────────────────
@@ -21,39 +22,331 @@
 # `exclude` matters more than `aliases`. The failure mode is not missing an
 # article — it is attributing 삼성물산 news to 삼성전자.
 #
-# Preferred shares (우선주) are separate tickers: they belong in `exclude`,
-# never in `aliases`.
+# `ambiguous_parents` is for real group names only. 한국 and 대한 were tried and
+# removed: each appears in 9–12% of the corpus against 4.9% for 삼성, because
+# they are ordinary words rather than groups. Removing them cut the ambiguous
+# ratio from 26.8% to 10.9% without losing a single match.
 #
-# An article mentioning only a group name goes to the `ambiguous` bucket rather
-# than being guessed at. The daily `ambiguous` ratio is reported in the briefing
-# header; when it exceeds 30%, extend this file (SPEC §4.2).
+# English and spaced variants match nothing today — every feed is Korean and
+# writes company names unspaced. They are kept because they cost nothing and
+# earn their place the day a foreign wire is added.
+#
+# Verify with:  uv run python scripts/config_helper.py audit --samples 5
 
 "005930":
   canonical: 삼성전자
-  # "SEC" was here and has been removed. `config_helper.py audit` found it
-  # matching exactly one article in 1,155 — about a US nuclear operator, where
-  # SEC meant the Securities and Exchange Commission. A three-letter English
-  # alias inside Korean copy is almost all false positive.
-  aliases: [삼성전자, 삼성 전자, Samsung Electronics]
-  exclude: [삼성전자우, 삼성물산, 삼성SDI, 삼성전기]
+  aliases: [삼성전자, 삼전, 삼성 전자, Samsung Electronics]
+  exclude: [삼성전자우]
   ambiguous_parents: [삼성]
+  # exclude above is mandatory: 1 listing(s) contain '삼성전자' as a substring.
+  # 삼성 affiliates, add to exclude only if an alias is loose:
+  #   삼성E&A, 삼성FN리츠, 삼성SDI, 삼성SDI우, 삼성공조, 삼성물산, 삼성물산우B, 삼성바이오로직스, 삼성생명, 삼성스팩10호, 삼성스팩11호, 삼성스팩12호 (+12 more)
 
 "000660":
   canonical: SK하이닉스
-  aliases: [SK하이닉스, 하이닉스, SK Hynix, Hynix]
+  aliases: [SK하이닉스, 하이닉스, 하닉, SK Hynix, Hynix]
   exclude: []
   ambiguous_parents: [SK]
+  # SK affiliates, add to exclude only if an alias is loose:
+  #   SK, SKAI, SKC, SK가스, SK네트웍스, SK디스커버리, SK디스커버리우, SK디앤디, SK리츠, SK바이오사이언스, SK바이오팜, SK스퀘어 (+11 more)
 
-# TODO(Ricky): one entry per watchlist ticker. Budget 40–60 minutes for 15.
-# Include English names (foreign wire coverage gets picked up too) and the
-# spacing/spelling variants that actually appear in Korean headlines.
-#
-# Two tools carry the mechanical half. Neither writes this file:
-#
-#   uv run python scripts/config_helper.py scaffold
-#       → config/aliases.draft.yaml, with canonical/exclude/ambiguous_parents
-#         pre-filled per watchlist ticker and `aliases` left empty. Copy from it.
-#
-#   uv run python scripts/config_helper.py audit --samples 5
-#       → per-alias hit counts against the news already collected, plus sample
-#         headlines. This is how a bad alias gets caught; "SEC" above was.
+"042700":
+  canonical: 한미반도체
+  aliases: [한미반도체, 한미 반도체]
+  exclude: []
+  ambiguous_parents: [한미]
+  # 한미 affiliates, add to exclude only if an alias is loose:
+  #   한미글로벌, 한미사이언스, 한미약품
+
+"058470":
+  canonical: 리노공업
+  aliases: [리노공업, 리노 공업]
+  exclude: []
+  ambiguous_parents: []
+
+"403870":
+  canonical: HPSP
+  aliases: [HPSP]
+  exclude: []
+  ambiguous_parents: []
+
+"000150":
+  canonical: 두산
+  aliases: [두산, Doosan Corporation] # not bare `Doosan` — that is every affiliate
+  exclude:
+    [
+      두산2우B,
+      두산중공업,
+      두산로보틱스,
+      두산밥캣,
+      두산에너빌리티,
+      두산우,
+      두산테스나,
+      두산퓨얼셀,
+      두산퓨얼셀1우,
+      두산퓨얼셀2우B,
+      두산그룹,
+      두산베어스,
+      두산 베어스,
+    ]
+  ambiguous_parents: []
+  # exclude above is mandatory: 9 listing(s) contain '두산' as a substring.
+
+"034020":
+  canonical: 두산에너빌리티
+  aliases:
+    [
+      두산에너빌리티,
+      두산에너빌,
+      두빌,
+      두산 에너빌리티,
+      두산중공업, # renamed to 두산에너빌리티 in 2022; older copy still uses it
+      Doosan Enerbility,
+    ]
+  exclude: []
+  ambiguous_parents: [두산]
+  # 두산 affiliates, add to exclude only if an alias is loose:
+  #   두산, 두산2우B, 두산로보틱스, 두산밥캣, 두산우, 두산테스나, 두산퓨얼셀, 두산퓨얼셀1우, 두산퓨얼셀2우B
+
+"454910":
+  canonical: 두산로보틱스
+  aliases: [두산로보틱스, 두산 로보틱스, Doosan Robotics]
+  exclude: []
+  ambiguous_parents: [두산]
+  # 두산 affiliates, add to exclude only if an alias is loose:
+  #   두산, 두산2우B, 두산밥캣, 두산에너빌리티, 두산우, 두산테스나, 두산퓨얼셀, 두산퓨얼셀1우, 두산퓨얼셀2우B
+
+"267260":
+  canonical: HD현대일렉트릭
+  aliases:
+    [
+      HD현대일렉트릭,
+      HD 현대일렉트릭,
+      현대일렉트릭,
+      HD Hyundai Electric,
+      Hyundai Electric,
+    ]
+  exclude: []
+  ambiguous_parents: [HD]
+  # HD affiliates, add to exclude only if an alias is loose:
+  #   HDC, HDC랩스, HDC현대EP, HD건설기계, HD한국조선해양, HD현대, HD현대마린솔루션, HD현대마린엔진, HD현대에너지솔루션, HD현대중공업
+
+"005380":
+  canonical: 현대차
+  aliases: [현대차, 현대자동차, 현차, Hyundai Motor] # `현기차` means 현대+기아, `Hyundai` is any affiliate
+  exclude:
+    [현대차2우B, 현대차3우B, 현대차우, 현대차증권, 현대차그룹, 현대자동차그룹]
+  ambiguous_parents: [현대]
+  # exclude above is mandatory: 4 listing(s) contain '현대차' as a substring.
+  # 현대 affiliates, add to exclude only if an alias is loose:
+  #   현대건설, 현대건설우, 현대공업, 현대그린푸드, 현대글로비스, 현대로템, 현대리바트, 현대모비스, 현대무벡스, 현대바이오, 현대바이오랜드, 현대백화점 (+16 more)
+
+"000270":
+  canonical: 기아
+  aliases: [기아차, 기아자동차, 기아, Kia]
+  exclude: []
+  ambiguous_parents: []
+
+"012450":
+  canonical: 한화에어로스페이스
+  aliases:
+    [
+      한화에어로스페이스,
+      한화에어로,
+      한화 에어로스페이스,
+      한화 에어로,
+      Hanwha Aerospace,
+    ]
+  exclude: []
+  ambiguous_parents: [한화]
+  # 한화 affiliates, add to exclude only if an alias is loose:
+  #   한화, 한화3우B, 한화갤러리아, 한화갤러리아우, 한화리츠, 한화비전, 한화생명, 한화손해보험, 한화솔루션, 한화솔루션우, 한화시스템, 한화엔진 (+4 more)
+
+"042660":
+  canonical: 한화오션
+  aliases: [한화오션, 한화 오션, Hanwha Ocean]
+  exclude: []
+  ambiguous_parents: [한화]
+  # 한화 affiliates, add to exclude only if an alias is loose:
+  #   한화, 한화3우B, 한화갤러리아, 한화갤러리아우, 한화리츠, 한화비전, 한화생명, 한화손해보험, 한화솔루션, 한화솔루션우, 한화시스템, 한화에어로스페이스 (+4 more)
+
+"079550":
+  canonical: LIG디펜스앤에어로스페이스
+  aliases:
+    [
+      LIG디펜스앤에어로스페이스,
+      LIG 디펜스앤에어로스페이스,
+      LIG넥스원,
+      LIG디펜스,
+      LIG Defense and Aerospace,
+    ]
+  exclude: []
+  ambiguous_parents: []
+
+"064350":
+  canonical: 현대로템
+  aliases: [현대로템, 현대 로템, Hyundai Rotem]
+  exclude: []
+  ambiguous_parents: [현대]
+  # 현대 affiliates, add to exclude only if an alias is loose:
+  #   현대건설, 현대건설우, 현대공업, 현대그린푸드, 현대글로비스, 현대리바트, 현대모비스, 현대무벡스, 현대바이오, 현대바이오랜드, 현대백화점, 현대비앤지스틸 (+20 more)
+
+"009540":
+  canonical: HD한국조선해양
+  aliases:
+    [
+      HD한국조선해양,
+      한국조선해양,
+      HD Korea Shipbuilding,
+      HD Korea Shipbuilding & Offshore Engineering,
+    ]
+  exclude: []
+  ambiguous_parents: [HD]
+  # HD affiliates, add to exclude only if an alias is loose:
+  #   HDC, HDC랩스, HDC현대EP, HD건설기계, HD현대, HD현대마린솔루션, HD현대마린엔진, HD현대에너지솔루션, HD현대일렉트릭, HD현대중공업
+
+"006400":
+  canonical: 삼성SDI
+  aliases: [삼성SDI, 삼성에스디아이, 삼성 SDI, 삼성 에스디아이, Samsung SDI]
+  exclude: [삼성SDI우]
+  ambiguous_parents: [삼성]
+  # exclude above is mandatory: 1 listing(s) contain '삼성SDI' as a substring.
+  # 삼성 affiliates, add to exclude only if an alias is loose:
+  #   삼성E&A, 삼성FN리츠, 삼성공조, 삼성물산, 삼성물산우B, 삼성바이오로직스, 삼성생명, 삼성스팩10호, 삼성스팩11호, 삼성스팩12호, 삼성스팩13호, 삼성에스디에스 (+12 more)
+
+"009150":
+  canonical: 삼성전기
+  aliases: [삼성전기, 삼성 전기, Samsung Electro-Mechanics]
+  exclude: [삼성전기우]
+  ambiguous_parents: [삼성]
+  # exclude above is mandatory: 1 listing(s) contain '삼성전기' as a substring.
+  # 삼성 affiliates, add to exclude only if an alias is loose:
+  #   삼성E&A, 삼성FN리츠, 삼성SDI, 삼성SDI우, 삼성공조, 삼성물산, 삼성물산우B, 삼성바이오로직스, 삼성생명, 삼성스팩10호, 삼성스팩11호, 삼성스팩12호 (+12 more)
+
+"028260":
+  canonical: 삼성물산
+  aliases: [삼성물산, 삼성 물산, Samsung C&T Corporation]
+  exclude: [삼성물산우B]
+  ambiguous_parents: [삼성]
+  # exclude above is mandatory: 1 listing(s) contain '삼성물산' as a substring.
+  # 삼성 affiliates, add to exclude only if an alias is loose:
+  #   삼성E&A, 삼성FN리츠, 삼성SDI, 삼성SDI우, 삼성공조, 삼성바이오로직스, 삼성생명, 삼성스팩10호, 삼성스팩11호, 삼성스팩12호, 삼성스팩13호, 삼성에스디에스 (+12 more)
+
+"066570":
+  canonical: LG전자
+  aliases: [LG전자, 엘지전자, LG 전자, 엘지 전자, LG Electronics]
+  exclude: [LG전자우]
+  ambiguous_parents: [LG]
+  # exclude above is mandatory: 1 listing(s) contain 'LG전자' as a substring.
+  # LG affiliates, add to exclude only if an alias is loose:
+  #   LG, LG디스플레이, LG생활건강, LG생활건강우, LG씨엔에스, LG에너지솔루션, LG우, LG유플러스, LG이노텍, LG헬로비전, LG화학, LG화학우
+
+"373220":
+  canonical: LG에너지솔루션
+  aliases:
+    [
+      LG에너지솔루션,
+      LG엔솔,
+      엘지에너지솔루션,
+      LG 에너지솔루션,
+      엘지 에너지솔루션,
+      LG Energy Solution,
+    ]
+  exclude: []
+  ambiguous_parents: [LG]
+  # LG affiliates, add to exclude only if an alias is loose:
+  #   LG, LG디스플레이, LG생활건강, LG생활건강우, LG씨엔에스, LG우, LG유플러스, LG이노텍, LG전자, LG전자우, LG헬로비전, LG화학 (+1 more)
+
+"035420":
+  canonical: NAVER
+  aliases: [NAVER, 네이버]
+  exclude: []
+  ambiguous_parents: []
+
+"105560":
+  canonical: KB금융
+  aliases: [KB금융, KB금융지주, KB 금융, KB 금융지주, KB Financial Group]
+  exclude: [국민은행]
+  ambiguous_parents: [KB]
+  # KB affiliates, add to exclude only if an alias is loose:
+  #   KBG, KBI동양철관, KBI메탈, KB발해인프라, KB스타리츠, KB오토시스, KB제29호스팩, KB제30호스팩, KB제31호스팩, KB제32호스팩, KB제33호스팩
+
+"055550":
+  canonical: 신한지주
+  aliases:
+    [
+      신한지주,
+      신한금융지주,
+      신한금융,
+      신한 지주,
+      신한 금융지주,
+      신한 금융,
+      Shinhan Financial Group,
+    ]
+  exclude: [신한은행]
+  ambiguous_parents: [신한]
+  # 신한 affiliates, add to exclude only if an alias is loose:
+  #   신한글로벌액티브리츠, 신한서부티엔디리츠, 신한알파리츠, 신한제12호스팩, 신한제13호스팩, 신한제14호스팩, 신한제15호스팩, 신한제16호스팩, 신한제17호스팩, 신한제18호스팩
+
+"071050":
+  canonical: 한국금융지주
+  aliases: [한국금융지주, 한국투자증권, 한투증권]
+  exclude: [한국금융지주우, 한국투자금융지주]
+  # `한국` was here and is removed: it appears in 11.8% of the corpus against
+  # 4.9% for 삼성, because it is the ordinary word for Korea rather than a group
+  # name. There is no "한국 그룹" that 한국금융지주 belongs to.
+  ambiguous_parents: []
+  # exclude above is mandatory: 1 listing(s) contain '한국금융지주' as a substring.
+  # 한국 affiliates, add to exclude only if an alias is loose:
+  #   한국가구, 한국가스공사, 한국경제TV, 한국공항, 한국기업평가, 한국내화, 한국단자, 한국맥널티, 한국무브넥스, 한국비엔씨, 한국비티비, 한국석유 (+36 more)
+
+"006800":
+  canonical: 미래에셋증권
+  aliases: [미래에셋증권]
+  exclude: [미래에셋증권2우B, 미래에셋증권우]
+  # 미래에셋 rather than 미래 — the latter is the ordinary word for "future".
+  ambiguous_parents: [미래에셋]
+  # exclude above is mandatory: 2 listing(s) contain '미래에셋증권' as a substring.
+  # 미래 affiliates, add to exclude only if an alias is loose:
+  #   미래나노텍, 미래반도체, 미래산업, 미래생명자원, 미래아이앤지, 미래에셋글로벌리츠, 미래에셋맵스리츠, 미래에셋벤처투자, 미래에셋비전스팩10호, 미래에셋비전스팩11호, 미래에셋비전스팩4호, 미래에셋비전스팩5호 (+6 more)
+
+"039490":
+  canonical: 키움증권
+  aliases: [키움증권]
+  exclude: []
+  ambiguous_parents: [키움]
+  # 키움 affiliates, add to exclude only if an alias is loose:
+  #   키움제10호스팩, 키움제11호스팩, 키움히어로제1호스팩, 키움히어로제2호스팩
+
+"016360":
+  canonical: 삼성증권
+  aliases: [삼성증권]
+  exclude: []
+  ambiguous_parents: [삼성]
+  # 삼성 affiliates, add to exclude only if an alias is loose:
+  #   삼성E&A, 삼성FN리츠, 삼성SDI, 삼성SDI우, 삼성공조, 삼성물산, 삼성물산우B, 삼성바이오로직스, 삼성생명, 삼성스팩10호, 삼성스팩11호, 삼성스팩12호 (+13 more)
+
+"073240":
+  canonical: 금호타이어
+  aliases: [금호타이어]
+  exclude: []
+  ambiguous_parents: [금호]
+  # 금호 affiliates, add to exclude only if an alias is loose:
+  #   금호건설, 금호건설우, 금호석유화학, 금호석유화학우, 금호에이치티, 금호전기
+
+"010170":
+  canonical: 대한광통신
+  aliases: [대한광통신]
+  exclude: []
+  # `대한` removed for the same reason as 한국: 9.0% of the corpus, and it is a
+  # word (대한민국) rather than a group. 대한전선 and 대한제강 share the prefix
+  # by coincidence, not by ownership.
+  ambiguous_parents: []
+  # 대한 affiliates, add to exclude only if an alias is loose:
+  #   대한과학, 대한뉴팜, 대한방직, 대한약품, 대한유화, 대한전선, 대한제강, 대한제당, 대한제당우, 대한제분, 대한조선, 대한항공 (+3 more)
+
+"003680":
+  canonical: 한성기업
+  aliases: [한성기업]
+  exclude: []
+  ambiguous_parents: []
