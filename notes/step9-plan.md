@@ -83,3 +83,59 @@ for KR it is the 15:30 KST session close. A row is usable only when
 Builds `src/features/normalize.py` and `src/features/compute.py` with offline
 tests. Does **not** build the LLM scoring stage, the embedding pipeline, or the
 report renderer.
+
+---
+
+# Review of the plan above, before implementing
+
+Re-reading it against the actual backfill window found one thing that decides an
+open question and one that changes the output shape.
+
+## The 3-year percentile and the 252-day z-score cannot both apply
+
+Measured: the backfill window holds **728 KR sessions**. What each feature needs
+before it can emit its first value:
+
+| feature | window | + z-score | needs | 728 available? |
+|---|---|---|---|---|
+| `foreign_flow_5d` | 5 | 252 | 257 | ok |
+| `inst_flow_5d` | 5 | 252 | 257 | ok |
+| `short_ratio` | 1 | 252 | 253 | ok |
+| `rel_strength_20d` | 20 | 252 | 272 | ok |
+| `valuation_band` | **756** | 252 | **1008** | **impossible** |
+
+Applying both would make `valuation_band` permanently `NaN`, and it would look
+like a bug rather than a design consequence.
+
+**Decision: `valuation_band` is the percentile and is not additionally
+z-scored.** SPEC §5's blanket z-score exists for one stated reason — "absolute
+values cannot be compared across tickers." A percentile rank is *already*
+ticker-relative and bounded to [0, 1], so the z-score buys nothing here while
+costing 252 sessions of history. This is a deliberate, stated deviation from the
+letter of §5 in service of its purpose, recorded here and in the module.
+
+It is scaled to `(0.5 − pct) × 2`, giving +1 at the cheapest end of the 3-year
+band and −1 at the most expensive, so the sign matches its `+0.05` weight.
+
+**Consequence worth acting on:** even without the second normalization,
+`valuation_band` needs 756 sessions and the backfill holds 728. It is 28
+sessions short. **Extending the backfill to four years turns this feature on.**
+That is a cheap follow-up and belongs to Ricky's call, not to this step.
+
+## Two more things the first draft left unspecified
+
+**Division by zero in the flow features.** `foreign_flow_5d` divides a 5-session
+net-buying sum by a 5-session trading-value sum. A ticker halted across all five
+sessions gives 0/0. Result is `None`, not zero — zero would assert balanced
+flow on a ticker that did not trade.
+
+**Output carries both the raw value and the z-score.** `rate()` only needs the
+z-score, but MANUAL-TASKS §6 calibration needs to see the raw distributions to
+judge whether the cut points are sane, and a z-score alone cannot be sanity
+checked against a broker screen. Written as `{feature}` and `{feature}_z` in
+`data/features/YYYY-MM-DD.parquet`, per SPEC §3.3.
+
+## Revised coverage
+
+With `valuation_band` absent until the window extends, four features carry
+0.70 of 1.10 — 64%, still above the `min_weight_coverage: 0.5` floor.
