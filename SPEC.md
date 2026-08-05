@@ -580,8 +580,8 @@ market-briefing/
       dedup.py                # re-report clustering
       relevance.py
     features/
-      compute.py
-      normalize.py
+      compute.py              # §5 — 5 of 7 rating features; see notes/step9-plan.md
+      normalize.py            # 252-session rolling z-score, window ends at t-1
     llm/
       adapter.py              # vendor-neutral layer
       score.py

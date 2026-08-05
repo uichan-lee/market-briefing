@@ -270,31 +270,55 @@ be checked against the repository rather than taken on trust.
 |---|---|---|
 | 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
-| 3 | Collectors + validation tests | ✅ 5 collectors, 331 offline tests, 9 live |
-| 4 | **3-year backfill into `data/raw/`** | **🟡 in progress** — macro, us_price, kr_price done; kr_flow 244/728 |
-| 5 | Entity resolution + measure the ambiguous ratio | ⬜ next |
+| 3 | Collectors + validation tests | ✅ 5 collectors, 370 offline tests, 9 live |
+| 4 | **3-year backfill into `data/raw/`** | **🟡 in progress** — macro (776), us_price (752), kr_price (728) done; kr_flow 244/728 |
+| 5 | Entity resolution + ambiguous ratio | ✅ 221/2,876 articles matched, **ambiguous 10.9%** (threshold 30%) |
 | 6 | Embedding pipeline (dedup + relevance) | ⬜ |
 | 7 | Golden set — 100 hand-labeled articles | ⬜ Ricky |
 | 8 | Model adapter + bake-off | ⬜ |
-| 9 | Feature computation | ⬜ |
-| 10 | Report renderer + delivery | ⬜ |
+| 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |
+| 10 | Report renderer + delivery | ⬜ **next** |
 | 11–13 | Actions workflow → schedule → two-week gate | ⬜ |
 
-**Everything that produces data works. Nothing yet turns it into a briefing.**
-Steps 5, 9 and 10 are the path to a first end-to-end report.
+**The whole deterministic path now exists — collect, resolve, compute, rate.**
+What is missing is the document at the end of it (step 10) and the LLM stages
+(6–8), which the rating does not need to produce a number.
 
-> The backfill is resumable and paced around KRX, which throttles by address:
-> roughly 250 requests earns an HTML error page for a few hours. `kr_flow` costs
-> 124 requests per year of history, so it lands over several windows rather than
-> in one run. Re-running `scripts/backfill.py` continues where it stopped.
+### Waiting on the backfill, not on code
 
-### One useful ordering fact
+Every feature currently computes to `NaN`, because a 252-session z-score needs
+257 sessions of flow history and `kr_flow` holds 244. Raw features populate
+correctly — `foreign_flow_5d` on 7,400 of 7,524 rows — so this is the backfill
+being unfinished rather than the module being wrong.
 
-`news_polarity` is the only one of the seven rating features that needs an LLM.
-The other six — `foreign_flow_5d`, `inst_flow_5d`, `short_ratio`,
-`valuation_band`, `rel_strength_20d`, `rev_4w` — come from the backfill alone
-and carry 0.60 of the weight, which clears `min_weight_coverage: 0.5`. So a
-real, deterministic rating is reachable at step 9 without step 6, 7 or 8.
+`scripts/backfill.py` is resumable; re-running continues where it stopped:
+
+```bash
+uv run python scripts/backfill.py --years 3 --end 2026-08-03 --sources kr_flow
+```
+
+KRX throttles by address — roughly 250 requests earns an HTML error page for a
+few hours — and `kr_flow` costs 124 requests per year of history, so it lands
+over several windows.
+
+### Two decisions parked for Ricky
+
+**`rev_4w` has no data source.** SPEC §5 defines it as the 4-week change in
+*consensus* EPS — forward analyst estimates. pykrx's `EPS` is trailing, and
+substituting it would produce a number that looks like the feature and is not.
+Doing it properly needs an estimates vendor (FnGuide, QuantiWise). Weight 0.15;
+absent, and `rate()` renormalizes.
+
+**`valuation_band` needs a four-year backfill.** It is a 756-session PBR
+percentile and the window holds 728 — 28 short. Extending the backfill by a year
+turns it on. Weight 0.05.
+
+### Why step 9 came before steps 6–8
+
+`news_polarity` (0.20) is the only rating feature that needs an LLM. The five
+built at step 9 carry 0.75 of 1.10 total weight, above `min_weight_coverage:
+0.5`, so a real deterministic rating is reachable without the embedding
+pipeline, the golden set or the bake-off. That is why the order was inverted.
 
 ---
 
