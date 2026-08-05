@@ -261,20 +261,61 @@ Tests that hit the network are marked `@pytest.mark.network` and excluded by def
 
 ---
 
+## Where the project stands
+
+Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it can
+be checked against the repository rather than taken on trust.
+
+| Step | | Status |
+|---|---|---|
+| 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
+| 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
+| 3 | Collectors + validation tests | ✅ 5 collectors, 331 offline tests, 9 live |
+| 4 | **3-year backfill into `data/raw/`** | **🟡 in progress** — macro, us_price, kr_price done; kr_flow 244/728 |
+| 5 | Entity resolution + measure the ambiguous ratio | ⬜ next |
+| 6 | Embedding pipeline (dedup + relevance) | ⬜ |
+| 7 | Golden set — 100 hand-labeled articles | ⬜ Ricky |
+| 8 | Model adapter + bake-off | ⬜ |
+| 9 | Feature computation | ⬜ |
+| 10 | Report renderer + delivery | ⬜ |
+| 11–13 | Actions workflow → schedule → two-week gate | ⬜ |
+
+**Everything that produces data works. Nothing yet turns it into a briefing.**
+Steps 5, 9 and 10 are the path to a first end-to-end report.
+
+> The backfill is resumable and paced around KRX, which throttles by address:
+> roughly 250 requests earns an HTML error page for a few hours. `kr_flow` costs
+> 124 requests per year of history, so it lands over several windows rather than
+> in one run. Re-running `scripts/backfill.py` continues where it stopped.
+
+### One useful ordering fact
+
+`news_polarity` is the only one of the seven rating features that needs an LLM.
+The other six — `foreign_flow_5d`, `inst_flow_5d`, `short_ratio`,
+`valuation_band`, `rel_strength_20d`, `rev_4w` — come from the backfill alone
+and carry 0.60 of the weight, which clears `min_weight_coverage: 0.5`. So a
+real, deterministic rating is reachable at step 9 without step 6, 7 or 8.
+
+---
+
 ## What's blocking progress
 
-These are Ricky's, in the order they unblock work. Full detail in [MANUAL-TASKS.md](MANUAL-TASKS.md).
+Nothing is blocking Claude. These are Ricky's, in the order they will be needed.
+Full detail in [MANUAL-TASKS.md](MANUAL-TASKS.md).
 
 | # | Task | Est. time | Blocks |
 |---|---|---|---|
-| 1 | `config/aliases.yaml` — one entry per KR ticker (`scaffold` → `audit`) | 60–75 min | Entity resolution, all news features |
-| 2 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection |
-| 3 | Bake-off decision | 30 min | Scoring model choice |
-| 4 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
+| 1 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection (step 8) |
+| 2 | Bake-off decision | 30 min | Scoring model choice |
+| 3 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
+| 4 | KIS application | 15 min | Real-time quotes only; blocks nothing today |
 
-Credentials, the `.env` fixes, the watchlist and the Alpaca switch are done — KRX verified against all six gated endpoints, SPY's known value cross-checked against Yahoo Finance, every secret mirrored to Actions, and 19 KR + 14 US tickers confirmed to return real data through the collectors.
+Credentials, the `.env` fixes, the watchlist, the Alpaca switch and the alias
+dictionary are all done.
 
-Task 2 is the one that will feel skippable. It is the only step involving no code, and skipping it makes the bake-off impossible — model selection then ends at "Claude seemed good."
+Task 1 is the one that will feel skippable. It is the only step involving no
+code, and skipping it makes the bake-off impossible — model selection then ends
+at "Claude seemed good."
 
 ---
 
