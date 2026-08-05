@@ -51,7 +51,7 @@ English: [README.md](README.md)
 | API 인증 정보 | ✅ 완료 | KRX·Alpaca 실측 검증, 9개 값 전부 Actions secrets에 등록. KIS만 미완이고 아직 아무것도 막지 않는다 |
 | `kr_price` collector (pykrx OHLCV) | ✅ 완료 | 4가지 검사 + 커밋된 픽스처. 기준값은 네이버 금융과 교차 확인 |
 | `macro` collector (FRED) | ✅ 완료 | 6개 시리즈 실측 확인. 기준값은 미 재무부와 교차 확인 |
-| `kr_news` collector (언론사 RSS) | ✅ 완료 | 14개 피드, Actions 실행 — 장중 30분마다, 그 외 시간당. 1회 수집당 8개 매체 ~950건 |
+| `kr_news` collector (언론사 RSS) | ✅ 완료 | 15개 피드, Actions 실행 — 장중 30분마다, 그 외 시간당. 1회 수집당 8개 매체 ~950건 |
 | `us_price` collector (Tiingo) | ✅ 완료 | 4개 검사 + 커밋된 fixture. 기준값은 Yahoo Finance와 교차 확인 |
 | `us_price` Alpaca 버전 | ✅ 완료 | 현재 사용 중인 미국 소스. 무료 플랜에서 SIP 확인. **48종목을 요청 2개로** — Tiingo는 48개 필요했다 |
 | `kr_flow` collector (pykrx) | ✅ 완료 | 투자자별 순매수·공매도 잔고·시가총액·펀더멘털 — **KRX가 막고 있던 등급 가중치 55%**. 회계 항등식과 수집기 간 교차검증을 포함한 6개 검사 |
@@ -64,7 +64,7 @@ English: [README.md](README.md)
 | 리포트 렌더러 + 전달 | ⬜ 미착수 | |
 | GitHub Actions 워크플로우 | ⬜ 미착수 | |
 
-**한국 뉴스 수집은 이미 동작하고 막힌 게 없다** — `kr_news`가 언론사 RSS 14개를 GitHub Actions로 읽는다 — 장중에는 30분마다, 그 외 시간에는 시간당. 인증 정보가 전혀 필요 없다. 다만 RSS는 소급 수집이 안 되므로, `collect-news.yml`이 기본 브랜치에 올라간 시점부터만 쌓인다.
+**한국 뉴스 수집은 이미 동작하고 막힌 게 없다** — `kr_news`가 언론사 RSS 15개를 GitHub Actions로 읽는다 — 장중에는 30분마다, 그 외 시간에는 시간당. 인증 정보가 전혀 필요 없다. 다만 RSS는 소급 수집이 안 되므로, `collect-news.yml`이 기본 브랜치에 올라간 시점부터만 쌓인다.
 
 **KRX 병목은 해소됐다.** `data.krx.co.kr`이 회원제로 바뀌면서 세션 없는 요청에 HTTP 400 `LOGOUT`을 반환했고, 그 결과 투자자별 순매수·공매도 잔고·시가총액·펀더멘털이 모두 막혀 있었다. **등급 가중치의 55%**이고, 모든 종목을 `관망`으로 몰기에 충분한 양이다. 이제 로그인이 되고, 막혀 있던 6개 엔드포인트를 2026-08-04에 실측으로 확인했다 ([API-KEYS.md §0](API-KEYS.md)). 그 위에 `kr_flow`를 올렸고 검증을 통과했다.
 

@@ -252,7 +252,7 @@ Section IDs ①–⑨ are **stable identifiers**, referenced from `src/report/ra
 | pykrx | OHLCV, net buying by investor type, short-interest balance, market cap/PER/PBR | **KRX account** (was: none) | `pykrx>=1.2.8` | Based on KRX scraping. Sleep required between calls. See the warning below |
 | DART OpenAPI | Filing lists, financial statements | API key (free) | `dart-fss` or direct | Daily call limit applies |
 | KIS Open API | Real-time quotes, balances | App key/secret | `python-kis` | Mock trading environment provided. **Read-only in stage 1** |
-| **Outlet RSS** | Ticker news, mention volume | **None** | Direct | 14 enabled of 15 declared in `config/news_feeds.yaml`. Replaced the Naver search API in 2026 — see below |
+| **Outlet RSS** | Ticker news, mention volume | **None** | Direct | 15 enabled of 16 declared in `config/news_feeds.yaml`. Replaced the Naver search API in 2026 — see below |
 
 > [!important] A structural edge in the Korean market
 > Daily net buying by investor type (foreign/institutional/retail) doesn't exist as a data source in the US. This pipeline's most differentiated feature comes from here. It's especially notable as a **signal obtained without an LLM**.

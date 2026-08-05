@@ -103,10 +103,28 @@ feeds:
     domain: etnews.com
     enabled: true
 
-  - name: chosunbiz
+  # Replaced the site-wide 조선비즈 feed on 2026-08-05. That one was declared
+  # `section: 전체` and lived up to it: of 100 items, 36 were the Japanese
+  # edition of articles already arriving in Korean, and the rest carried the
+  # sports desk. It alone produced 220 of the 281 sport articles in the corpus —
+  # 27% of everything it sent — against 0–12% for every other feed.
+  #
+  # The section feeds carry more and cleaner: stock + industry is 164 items with
+  # no sport and no Japanese, against 100 items for 전체. Measured directly.
+  #
+  # `finance` and `it` exist as URLs but return zero items, so they are not
+  # listed; re-check before adding them.
+  - name: chosunbiz_stock
     outlet: 조선비즈
-    section: 전체
-    url: https://biz.chosun.com/arc/outboundfeeds/rss/?outputType=xml
+    section: 증권
+    url: https://biz.chosun.com/arc/outboundfeeds/rss/category/stock/?outputType=xml
+    domain: chosun.com
+    enabled: true
+
+  - name: chosunbiz_industry
+    outlet: 조선비즈
+    section: 산업
+    url: https://biz.chosun.com/arc/outboundfeeds/rss/category/industry/?outputType=xml
     domain: chosun.com
     enabled: true
 
