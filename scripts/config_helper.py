@@ -28,10 +28,9 @@ rather than to work around it:
 
 ``audit`` writes nothing at all.
 
-The matcher below is a diagnostic, not the production entity resolver. SPEC §6.1
-Stage 0 adds clustering and confidence scoring on top; when it is written it
-should reuse :func:`match_article` or supersede it deliberately, not quietly
-reimplement the same masking with different edge cases.
+Matching is delegated to :mod:`src.entity.resolve`, the production resolver, so
+``audit`` measures exactly what the pipeline will do rather than an approximation
+of it.
 """
 
 from __future__ import annotations
@@ -48,6 +47,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.entity.resolve import resolve_article
 from src.util.config import CONFIG_DIR, AliasEntry, load_aliases, load_watchlist
 from src.util.session import previous_trading_day
 
@@ -263,26 +263,14 @@ def _read_corpus() -> list[dict]:
 def match_article(text: str, entries: dict[str, AliasEntry]) -> tuple[set[str], set[str]]:
     """Return (tickers matched, tickers seen only through a group name).
 
-    Excluded forms are **masked before** aliases are searched, longest first.
-    Order is the whole trick: 삼성전자우 contains 삼성전자, so a plain "does the
-    text contain an excluded form" test would drop a genuine 삼성전자 article
-    that happens to also mention the preferred share. Masking removes only the
-    excluded span and leaves any standalone mention intact.
+    Delegates to :mod:`src.entity.resolve`, which is the production resolver.
+    This used to carry its own copy of the masking logic; two implementations of
+    the same subtle rule drift, and the one that drifts is whichever is not
+    covered by the tests that matter. The audit now measures exactly what the
+    pipeline will do.
     """
-    matched: set[str] = set()
-    ambiguous: set[str] = set()
-
-    for ticker, entry in entries.items():
-        masked = text
-        for form in sorted(entry.exclude, key=len, reverse=True):
-            masked = masked.replace(form, "\x00")
-
-        if any(alias in masked for alias in entry.aliases):
-            matched.add(ticker)
-        elif any(parent in masked for parent in entry.ambiguous_parents):
-            ambiguous.add(ticker)
-
-    return matched, ambiguous
+    matches, ambiguous = resolve_article(text, entries)
+    return {m.ticker for m in matches}, ambiguous
 
 
 def audit(samples: int = 0) -> int:
