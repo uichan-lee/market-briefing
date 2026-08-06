@@ -294,7 +294,20 @@ def load_rating(path: Path | None = None) -> dict[str, Any]:
 
 
 def load_sector_mapping(path: Path | None = None) -> list[dict[str, Any]]:
-    """Load ``config/sector_mapping.yaml``."""
+    """Load ``config/sector_mapping.yaml``.
+
+    Rejects a ``us`` symbol that no collector fetches. This file drives SPEC
+    §2.2①, whose whole content is a correlation between a US symbol and a Korean
+    sector — so an uncollected symbol does not fail, it renders an empty row that
+    reads as "the correlation broke down". That is the opposite of the truth and
+    the reader cannot tell. The file carried ``RUT`` (the Russell 2000 index,
+    which nothing collects) until 2026-08-06 for exactly this reason.
+    """
+    # Imported here rather than at module scope: config is loaded by everything,
+    # and the collectors import config-adjacent utilities. The symbol universe
+    # lives with the collector that fetches it, which is where it stays correct.
+    from src.collectors.us_price import INDEX_ETFS
+
     path = path or CONFIG_DIR / "sector_mapping.yaml"
     raw = _read_yaml(path) or {}
 
@@ -303,6 +316,12 @@ def load_sector_mapping(path: Path | None = None) -> list[dict[str, Any]]:
         missing = {"us", "kr_sector"} - row.keys()
         if missing:
             raise ConfigError(f"{path.name}: mapping {row!r} is missing {sorted(missing)}")
+        symbol = row["us"]
+        if symbol not in INDEX_ETFS:
+            raise ConfigError(
+                f"{path.name}: {symbol!r} is not collected — "
+                f"us_price.INDEX_ETFS holds {sorted(INDEX_ETFS)}"
+            )
     return mappings
 
 

@@ -285,6 +285,23 @@ def test_a_mapping_missing_its_korean_side_is_rejected(tmp_path):
         load_sector_mapping(path)
 
 
+def test_a_symbol_no_collector_fetches_is_rejected(tmp_path):
+    """The failure this prevents is silent: SPEC §2.2① renders one row per
+    mapping, so an uncollected symbol produces an empty correlation that reads
+    as 'the link broke down' rather than 'we never had the data'. The committed
+    file carried RUT — the index, not the IWM ETF that is actually fetched —
+    until 2026-08-06."""
+    path = write(tmp_path, "sector_mapping.yaml", "mappings:\n  - us: RUT\n    kr_sector: 코스닥\n")
+    with pytest.raises(ConfigError, match="not collected"):
+        load_sector_mapping(path)
+
+
+def test_every_committed_mapping_names_a_collected_symbol():
+    from src.collectors.us_price import INDEX_ETFS
+
+    assert [m["us"] for m in load_sector_mapping() if m["us"] not in INDEX_ETFS] == []
+
+
 # --- missing files --------------------------------------------------------
 
 

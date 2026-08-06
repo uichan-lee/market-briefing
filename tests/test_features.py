@@ -321,6 +321,38 @@ def test_a_missing_directory_loads_as_empty(tmp_path):
     assert load_raw(tmp_path, "kr/investor_flow").empty
 
 
+def test_a_collector_keyed_on_series_loads_with_an_explicit_key(tmp_path):
+    """macro is keyed (date, series), not (date, ticker). The renderer reads it,
+    so the loader has to serve both shapes rather than growing a second copy of
+    the -v2 ordering rule."""
+    directory = tmp_path / "macro"
+    directory.mkdir(parents=True)
+    day = pd.Timestamp("2024-01-02")
+    pd.DataFrame({"date": [day], "series": ["vix"], "value": [13.0]}).to_parquet(
+        directory / "2024-01-02.parquet", index=False
+    )
+    pd.DataFrame({"date": [day], "series": ["vix"], "value": [14.0]}).to_parquet(
+        directory / "2024-01-02-v2.parquet", index=False
+    )
+
+    loaded = load_raw(tmp_path, "macro", key=("date", "series"))
+    assert len(loaded) == 1
+    assert loaded.iloc[0]["value"] == 14.0
+
+
+def test_the_wrong_key_names_the_missing_column(tmp_path):
+    """Silent is the failure mode to avoid: the default key raised a bare
+    KeyError from inside pandas, which does not say which collector was read."""
+    directory = tmp_path / "macro"
+    directory.mkdir(parents=True)
+    pd.DataFrame({"date": [pd.Timestamp("2024-01-02")], "series": ["vix"]}).to_parquet(
+        directory / "2024-01-02.parquet", index=False
+    )
+
+    with pytest.raises(KeyError, match="ticker"):
+        load_raw(tmp_path, "macro")
+
+
 def test_an_empty_flow_frame_yields_the_schema():
     out = compute(pd.DataFrame(), pd.DataFrame(), watchlist(("005930", "반도체")))
     assert out.empty

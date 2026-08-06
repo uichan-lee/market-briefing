@@ -222,12 +222,18 @@ def z_scores_for(features: pd.DataFrame, ticker: str, day: dt.date) -> dict[str,
     return scores
 
 
-def load_raw(root: Path, source: str) -> pd.DataFrame:
+def load_raw(root: Path, source: str, *, key: Sequence[str] = ("date", "ticker")) -> pd.DataFrame:
     """Read every per-session parquet a collector wrote, oldest first.
 
     ``-v2`` re-run files are read alongside the originals, which CLAUDE.md rule 1
     guarantees exist rather than replacing them; de-duplication keeps the later
     write, since that is the one a re-run was performed to obtain.
+
+    ``key`` is what identifies a row for de-duplication. It defaults to the
+    per-ticker collectors' shape, but ``macro`` is keyed ``("date", "series")``
+    and reading it with the default raises ``KeyError: Index(['ticker'])``.
+    Parameterizing is better than a second loader: the ``-v2`` ordering rule
+    below is the subtle part, and it should exist exactly once.
     """
     directory = root / source
     if not directory.exists():
@@ -248,4 +254,7 @@ def load_raw(root: Path, source: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     frame = pd.concat(frames, ignore_index=True)
-    return frame.drop_duplicates(subset=["date", "ticker"], keep="last").reset_index(drop=True)
+    missing = [column for column in key if column not in frame.columns]
+    if missing:
+        raise KeyError(f"{source} has no column {missing}; pass key= for this collector's shape")
+    return frame.drop_duplicates(subset=list(key), keep="last").reset_index(drop=True)
