@@ -277,8 +277,9 @@ be checked against the repository rather than taken on trust.
 | 7 | Golden set — 100 hand-labeled articles | ⬜ Ricky |
 | 8 | Model adapter + bake-off | ⬜ |
 | 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |
-| 10 | Report renderer + delivery | ⬜ **next** |
-| 11–13 | Actions workflow → schedule → two-week gate | ⬜ |
+| 10 | Report renderer + delivery | ✅ vault + email live; first real briefing rendered 2026-08-06 |
+| 11 | Daily collection + report workflow | ✅ built and verified locally; **cloud dispatch unverified** |
+| 12–13 | Schedule burn-in → two-week gate | ⬜ the two-week clock starts at the first scheduled cloud run |
 
 **The whole deterministic path now exists — collect, resolve, compute, rate.**
 What is missing is the document at the end of it (step 10) and the LLM stages

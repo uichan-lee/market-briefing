@@ -534,7 +534,7 @@ find data/raw/kr/investor_flow -name "*.parquet" | wc -l    # 목표 728
 728보다 적으면 이어서 돌린다. **이미 저장된 날짜는 건너뛰므로 중복 요청이 없다:**
 
 ```bash
-uv run python scripts/backfill.py --years 3 --end 2026-08-03 --sources kr_flow
+uv run python -m scripts.backfill --years 3 --end 2026-08-03 --sources kr_flow
 ```
 
 `could not establish a KRX session`이 나오면 차단 상태다. **다시 찔러도 안 풀린다 —

@@ -311,8 +311,8 @@ reports/
 
 `raw/` is **never overwritten**. On a re-run, save separately with a `-v2` suffix and keep the original.
 
-> [!warning] Not all raw data is re-fetchable, and `.gitignore` reflects that
-> pykrx will serve 2024 prices again in 2030 and FRED keeps decades of history, so those directories stay gitignored and regenerable. **News is not.** RSS has no backfill, and collection runs on an Actions runner that is destroyed after each job, so `data/raw/kr/news/` is committed to the repository — the only arrangement in which it exists tomorrow. Roughly 300–450 KB/day gzipped.
+> [!warning] All of `data/raw/` is committed — since 2026-08-06, not only news
+> The original split — news committed because RSS has no backfill, everything else gitignored because pykrx and FRED re-serve history — was true and still insufficient. The report workflow runs on a fresh Actions checkout, and a 252-session z-score needs the full three-year history *present*; regenerable-on-the-Mac is absent-in-the-runner, and re-fetching three years per run would spend hundreds of KRX requests daily against a block near 250. The whole backfill measures 28 MB, so it is committed, which also makes §0 principle 3 machine-independent. `data/features/` stays ignored (recomputed each render). News remains the one part that is additionally *irreplaceable*: roughly 300–450 KB/day gzipped, and an hour not collected is gone.
 `scores/` files embed the model ID and prompt version in the filename — this is the comparison unit for the §7 bake-off.
 
 ---
@@ -593,12 +593,12 @@ market-briefing/
     report/
       rating.py               # §2.2⑥ — the deterministic directional rating
       consistency.py          # §2.2⑧ — commentary checked against the rating
-      render.py
+      render.py               # ✅ §2 markdown; loading and rendering split; absences stated
     notify/
-      base.py                 # Channel interface
-      vault.py
-      email.py
-      webhook.py
+      base.py                 # ✅ Channel interface + summary routing
+      vault.py                # ✅ reports/{date}-{run}.md
+      email.py                # ✅ SMTP-SSL, header+⑥ summary body
+      webhook.py              # deliberately unbuilt — absent from delivery.yaml
     eval/
       golden.py               # golden-set scoring
       bakeoff.py               # model comparison
@@ -606,6 +606,8 @@ market-briefing/
       shadow_portfolio.py
   scripts/
     config_helper.py          # find / scaffold / audit for watchlist + aliases
+    backfill.py               # ✅ resumable multi-year history loader
+    collect_daily.py          # ✅ §1 — the two scheduled runs' collection driver
   data/
     golden/v1.jsonl
   tests/
