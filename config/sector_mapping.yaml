@@ -1,4 +1,4 @@
-# US sector/index → Korean sector correspondence. SPEC §2.2①.
+# US sector/index → Korean basket correspondence. SPEC §2.2①.
 #
 # Drives the "US → KR transmission" section, which is the briefing's front page
 # and the one section with no LLM involvement at all.
@@ -7,27 +7,67 @@
 # correlation. A mapping whose correlation has broken down is a signal to
 # disregard, not to act on — so a weak entry here is informative, not a bug.
 # `us_kr_beta_60d` (SPEC §5) is computed per ticker against the ETF named here.
+#
+# ---------------------------------------------------------------------------
+# Each mapping names its Korean side as an EXPLICIT TICKER LIST, not a sector
+# label. Changed 2026-08-06, and the reason matters.
+#
+# The `kr_sector` values here were thematic — 반도체, 정유/조선 — while
+# config/watchlist.yaml classifies by KRX 업종: 전기·전자, 기계·장비,
+# 운송장비·부품. The two vocabularies never intersect, so every mapping matched
+# zero tickers and the section rendered three empty rows reading "이력 부족".
+# That is indistinguishable from "the correlation broke down", which is the one
+# thing this section exists to tell the reader.
+#
+# Joining on the KRX label instead would be worse, not better: 전기·전자 holds
+# ten names including LG전자, 삼성SDI and LG에너지솔루션, so an SMH correlation
+# against it would measure battery and appliance stocks as semiconductors.
+# SPEC §2.2① names its members directly — "SMH → Semiconductors (Samsung
+# Electronics, SK Hynix, Hanmi Semiconductor)" — so an explicit basket is what
+# the spec asked for in the first place.
+#
+# TODO(Ricky): these baskets are Claude's reading of the watchlist and are the
+# kind of judgment that belongs to you. Check especially 정유/조선 — there is no
+# refiner in the watchlist at all, so that basket is shipbuilding and defence
+# only, and XLE (energy) is a weak counterpart for it.
+# ---------------------------------------------------------------------------
 
 mappings:
-  - us: SMH                   # semiconductor ETF
+  - us: SMH # semiconductor ETF
     kr_sector: 반도체
-    note: The strongest and best-documented of the three transmissions.
+    tickers: ["005930", "000660", "042700", "058470", "403870"]
+    note: >
+      The strongest and best-documented of the three transmissions. 삼성전자 and
+      SK하이닉스 are the memory makers; 한미반도체, 리노공업 and HPSP are
+      equipment and test, which move with the same capex cycle.
 
-  - us: XLE                   # energy ETF
-    kr_sector: 정유/조선
-    note: Weaker and slower than semis; treat the correlation column as load-bearing.
+  - us: XLE # energy ETF
+    kr_sector: 조선·방산
+    tickers: ["009540", "042660", "012450", "079550", "064350"]
+    note: >
+      Weaker and slower than semis; treat the correlation column as load-bearing.
+      Renamed from 정유/조선 because the watchlist holds no refiner — these are
+      shipbuilders (HD한국조선해양, 한화오션) and defence (한화에어로스페이스,
+      LIG, 현대로템). The energy link runs through shipbuilding order books
+      rather than through crack spreads, which is a real but indirect channel.
 
-  - us: IWM                   # Russell 2000 ETF
-    kr_sector: 코스닥 중소형
+  - us: IWM # Russell 2000 ETF
+    kr_sector: 중소형·성장
+    tickers: ["454910", "010170", "003680", "073240"]
     note: >
       Risk-appetite proxy rather than a sector link. This row named RUT — the
       Russell 2000 *index* — until 2026-08-06. Nothing collects RUT; the US
-      collector holds IWM, the ETF that tracks it (us_price.INDEX_ETFS). The
-      mapping therefore rendered as an empty row. IWM is the right symbol for a
-      60-day correlation against a risk-appetite proxy, and a symbol that is
-      actually collected is a precondition for this file, not a detail.
+      collector holds IWM, the ETF that tracks it (us_price.INDEX_ETFS).
+      The Korean side is the watchlist's small and mid caps regardless of
+      listing venue; 코스닥 was the old label but 두산로보틱스 and 금호타이어
+      are KOSPI, so the name would have been wrong.
 
 # TODO(Ricky): extend as the watchlist grows. SPEC §2.2① also names XLK, XLF and
 # XBI as sector ETFs worth reporting; they need a Korean counterpart before they
 # earn a row here. A mapping asserted without a real economic link produces a
 # confident-looking number with nothing behind it.
+#
+# XLF is the closest to earnable today — the watchlist holds KB금융, 신한지주,
+# 한국금융지주 plus three brokers — but US and Korean bank earnings are driven by
+# different rate cycles, so it needs the correlation measured before it is
+# asserted.

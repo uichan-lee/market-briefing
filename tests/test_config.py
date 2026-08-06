@@ -291,8 +291,31 @@ def test_a_symbol_no_collector_fetches_is_rejected(tmp_path):
     as 'the link broke down' rather than 'we never had the data'. The committed
     file carried RUT — the index, not the IWM ETF that is actually fetched —
     until 2026-08-06."""
-    path = write(tmp_path, "sector_mapping.yaml", "mappings:\n  - us: RUT\n    kr_sector: 코스닥\n")
+    path = write(
+        tmp_path,
+        "sector_mapping.yaml",
+        'mappings:\n  - us: RUT\n    kr_sector: 코스닥\n    tickers: ["005930"]\n',
+    )
     with pytest.raises(ConfigError, match="not collected"):
+        load_sector_mapping(path)
+
+
+def test_a_mapping_naming_a_ticker_outside_the_watchlist_is_rejected(tmp_path):
+    """The failure this prevents is the one found on 2026-08-06: the Korean side
+    matched nothing, so the section rendered '이력 부족' — indistinguishable from
+    a correlation that genuinely broke down."""
+    path = write(
+        tmp_path,
+        "sector_mapping.yaml",
+        'mappings:\n  - us: SMH\n    kr_sector: 반도체\n    tickers: ["999999"]\n',
+    )
+    with pytest.raises(ConfigError, match="not in watchlist"):
+        load_sector_mapping(path)
+
+
+def test_a_mapping_with_no_tickers_is_rejected(tmp_path):
+    path = write(tmp_path, "sector_mapping.yaml", "mappings:\n  - us: SMH\n    kr_sector: 반도체\n")
+    with pytest.raises(ConfigError, match="missing"):
         load_sector_mapping(path)
 
 

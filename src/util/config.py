@@ -312,15 +312,33 @@ def load_sector_mapping(path: Path | None = None) -> list[dict[str, Any]]:
     raw = _read_yaml(path) or {}
 
     mappings = raw.get("mappings") or []
+    known = {entry.ticker for entry in load_watchlist(market="KR")}
+
     for row in mappings:
-        missing = {"us", "kr_sector"} - row.keys()
+        missing = {"us", "kr_sector", "tickers"} - row.keys()
         if missing:
             raise ConfigError(f"{path.name}: mapping {row!r} is missing {sorted(missing)}")
+
         symbol = row["us"]
         if symbol not in INDEX_ETFS:
             raise ConfigError(
                 f"{path.name}: {symbol!r} is not collected — "
                 f"us_price.INDEX_ETFS holds {sorted(INDEX_ETFS)}"
+            )
+
+        tickers = row["tickers"]
+        if not isinstance(tickers, list) or not tickers:
+            raise ConfigError(f"{path.name}: {symbol} needs a non-empty 'tickers' list")
+
+        # A ticker outside the watchlist has no price history loaded, so it would
+        # contribute silently nothing to the correlation. This mapping matched
+        # zero tickers until 2026-08-06 for the analogous reason — it joined on a
+        # sector label the watchlist does not use — and rendered as "이력 부족",
+        # which reads as a broken-down correlation rather than a broken config.
+        unknown = [t for t in tickers if t not in known]
+        if unknown:
+            raise ConfigError(
+                f"{path.name}: {symbol} names {unknown} which are not in watchlist.yaml"
             )
     return mappings
 
