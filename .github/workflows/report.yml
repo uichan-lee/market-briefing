@@ -1,0 +1,115 @@
+# The two daily report runs. SPEC §1, §12 step 11.
+name: report
+
+# Cron minutes follow the lesson recorded in collect-news.yml: `0 * * * *`
+# lost three of its first four firings, so nothing here schedules on :00.
+# Korea has no DST, so KST = UTC+9 year-round and these lines never move.
+#
+#   morning  22:07 UTC Sun–Thu = 07:07 KST Mon–Fri, ~2h before the KOSPI open.
+#            No KRX call (kr_flow costs 124 requests against a block near 250,
+#            and the session being reported on has not opened). US data comes
+#            from the Tiingo preview path; Alpaca refuses the current UTC day.
+#   evening  12:37 UTC Mon–Fri = 21:37 KST, six hours after the KRX close.
+#            The canonical run: KRX + Alpaca, and the one that persists ratings.
+on:
+  schedule:
+    - cron: "7 22 * * 0-4" # morning
+    - cron: "37 12 * * 1-5" # evening
+  workflow_dispatch:
+    inputs:
+      run:
+        description: which run to execute
+        type: choice
+        options: [morning, evening]
+        required: true
+
+permissions:
+  contents: write
+
+# Serialized with itself; the news workflow runs under its own group, so the
+# only cross-workflow race is the push, handled by the rebase-retry loop below.
+concurrency:
+  group: report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      KRX_ID: ${{ secrets.KRX_ID }}
+      KRX_PW: ${{ secrets.KRX_PW }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+      ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+      TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Determine run
+        id: which
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=${{ inputs.run }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "7 22 * * 0-4" ]; then
+            echo "run=morning" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=evening" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Collect
+        run: uv run python -m scripts.collect_daily --run "${{ steps.which.outputs.run }}"
+
+      - name: Render and deliver
+        run: uv run python -m src.report.render --run "${{ steps.which.outputs.run }}"
+
+      # Backstop for the case render's own failure notice cannot cover: the
+      # step above dying before Python starts (sync failure, OOM). CLAUDE.md:
+      # a run that produces no report sends a failure notice, never nothing.
+      - name: Failure notice
+        if: failure()
+        run: |
+          uv run python - <<'EOF' || true
+          import datetime as dt
+          from src.notify.base import deliver
+          from src.report.render import _failure_notice
+          from src.util.config import load_delivery
+          from src.util.session import now_utc, to_kst
+
+          run = "${{ steps.which.outputs.run }}" or "unknown"
+          today = to_kst(now_utc()).date()
+          notice = _failure_notice(run, today, "workflow step failed before the renderer could report")
+          for result in deliver(notice, load_delivery().get("channels", []), day=today, label="FAILED"):
+              print(result)
+          EOF
+
+      - name: Commit
+        if: always()
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add data/raw data/ratings reports
+          if git diff --cached --quiet; then
+            echo "nothing new to commit"
+            exit 0
+          fi
+
+          git commit -m "data: ${{ steps.which.outputs.run }} run $(date -u +'%Y-%m-%dT%H:%MZ')"
+
+          # collect-news pushes to the same branch; same rebase-retry loop.
+          for attempt in 1 2 3; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && \
+              git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            echo "push attempt ${attempt} failed, retrying"
+            sleep $((attempt * 5))
+          done
+          exit 1
