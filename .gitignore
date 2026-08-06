@@ -7,24 +7,23 @@
 # wrong one. Regenerate it whenever it is needed.
 config/aliases.draft.yaml
 
-# Generated data. Regenerable from raw or upstream sources — pykrx will serve
-# 2024 prices again in 2030, FRED keeps decades of history.
+# Generated data stays out; data/raw/ is committed in full.
 #
-# News is the exception, and not a small one. RSS serves a rolling 50–120 item
-# buffer with no history, so an hour not collected is gone permanently.
-# Collection runs in GitHub Actions, where the runner is destroyed after each
-# job, so committing is the only thing that makes this data exist tomorrow.
-# SPEC §0 principle 3 calls raw data the future backtest dataset; for news that
-# is true only because of the exception below.
+# Until 2026-08-06 only news was tracked, on the argument that everything else
+# is regenerable from upstream. That argument was true and still insufficient:
+# the report workflow runs in GitHub Actions on a fresh checkout, and a
+# 252-session z-score needs the full three-year history *present* — regenerable
+# on Ricky's Mac is absent in the runner. Re-fetching three years per run would
+# cost hundreds of KRX requests daily against a block near 250. Measured size
+# of the whole backfill: 28 MB. Committing it is the cheap correct option, and
+# it also makes SPEC §0 principle 3 ("raw data is the backtest dataset")
+# machine-independent instead of one-laptop-deep.
 #
-# The stepwise form is required, not stylistic: git cannot re-include a path
-# whose parent directory is excluded, so every level has to be opened in turn.
+# data/features stays ignored (recomputed each render); data/status is the
+# per-run collector handoff and only meaningful for hours.
 data/*
 !data/raw/
-data/raw/*
-!data/raw/kr/
-data/raw/kr/*
-!data/raw/kr/news/
+!data/ratings/
 
 # Published ratings, one parquet per run (SPEC §2.2⑥, feeding ⑦'s shadow P&L).
 #
