@@ -608,6 +608,7 @@ market-briefing/
     config_helper.py          # find / scaffold / audit for watchlist + aliases
     backfill.py               # ✅ resumable multi-year history loader
     collect_daily.py          # ✅ §1 — the two scheduled runs' collection driver
+    golden.py                 # ✅ §7.3 — sample / triage / label / recheck / verify
   data/
     golden/v1.jsonl
   tests/

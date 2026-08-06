@@ -25,6 +25,14 @@ data/*
 !data/raw/
 !data/ratings/
 
+# The hand-labelled golden set (SPEC §7.3). Committed because it is the one
+# artefact in this repository that cannot be regenerated at any price: it is
+# Ricky's judgment on 100 articles, and the §7.4 bake-off measures every model
+# against it. Losing it means labelling again and getting different answers.
+# The working files beside it — candidates, triage, recheck — are committed too,
+# so the sampling that produced the set stays auditable.
+!data/golden/
+
 # Published ratings, one parquet per run (SPEC §2.2⑥, feeding ⑦'s shadow P&L).
 #
 # A weaker exception than news, and stated as such. A rating is reproducible in

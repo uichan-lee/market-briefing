@@ -1,0 +1,271 @@
+"""Tests for the golden-set tooling. SPEC §7.3, §12 step 7.
+
+Offline, against synthetic pairs. The interactive prompts are not tested — they
+are I/O — but everything that decides *which* articles Ricky sees, and whether
+the finished file is usable, is.
+
+The test that matters most is the stratification one. A golden set that is 29%
+삼성전자 measures how well models read Samsung coverage, and the bake-off would
+report that as general performance.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from scripts.golden import (
+    BUCKETS,
+    DIMENSIONS,
+    PER_BUCKET,
+    InputError,
+    parse_scores,
+    select_for_labelling,
+    stratified_sample,
+)
+
+
+def pairs(**counts: int) -> list[tuple[str, str]]:
+    """`{ticker: n}` → the (article_id, ticker) pairs a corpus would yield."""
+    out = []
+    for ticker, n in counts.items():
+        out += [(f"{ticker}-{i:03d}", ticker) for i in range(n)]
+    return out
+
+
+def articles_for(pairs_: list[tuple[str, str]]) -> dict[str, dict]:
+    return {
+        article_id: {"published_at": f"2026-08-{(i % 28) + 1:02d}T00:00:00+00:00"}
+        for i, (article_id, _) in enumerate(pairs_)
+    }
+
+
+# --- sampling --------------------------------------------------------------
+
+
+def test_a_dominant_ticker_does_not_dominate_the_sample():
+    """Measured on the real corpus 2026-08-06: 삼성전자 held 138 of 479 pairs.
+    Uniform sampling would hand that skew straight to the bake-off."""
+    source = pairs(A=138, B=119, C=42, D=31, E=18, F=17, G=17)
+    chosen = stratified_sample(source, articles_for(source), size=100)
+
+    spread: dict[str, int] = {}
+    for _, ticker in chosen:
+        spread[ticker] = spread.get(ticker, 0) + 1
+
+    assert len(chosen) == 100
+    assert max(spread.values()) <= 100 // len(spread) + 1, spread
+    assert set(spread) == {"A", "B", "C", "D", "E", "F", "G"}
+
+
+def test_sampling_is_reproducible():
+    source = pairs(A=40, B=40)
+    articles = articles_for(source)
+    assert stratified_sample(source, articles, size=30) == stratified_sample(
+        source, articles, size=30
+    )
+
+
+def test_a_different_seed_gives_a_different_sample():
+    source = pairs(A=40, B=40)
+    articles = articles_for(source)
+    first = stratified_sample(source, articles, size=30, seed=1)
+    second = stratified_sample(source, articles, size=30, seed=2)
+    assert first != second
+
+
+def test_sampling_stops_when_the_corpus_runs_out():
+    source = pairs(A=5, B=3)
+    chosen = stratified_sample(source, articles_for(source), size=100)
+    assert len(chosen) == 8
+    assert len(set(chosen)) == 8, "no pair may be handed out twice"
+
+
+def test_a_thin_ticker_is_not_dropped():
+    """Round-robin must reach the tail, or thinly-covered tickers never appear
+    and the set silently becomes a large-cap set."""
+    source = pairs(A=200, B=1)
+    chosen = stratified_sample(source, articles_for(source), size=20)
+    assert ("B-000", "B") in chosen
+
+
+# --- selection after triage ------------------------------------------------
+
+
+def triaged(**counts: int) -> list[dict]:
+    rows = []
+    for bucket, n in counts.items():
+        rows += [
+            {"article_id": f"{bucket}-{i}", "ticker": "005930", "bucket": bucket} for i in range(n)
+        ]
+    return rows
+
+
+def test_selection_caps_each_bucket_at_twenty_five():
+    picked, counts = select_for_labelling(
+        triaged(positive=40, negative=30, ambiguous=25, irrelevant=60)
+    )
+    assert len(picked) == 4 * PER_BUCKET
+    assert set(counts.values()) == {PER_BUCKET}
+
+
+def test_selection_reports_an_underfilled_bucket_rather_than_padding():
+    """SPEC §7.3 wants 25 of each. A short bucket must be visible, not quietly
+    topped up from an easier one."""
+    _, counts = select_for_labelling(triaged(positive=25, negative=3, ambiguous=25, irrelevant=25))
+    assert counts["negative"] == 3
+
+
+def test_selection_follows_triage_order():
+    rows = triaged(positive=30)
+    picked, _ = select_for_labelling(rows)
+    assert [row["article_id"] for row in picked] == [row["article_id"] for row in rows[:25]]
+
+
+# --- score parsing ---------------------------------------------------------
+
+
+def test_five_numbers_map_onto_the_spec_dimensions():
+    scores = parse_scores("0.9 -0.4 0.6 0.3 0.8")
+    assert scores == {
+        "relevance": 0.9,
+        "polarity": -0.4,
+        "intensity": 0.6,
+        "uncertainty": 0.3,
+        "forwardness": 0.8,
+    }
+
+
+def test_commas_are_accepted():
+    assert parse_scores("0.9, -0.4, 0.6, 0.3, 0.8")["polarity"] == -0.4
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("0.9 -0.4 0.6 0.3", "5개"),
+        ("0.9 -0.4 0.6 0.3 0.8 0.1", "5개"),
+        ("0.9 x 0.6 0.3 0.8", "숫자가 아닙니다"),
+        ("1.5 -0.4 0.6 0.3 0.8", "범위"),
+        ("0.9 -2.0 0.6 0.3 0.8", "범위"),
+    ],
+)
+def test_malformed_input_is_reported_not_stored(text, message):
+    """A bad line must return to the prompt. Writing it would put an
+    out-of-range score into the file every model is measured against."""
+    with pytest.raises(InputError, match=message):
+        parse_scores(text)
+
+
+def test_polarity_alone_accepts_negative_values():
+    """The four other dimensions are magnitudes; polarity is the only signed
+    one, and rejecting its sign would make every negative article unlabelable."""
+    bounds = {name: (low, high) for name, low, high, _ in DIMENSIONS}
+    assert bounds["polarity"] == (-1.0, 1.0)
+    assert all(low == 0.0 for name, (low, _) in bounds.items() if name != "polarity")
+
+
+# --- verification ----------------------------------------------------------
+
+
+def _write(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows), encoding="utf-8"
+    )
+
+
+def label_rows(bucket: str, n: int, **overrides) -> list[dict]:
+    rows = []
+    for i in range(n):
+        row = {
+            "article_id": f"{bucket}-{i}",
+            "ticker": "005930",
+            "bucket": bucket,
+            "relevance": 0.9,
+            "polarity": 0.7,
+            "intensity": 0.5,
+            "uncertainty": 0.3,
+            "forwardness": 0.6,
+            "labeled_at": "2026-08-07T00:00:00+00:00",
+        }
+        row.update(overrides)
+        rows.append(row)
+    return rows
+
+
+def full_set() -> list[dict]:
+    rows = []
+    for name, _, _ in BUCKETS.values():
+        polarity = {"positive": 0.8, "negative": -0.8, "ambiguous": 0.1, "irrelevant": 0.0}[name]
+        rows += label_rows(name, PER_BUCKET, polarity=polarity)
+    return rows
+
+
+def test_a_complete_set_verifies(tmp_path, monkeypatch):
+    import scripts.golden as mod
+
+    monkeypatch.setattr(mod, "LABELS", tmp_path / "v1.jsonl")
+    monkeypatch.setattr(mod, "RECHECK", tmp_path / "recheck.jsonl")
+    _write(mod.LABELS, full_set())
+
+    ok, problems = mod.verify()
+    assert ok, problems
+
+
+def test_an_underfilled_bucket_fails_verification(tmp_path, monkeypatch):
+    import scripts.golden as mod
+
+    monkeypatch.setattr(mod, "LABELS", tmp_path / "v1.jsonl")
+    monkeypatch.setattr(mod, "RECHECK", tmp_path / "recheck.jsonl")
+    _write(mod.LABELS, [row for row in full_set() if row["bucket"] != "negative"])
+
+    ok, problems = mod.verify()
+    assert not ok
+    assert any("부정" in problem for problem in problems)
+
+
+def test_a_set_with_no_strong_opinions_is_flagged(tmp_path, monkeypatch):
+    """All-mild labels cannot separate models — every model looks equally good,
+    which is the failure MANUAL-TASKS §4 warns about when picking easy cases."""
+    import scripts.golden as mod
+
+    monkeypatch.setattr(mod, "LABELS", tmp_path / "v1.jsonl")
+    monkeypatch.setattr(mod, "RECHECK", tmp_path / "recheck.jsonl")
+    rows = [dict(row, polarity=0.1) for row in full_set()]
+    _write(mod.LABELS, rows)
+
+    ok, problems = mod.verify()
+    assert not ok
+    assert any("polarity" in problem for problem in problems)
+
+
+def test_disagreement_between_the_two_passes_is_reported(tmp_path, monkeypatch, capsys):
+    """SPEC §7.3: if Ricky disagrees with himself more than the models disagree
+    with each other, the schema is the thing to fix first."""
+    import scripts.golden as mod
+
+    monkeypatch.setattr(mod, "LABELS", tmp_path / "v1.jsonl")
+    monkeypatch.setattr(mod, "RECHECK", tmp_path / "recheck.jsonl")
+    _write(mod.LABELS, full_set())
+    _write(mod.RECHECK, [dict(row, polarity=row["polarity"] - 0.6) for row in full_set()[:10]])
+
+    ok, problems = mod.verify()
+    assert "재라벨링 일치도" in capsys.readouterr().out
+    assert not ok
+    assert any("두 회차" in problem for problem in problems)
+
+
+def test_an_out_of_range_score_fails_verification(tmp_path, monkeypatch):
+    import scripts.golden as mod
+
+    monkeypatch.setattr(mod, "LABELS", tmp_path / "v1.jsonl")
+    monkeypatch.setattr(mod, "RECHECK", tmp_path / "recheck.jsonl")
+    rows = full_set()
+    rows[0]["relevance"] = 1.4
+    _write(mod.LABELS, rows)
+
+    ok, problems = mod.verify()
+    assert not ok
+    assert any("범위 밖" in problem for problem in problems)
