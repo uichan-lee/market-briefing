@@ -114,6 +114,44 @@ def test_full_coverage_is_not_flagged():
     assert not result.low_confidence
 
 
+def test_coverage_exactly_on_the_floor_passes():
+    """``min_weight_coverage`` is a floor the coverage may sit on: meeting it
+    exactly is enough. Found in the first real report on 2026-08-06 — 079550
+    covered exactly half its weight, which computes as
+    0.55 / 1.10 = 0.49999999999999994, and was demoted to 관망 by float error
+    while the page displayed its coverage as 50%."""
+    weights = {
+        "foreign_flow_5d": 0.30,
+        "inst_flow_5d": 0.15,
+        "short_ratio": -0.10,
+        "news_polarity": 0.20,
+        "rev_4w": 0.15,
+        "rel_strength_20d": 0.15,
+        "valuation_band": 0.05,
+    }
+    config = {**CONFIG, "weights": weights, "confidence": {"min_weight_coverage": 0.5}}
+
+    result = rate(
+        "079550",
+        {"foreign_flow_5d": 2.0, "inst_flow_5d": 2.0, "short_ratio": -2.0},
+        config,
+    )
+
+    assert result.weight_coverage == pytest.approx(0.5)
+    assert not result.low_confidence, "coverage sitting exactly on the floor must pass"
+    assert result.rating is not Rating.HOLD
+
+
+def test_coverage_genuinely_below_the_floor_still_fails():
+    """The tolerance absorbs float error, not a real shortfall. The smallest
+    weight in the committed config moves coverage by 0.045, which is eight
+    orders of magnitude above the tolerance."""
+    config = {**CONFIG, "confidence": {"min_weight_coverage": 0.6}}
+    result = rate("005930", {"foreign_flow_5d": 3.0, "news_polarity": None}, config)
+    assert result.weight_coverage == pytest.approx(0.5)
+    assert result.low_confidence
+
+
 # --- the rationale -------------------------------------------------------
 
 

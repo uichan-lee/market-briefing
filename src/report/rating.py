@@ -81,6 +81,13 @@ class RatingResult:
         return head
 
 
+# Slack allowed when comparing coverage against min_weight_coverage. Sized to
+# absorb float representation error in a ratio of small sums, and far below any
+# coverage difference a real feature could produce — the smallest weight in
+# config/rating.yaml is 0.05, which moves coverage by 0.045.
+_COVERAGE_TOLERANCE = 1e-9
+
+
 class RatingConfigError(ValueError):
     """Raised for a malformed rating configuration."""
 
@@ -187,7 +194,14 @@ def rate(
     raw = sum(c.value for c in contributions)
     score = raw / coverage
 
-    low_confidence = coverage < min_coverage
+    # ``min_weight_coverage`` is a floor that the coverage is allowed to sit on:
+    # meeting it exactly passes. The tolerance is what makes that true in
+    # practice rather than only in intent. Coverage is a ratio of sums of YAML
+    # floats, so a ticker covering exactly half its weight computes
+    # 0.55 / 1.10 = 0.49999999999999994 and would be demoted to 관망 by an
+    # arithmetic artefact. Found on 2026-08-06 in the first real report: 079550
+    # was displayed at 50% coverage and forced to 관망 at the same time.
+    low_confidence = coverage < min_coverage - _COVERAGE_TOLERANCE
     rating = Rating.HOLD if low_confidence else _bucket(score, cut_points)
 
     return RatingResult(
