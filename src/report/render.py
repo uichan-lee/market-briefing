@@ -90,6 +90,14 @@ class ReportInputs:
     collector_failures: Sequence[str] = ()
     news_gaps: Sequence[str] = ()
     delivery_failures: Sequence[str] = ()
+    # Dates in `us_prices` served by the Tiingo preview rather than the Alpaca
+    # canonical series — the header labels them, because a preview number and a
+    # canonical number carry different weight (notes/step11-plan.md).
+    us_preview_dates: Sequence[dt.date] = ()
+    # Close disagreements found where the two US vendors cover the same date.
+    # Empty is the normal state; a line here means one vendor changed its
+    # adjustment handling and is worth reading.
+    vendor_disagreements: Sequence[str] = ()
 
 
 # --- small helpers --------------------------------------------------------
@@ -169,9 +177,12 @@ def render_header(inputs: ReportInputs) -> str:
     that makes today's briefing less complete than it should be. A reader who
     stops after the header still knows what the document is not telling them.
     """
+    # Titled with the *reading* moment, not the session date. The morning run
+    # reads on day D+1 about session D; a title saying D reads as yesterday's
+    # mail. Which sessions the numbers come from is the 데이터 기준 line's job.
     kst = to_kst(inputs.as_of)
-    weekday = _WEEKDAY_KO[inputs.day.weekday()]
-    lines = [f"# 📅 {inputs.day.isoformat()} ({weekday}) {kst:%H:%M} KST 브리핑", ""]
+    weekday = _WEEKDAY_KO[kst.weekday()]
+    lines = [f"# 📅 {kst:%Y-%m-%d} ({weekday}) {kst:%H:%M} KST 브리핑", ""]
 
     market = []
     for symbol, label in (("SPY", "S&P 500"), ("QQQ", "NASDAQ"), ("SMH", "SOX")):
@@ -185,10 +196,26 @@ def render_header(inputs: ReportInputs) -> str:
         lines += [" | ".join(market), ""]
 
     warnings = []
+
+    # Which sessions the numbers actually come from — required by the step 11
+    # plan: a stale number that says so is a different thing from a stale
+    # number that does not. Derived from the loaded frames, never from intent.
+    coverage_parts = []
+    if not inputs.kr_prices.empty:
+        coverage_parts.append(f"KR {pd.to_datetime(inputs.kr_prices['date']).max():%Y-%m-%d}")
+    if not inputs.us_prices.empty:
+        us_max = pd.to_datetime(inputs.us_prices["date"]).max()
+        preview = " (Tiingo 프리뷰)" if us_max.date() in set(inputs.us_preview_dates) else ""
+        coverage_parts.append(f"US {us_max:%Y-%m-%d}{preview}")
+    if coverage_parts:
+        warnings.append(f"ℹ 데이터 기준: {' · '.join(coverage_parts)}")
+
     if inputs.collector_failures:
         warnings.append(f"⚠ 수집 실패: {', '.join(inputs.collector_failures)}")
     if inputs.news_gaps:
         warnings.append(f"⚠ 뉴스 유실: {'; '.join(inputs.news_gaps)}")
+    if inputs.vendor_disagreements:
+        warnings.append(f"⚠ 미국 시세 벤더 불일치: {'; '.join(inputs.vendor_disagreements)}")
     if inputs.delivery_failures:
         warnings.append(f"⚠ 발송 실패: {', '.join(inputs.delivery_failures)}")
 
@@ -818,11 +845,25 @@ def load_inputs(
     us_prices = read("us/price")
     macro = read("macro", key=("date", "series"))
 
+    # The Tiingo preview extends the *display* series past the Alpaca recency
+    # boundary. Features never see it: `compute()` reads only KR frames, and
+    # the canonical us/price path stays single-vendor. Absence is normal here
+    # (every evening run, any day before the first morning run), so no failure
+    # is recorded for an empty preview.
+    try:
+        preview = load_raw(raw, "us/price_preview")
+    except (OSError, KeyError, ValueError) as exc:
+        failures.append(f"us/price_preview ({type(exc).__name__})")
+        preview = pd.DataFrame()
+
+    us_prices, preview_dates, disagreements = merge_us_preview(us_prices, preview)
+
     features = pd.DataFrame()
     if not flow.empty:
         features = compute(flow, kr_prices, watchlist, as_of=None)
 
     counts, headlines, ambiguous, articles = news_for_day(raw, day, load_aliases())
+    status_failures, news_gaps = read_status(root)
 
     return ReportInputs(
         day=day,
@@ -838,8 +879,111 @@ def load_inputs(
         news_headlines=headlines,
         ambiguous_ratio=ambiguous,
         articles_seen=articles,
-        collector_failures=failures,
+        collector_failures=[*failures, *status_failures],
+        news_gaps=news_gaps,
+        us_preview_dates=preview_dates,
+        vendor_disagreements=disagreements,
     )
+
+
+# Relative close difference between the two US vendors above which the header
+# says so. The benign case measured 2024-01-02 (SPY 472.65 vs 472.66) is 0.002%;
+# a dividend or split handled differently moves a close by whole percents. The
+# threshold sits between the two regimes.
+VENDOR_TOLERANCE = 0.001
+
+
+def merge_us_preview(
+    canonical: pd.DataFrame, preview: pd.DataFrame
+) -> tuple[pd.DataFrame, list[dt.date], list[str]]:
+    """Extend the display series with preview rows, and compare the overlap.
+
+    Returns the merged frame, the dates only the preview supplied (the header
+    labels them), and any close disagreements on dates both vendors cover.
+    Canonical rows always win — the preview only ever *adds* dates, so the
+    feature-facing property "one vendor per series" survives the merge because
+    the merged frame is display-only.
+    """
+    if preview.empty:
+        return canonical, [], []
+    if canonical.empty:
+        return preview, sorted(pd.to_datetime(preview["date"]).dt.date.unique()), []
+
+    canonical_days = set(pd.to_datetime(canonical["date"]).dt.date)
+    preview_only = preview[~pd.to_datetime(preview["date"]).dt.date.isin(canonical_days)]
+    preview_dates = sorted(pd.to_datetime(preview_only["date"]).dt.date.unique())
+    merged = (
+        pd.concat([canonical, preview_only], ignore_index=True) if len(preview_only) else canonical
+    )
+
+    # The cross-check this project kept Tiingo for: where both vendors state a
+    # close for the same (date, ticker), they must agree to within tolerance.
+    overlap = canonical.merge(preview, on=["date", "ticker"], suffixes=("_alpaca", "_tiingo"))
+    disagreements: list[str] = []
+    if len(overlap):
+        alpaca = pd.to_numeric(overlap["close_alpaca"], errors="coerce")
+        tiingo = pd.to_numeric(overlap["close_tiingo"], errors="coerce")
+        diff = (tiingo - alpaca).abs() / alpaca.where(alpaca != 0)
+        bad = overlap[diff > VENDOR_TOLERANCE]
+        for row in bad.itertuples():
+            disagreements.append(
+                f"{row.ticker} {pd.Timestamp(row.date):%Y-%m-%d} "
+                f"Tiingo {row.close_tiingo} vs Alpaca {row.close_alpaca}"
+            )
+        if len(disagreements) > 3:
+            disagreements = [*disagreements[:3], f"외 {len(disagreements) - 3}건"]
+    return merged, preview_dates, disagreements
+
+
+# Status files older than this are stale — yesterday's gap warning re-printed
+# today would train the reader to ignore the line that matters.
+_STATUS_MAX_AGE_HOURS = 20
+
+
+def read_status(root: Path) -> tuple[list[str], list[str]]:
+    """Check failures and news gaps from the most recent collection run.
+
+    ``scripts/collect_daily.py`` writes one JSON per run under ``data/status/``.
+    This is the bridge CLAUDE.md's failure-handling section requires: without
+    it, a failed check exists only in an Actions log nobody reads, which is the
+    exact defect the 2026-08-06 review found in the news pipeline.
+    """
+    directory = root / "status"
+    if not directory.exists():
+        return [], []
+
+    newest, newest_at = None, None
+    for path in directory.glob("*.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            at = pd.Timestamp(payload["at"])
+        except (OSError, ValueError, KeyError):
+            continue  # one malformed file must not cost the header its lines
+        if newest_at is None or at > newest_at:
+            newest, newest_at = payload, at
+
+    if newest is None or (pd.Timestamp.now(tz="UTC") - newest_at).total_seconds() > (
+        _STATUS_MAX_AGE_HOURS * 3600
+    ):
+        return [], []
+
+    counted: dict[str, int] = {}
+    gaps: list[str] = []
+    for name, outcome in newest.get("collectors", {}).items():
+        for check in outcome.get("failures", []):
+            # Feed continuity is the news-loss signal and gets its own header
+            # line; everything else is a plain collection failure.
+            if check.get("name") == "feed_continuity":
+                gaps.append(check.get("detail", name)[:200])
+                continue
+            # Per-ticker checks are named `continuity[005930]`; collapsing on
+            # the bracket keeps a 48-ticker failure to one counted entry
+            # instead of 48 header items nobody will read past.
+            kind = str(check.get("name", "?")).split("[")[0]
+            counted[f"{name}/{kind}"] = counted.get(f"{name}/{kind}", 0) + 1
+
+    failures = [key if n == 1 else f"{key}×{n}" for key, n in counted.items()]
+    return failures, gaps
 
 
 def load_rating_history(root: Path) -> pd.DataFrame:
@@ -851,43 +995,112 @@ def load_rating_history(root: Path) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def resolve_run(run: str, reading_date: dt.date) -> tuple[dt.date, bool]:
+    """Which KR session a scheduled run reports on, and whether it persists ratings.
+
+    * ``evening`` (21:37 KST) — the session that closed today, or the previous
+      one on a holiday. This is the canonical publication: fresh KRX data
+      arrived minutes earlier, so its ratings are the ones ⑦ tracks.
+    * ``morning`` (07:07 KST) — the previous session; today's has not opened.
+      Its KR features are identical to the evening run's (no KRX call between
+      them), so persisting its ratings would write a duplicate ``-v2`` every
+      day saying nothing new.
+    """
+    from src.util.session import is_trading_day, previous_trading_day
+
+    if run == "evening":
+        if is_trading_day("KR", reading_date):
+            return reading_date, True
+        return previous_trading_day("KR", reading_date), True
+    if run == "morning":
+        return previous_trading_day("KR", reading_date), False
+    raise ValueError(f"unknown run {run!r}")
+
+
+def build_summary(inputs: ReportInputs, results: Mapping[str, RatingResult]) -> str:
+    """The ``body: summary`` form — header plus ⑥, SPEC §2.1's mobile scan.
+
+    The full document is hundreds of lines of tables that read badly on a
+    phone; the header already carries every degradation, and ⑥ is the section
+    a thirty-second reader acts on. The vault copy stays complete.
+    """
+    return "\n".join([render_header(inputs), render_ratings(inputs, results)])
+
+
+def _failure_notice(run: str, reading_date: dt.date, detail: str) -> str:
+    return (
+        f"# ⚠ 브리핑 생성 실패 — {reading_date.isoformat()} {run}\n\n"
+        f"오류: {detail}\n\n"
+        "리포트가 아예 만들어지지 못해 이 통지가 대신 발송되었습니다 — "
+        "무소식이 최악이라는 CLAUDE.md 실패 규칙에 따른 것입니다.\n\n"
+        "확인: GitHub Actions 로그 → `uv run python -m src.report.render`\n"
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    """Render one day's briefing and deliver it. SPEC §12 step 10."""
+    """Render one run's briefing and deliver it. SPEC §12 steps 10–11."""
     import argparse
+    import traceback
 
     from src.notify.base import deliver, unavailable_channels
     from src.util.config import load_delivery
+    from src.util.session import now_utc
 
     parser = argparse.ArgumentParser(description="Render the daily market briefing.")
-    parser.add_argument("--day", default=None, help="KR session date, YYYY-MM-DD (default: today)")
+    parser.add_argument("--run", choices=("morning", "evening"), default=None)
+    parser.add_argument(
+        "--date", default=None, help="reading date, YYYY-MM-DD (default: today KST)"
+    )
+    parser.add_argument("--day", default=None, help="explicit KR session date (manual/historical)")
     parser.add_argument("--data-root", default="data")
     parser.add_argument("--no-deliver", action="store_true", help="render to stdout only")
     args = parser.parse_args(argv)
 
-    day = dt.date.fromisoformat(args.day) if args.day else dt.date.today()
+    now = now_utc()
+    reading_date = dt.date.fromisoformat(args.date) if args.date else to_kst(now).date()
+
+    if args.run:
+        day, persist_ratings = resolve_run(args.run, reading_date)
+        label: str | None = args.run
+        as_of: pd.Timestamp | None = now
+    else:
+        # Manual/historical invocation: --day names the session directly, the
+        # file carries no run label, and as_of defaults to the session close.
+        day = dt.date.fromisoformat(args.day) if args.day else reading_date
+        reading_date = day
+        label, persist_ratings, as_of = None, True, None
+
     root = Path(args.data_root)
-
     channels = load_delivery().get("channels", [])
-    inputs = load_inputs(day, root=root)
-    inputs.delivery_failures = unavailable_channels(channels)
-    results = rate_all(inputs)
 
-    # Ratings are persisted before the report is rendered, so ⑦ counts today's
-    # run in its history. Rendering first would report one session fewer than
-    # exists the moment the file lands — a number the reader cannot reconcile
-    # against data/ratings/.
-    if not args.no_deliver:
-        written = write_ratings(ratings_frame(inputs, results), root, day)
-        if written:
-            print(f"ratings  {written}")
+    try:
+        inputs = load_inputs(day, root=root, as_of=as_of)
+        inputs.delivery_failures = unavailable_channels(channels)
+        results = rate_all(inputs)
 
-    report = render(inputs, rating_history=load_rating_history(root))
+        # Ratings are persisted before the report is rendered, so ⑦ counts
+        # today's run in its history — rendering first would state one session
+        # fewer than data/ratings/ holds the moment the file lands.
+        if persist_ratings and not args.no_deliver:
+            written = write_ratings(ratings_frame(inputs, results), root, day)
+            if written:
+                print(f"ratings  {written}")
+
+        report = render(inputs, rating_history=load_rating_history(root))
+        summary = build_summary(inputs, results)
+    except Exception as exc:  # noqa: BLE001 - the notice is the point: no report may pass silently
+        traceback.print_exc()
+        notice = _failure_notice(args.run or "manual", reading_date, f"{type(exc).__name__}: {exc}")
+        if not args.no_deliver:
+            for result in deliver(notice, channels, day=reading_date, label="FAILED"):
+                print(result)
+        return 1
 
     if args.no_deliver:
         print(report)
         return 0
 
-    for result in deliver(report, channels, day=day):
+    for result in deliver(report, channels, day=reading_date, label=label, summary=summary):
         print(result)
     return 0
 

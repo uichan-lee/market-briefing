@@ -13,6 +13,7 @@ does not know.
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 import pandas as pd
 import pytest
@@ -308,3 +309,170 @@ def test_the_footer_states_that_nothing_is_executed():
     """SPEC §0 principle 5 and CLAUDE.md absolute rule 2, on the page."""
     page = render(inputs())
     assert "매매를 실행하지 않습니다" in page
+
+
+# --- step 11: run resolution ----------------------------------------------
+
+
+def test_evening_reports_on_the_session_that_closed_today():
+    from src.report.render import resolve_run
+
+    day, persist = resolve_run("evening", dt.date(2026, 8, 6))  # a Thursday
+    assert day == dt.date(2026, 8, 6)
+    assert persist, "the evening run is the canonical publication"
+
+
+def test_evening_on_a_holiday_falls_back_to_the_previous_session():
+    from src.report.render import resolve_run
+
+    day, _ = resolve_run("evening", dt.date(2026, 8, 9))  # a Sunday
+    assert day == dt.date(2026, 8, 7)
+
+
+def test_morning_reports_on_yesterday_and_does_not_persist():
+    """No KRX call happens between the evening and morning runs, so the
+    morning ratings are byte-identical to the evening ones — persisting them
+    would write a -v2 every day saying nothing."""
+    from src.report.render import resolve_run
+
+    day, persist = resolve_run("morning", dt.date(2026, 8, 6))
+    assert day == dt.date(2026, 8, 5)
+    assert not persist
+
+
+# --- step 11: the two US vendors ------------------------------------------
+
+
+def _us_frame(dates: list[str], closes: list[float], ticker: str = "SPY") -> pd.DataFrame:
+    return pd.DataFrame({"date": pd.to_datetime(dates), "ticker": ticker, "close": closes})
+
+
+def test_preview_extends_the_display_series_and_is_labeled():
+    from src.report.render import merge_us_preview
+
+    canonical = _us_frame(["2026-08-04"], [770.0])
+    preview = _us_frame(["2026-08-04", "2026-08-05"], [770.0, 772.0])
+
+    merged, preview_dates, disagreements = merge_us_preview(canonical, preview)
+
+    assert preview_dates == [dt.date(2026, 8, 5)]
+    assert disagreements == []
+    assert len(merged) == 2
+
+    page = render_header(inputs(us_prices=merged, us_preview_dates=preview_dates))
+    assert "US 2026-08-05 (Tiingo 프리뷰)" in page
+
+
+def test_canonical_rows_win_where_both_vendors_cover_a_date():
+    """The one-vendor-per-series property survives the merge: the preview only
+    ever adds dates, never replaces Alpaca's rows."""
+    from src.report.render import merge_us_preview
+
+    canonical = _us_frame(["2026-08-04"], [770.00])
+    preview = _us_frame(["2026-08-04"], [770.01])
+
+    merged, _, _ = merge_us_preview(canonical, preview)
+    assert len(merged) == 1
+    assert float(merged.iloc[0]["close"]) == 770.00
+
+
+def test_vendor_disagreement_beyond_tolerance_is_flagged():
+    from src.report.render import merge_us_preview
+
+    canonical = _us_frame(["2026-08-04"], [770.0])
+    preview = _us_frame(["2026-08-04"], [780.0])  # 1.3% apart — adjustment-class
+
+    _, _, disagreements = merge_us_preview(canonical, preview)
+    assert len(disagreements) == 1
+    assert "SPY" in disagreements[0]
+
+    page = render_header(inputs(vendor_disagreements=disagreements))
+    assert "벤더 불일치" in page
+
+
+def test_the_measured_benign_difference_stays_silent():
+    """472.65 vs 472.66 — the rounding-class difference measured on 2024-01-02.
+    A line that fires on it would fire daily and train the reader to stop
+    looking, which defeats the check."""
+    from src.report.render import merge_us_preview
+
+    canonical = _us_frame(["2026-08-04"], [472.65])
+    preview = _us_frame(["2026-08-04"], [472.66])
+
+    _, _, disagreements = merge_us_preview(canonical, preview)
+    assert disagreements == []
+
+
+# --- step 11: the status handoff ------------------------------------------
+
+
+def _write_status(tmp_path, at: pd.Timestamp, collectors: dict) -> None:
+    directory = tmp_path / "status"
+    directory.mkdir(exist_ok=True)
+    payload = {"run": "evening", "at": at.isoformat(), "collectors": collectors}
+    (directory / f"evening-{at.strftime('%Y%m%dT%H%M%S')}.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+
+def test_a_fresh_status_file_feeds_the_header(tmp_path):
+    from src.report.render import read_status
+
+    _write_status(
+        tmp_path,
+        pd.Timestamp.now(tz="UTC"),
+        {
+            "kr_news": {
+                "ok": False,
+                "failures": [
+                    {"name": "feed_continuity", "detail": "etnews_economy lost 5.3h"},
+                    {"name": "fetch", "detail": "1 feed unreachable"},
+                ],
+            }
+        },
+    )
+
+    failures, gaps = read_status(tmp_path)
+    assert gaps == ["etnews_economy lost 5.3h"], "feed continuity is the news-loss signal"
+    assert failures == ["kr_news/fetch"]
+
+
+def test_per_ticker_check_failures_collapse_to_one_counted_entry(tmp_path):
+    """Hit on the first live run: a not-yet-open US session failed continuity
+    for all 48 tickers, and each would have been its own header item."""
+    from src.report.render import read_status
+
+    _write_status(
+        tmp_path,
+        pd.Timestamp.now(tz="UTC"),
+        {
+            "us_price_preview": {
+                "ok": False,
+                "failures": [
+                    {"name": f"trading_day_continuity[{t}]", "detail": "1 missing"}
+                    for t in ("SPY", "QQQ", "IWM")
+                ],
+            }
+        },
+    )
+
+    failures, _ = read_status(tmp_path)
+    assert failures == ["us_price_preview/trading_day_continuity×3"]
+
+
+def test_a_stale_status_file_is_ignored(tmp_path):
+    """Yesterday's gap re-printed today trains the reader to skip the line."""
+    from src.report.render import read_status
+
+    _write_status(
+        tmp_path,
+        pd.Timestamp.now(tz="UTC") - pd.Timedelta(2, "D"),
+        {"kr_news": {"ok": False, "failures": [{"name": "fetch", "detail": "x"}]}},
+    )
+    assert read_status(tmp_path) == ([], [])
+
+
+def test_no_status_directory_means_no_lines(tmp_path):
+    from src.report.render import read_status
+
+    assert read_status(tmp_path) == ([], [])
