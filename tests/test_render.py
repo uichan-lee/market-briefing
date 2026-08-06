@@ -366,30 +366,99 @@ def test_to_plain_text_strips_the_markers_mail_shows_literally():
 # --- step 11: run resolution ----------------------------------------------
 
 
-def test_evening_reports_on_the_session_that_closed_today():
+def test_evening_reports_on_the_session_that_closed_hours_earlier():
     from src.report.render import resolve_run
 
-    day, persist = resolve_run("evening", dt.date(2026, 8, 6))  # a Thursday
+    at = pd.Timestamp("2026-08-06 12:37", tz="UTC")  # 21:37 KST Thursday
+    day, persist = resolve_run("evening", at)
     assert day == dt.date(2026, 8, 6)
     assert persist, "the evening run is the canonical publication"
 
 
-def test_evening_on_a_holiday_falls_back_to_the_previous_session():
+def test_a_late_evening_run_does_not_ask_for_tomorrows_session():
+    """The 2026-08-06 incident. GitHub fired the 12:37 UTC evening run at
+    14:56 UTC — two hours nineteen late, the slippage SPEC §1 documents — so
+    the clock in Seoul read 00:00 on Friday the 7th. The old code asked for the
+    7th because it was a trading day; that session had not opened, every
+    feature was None, and thirty-one tickers published as 관망 at 0% coverage."""
     from src.report.render import resolve_run
 
-    day, _ = resolve_run("evening", dt.date(2026, 8, 9))  # a Sunday
+    at = pd.Timestamp("2026-08-06 15:00", tz="UTC")  # 00:00 KST Friday
+    day, _ = resolve_run("evening", at)
+    assert day == dt.date(2026, 8, 6), "must report on the session that actually closed"
+
+
+def test_a_run_during_the_session_reports_on_the_previous_one():
+    """Mid-session prices are provisional; rating on them would state a close
+    that has not happened."""
+    from src.report.render import resolve_run
+
+    at = pd.Timestamp("2026-08-06 02:00", tz="UTC")  # 11:00 KST, market open
+    day, _ = resolve_run("evening", at)
+    assert day == dt.date(2026, 8, 5)
+
+
+def test_a_weekend_run_reports_on_fridays_session():
+    from src.report.render import resolve_run
+
+    at = pd.Timestamp("2026-08-09 03:00", tz="UTC")  # Sunday noon KST
+    day, _ = resolve_run("evening", at)
     assert day == dt.date(2026, 8, 7)
 
 
-def test_morning_reports_on_yesterday_and_does_not_persist():
+def test_morning_reports_on_the_same_session_and_does_not_persist():
     """No KRX call happens between the evening and morning runs, so the
-    morning ratings are byte-identical to the evening ones — persisting them
-    would write a -v2 every day saying nothing."""
+    morning ratings are identical — persisting them would write a -v2 every
+    day saying nothing new."""
     from src.report.render import resolve_run
 
-    day, persist = resolve_run("morning", dt.date(2026, 8, 6))
-    assert day == dt.date(2026, 8, 5)
+    at = pd.Timestamp("2026-08-06 22:07", tz="UTC")  # 07:07 KST Friday
+    day, persist = resolve_run("morning", at)
+    assert day == dt.date(2026, 8, 6)
     assert not persist
+
+
+def test_an_unknown_run_is_rejected():
+    from src.report.render import resolve_run
+
+    with pytest.raises(ValueError, match="unknown run"):
+        resolve_run("midday", pd.Timestamp("2026-08-06 12:37", tz="UTC"))
+
+
+# --- the empty-features guard ---------------------------------------------
+
+
+def test_a_run_with_no_features_says_so_instead_of_rating_everything_hold():
+    """The half of the 2026-08-06 incident that made it invisible: an
+    all-관망 page and a no-data page looked identical, and the report opened
+    with '오늘은 전 종목이 관망입니다' as though that were a market view."""
+    from src.report.render import render_ratings
+
+    empty = {
+        ticker: rate(ticker, dict.fromkeys(RATING_CONFIG["weights"]), RATING_CONFIG)
+        for ticker in ("005930", "000660")
+    }
+    page = render_ratings(inputs(), empty)
+
+    assert "피처가 하나도 없어" in page
+    assert "오늘은 전 종목이" not in page
+    # No rating table: thirty-one rows of +0.00 are what made the broken run
+    # look like a finished one.
+    assert "005930" not in page
+    assert "전체 종목 등급" not in page
+
+
+def test_the_header_flags_a_session_with_no_features():
+    header = render_header(inputs(features=pd.DataFrame()))
+    assert "등급 계산 불가" in header
+
+
+def test_a_normal_run_keeps_the_ordinary_wording():
+    z = {"foreign_flow_5d": 2.0, "inst_flow_5d": 1.0, "short_ratio": -1.0}
+    result = rate("005930", z, RATING_CONFIG)
+    page = render_ratings(inputs(features=features_frame({"005930": z})), {"005930": result})
+    assert "피처가 하나도 없어" not in page
+    assert "관망이 아닌 종목" in page
 
 
 # --- step 11: the two US vendors ------------------------------------------

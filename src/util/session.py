@@ -193,6 +193,35 @@ def previous_trading_day(market: Market, day: dt.date) -> dt.date:
     return days[-1]
 
 
+def last_closed_session(market: Market, at: pd.Timestamp | dt.datetime) -> dt.date:
+    """The most recent session on ``market`` whose close has already passed.
+
+    "Which session does *now* have complete data for?" — the question every
+    scheduled run asks, and the one that must never be answered with today's
+    date just because today is a trading day.
+
+    The failure this exists to prevent was observed on 2026-08-06. The evening
+    report was scheduled for 12:37 UTC (21:37 KST) but GitHub fired it at
+    14:56 UTC, two hours and nineteen minutes late — the schedule slippage SPEC
+    §1 already documents. By the time it rendered, the clock in Seoul read
+    00:00 on the 7th, a Friday and therefore a trading day, so the renderer
+    asked for the 7th's session. That session had not opened. Every feature
+    came back ``None``, every ticker was rated 관망 at 0% coverage, and the
+    report said "오늘은 전 종목이 관망입니다" as though that were a finding.
+
+    Walking back one session at a time rather than subtracting a day: the gap
+    between two sessions is a weekend, a holiday, or a 지방선거일, and only the
+    calendar knows which.
+    """
+    at = to_utc(at)
+    day = to_kst(at).date() if market == "KR" else at.date()
+    for _ in range(_LOOKAHEAD_DAYS):
+        if is_trading_day(market, day) and at >= session_close_utc(market, day):
+            return day
+        day = previous_trading_day(market, day)
+    raise NoSessionFoundError(f"no closed {market} session within {_LOOKAHEAD_DAYS} days of {at}")
+
+
 def next_trading_day(market: Market, day: dt.date) -> dt.date:
     """Earliest trading day strictly after ``day``."""
     end = day + dt.timedelta(days=_LOOKAHEAD_DAYS)

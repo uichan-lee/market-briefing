@@ -38,7 +38,7 @@ from src.features.compute import FEATURES, z_scores_for
 from src.features.normalize import rolling_z
 from src.report.rating import Rating, RatingResult, rate
 from src.util.config import WatchlistEntry
-from src.util.session import to_kst
+from src.util.session import to_kst, to_utc
 
 # SPEC §2.2① — the transmission correlation window, in KR sessions.
 CORRELATION_WINDOW = 60
@@ -224,6 +224,17 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
         detail = f" — {', '.join(missing)} 부재" if missing else ""
         warnings.append(
             f"⚠ 등급 근거 충족도: {present:.2f}/{total:.2f} ({present / total:.0%}){detail}"
+        )
+
+    # An all-관망 page is a legitimate outcome and an empty-feature page is a
+    # failure, and they look identical to a reader. On 2026-08-06 the second
+    # was published as the first — thirty-one tickers rated 관망 at 0% coverage
+    # because the requested session had not opened — and nothing on the page
+    # said so. If no ticker has a single feature, the header says it outright.
+    if inputs.features.empty and inputs.watchlist:
+        warnings.append(
+            f"⚠ **등급 계산 불가: {inputs.day.isoformat()} 세션의 피처가 없습니다.** "
+            "아래 등급은 전부 근거 0%이며 시장에 대한 판단이 아닙니다"
         )
 
     absent = ", ".join(f"{key} {name}" for key, (name, _) in ABSENT_SECTIONS.items())
@@ -596,6 +607,23 @@ def render_ratings(inputs: ReportInputs, results: Mapping[str, RatingResult]) ->
 
     ordered = sorted(results.values(), key=lambda r: -abs(r.score))
     actionable = [r for r in ordered if r.rating is not Rating.HOLD]
+
+    # Every ticker at zero coverage means no feature reached rate() at all.
+    # That is a broken run, not a quiet market, and the section must not open
+    # with a sentence that reads like a market view.
+    if ordered and all(result.weight_coverage == 0 for result in ordered):
+        session = inputs.day.isoformat()
+        return "\n".join(
+            lines
+            + [
+                f"> ⚠ **{session} 세션의 피처가 하나도 없어 등급을 낼 수 없습니다.**",
+                ">",
+                "> 전 종목이 근거 0%로 `관망`이 되는데, 이건 시장이 조용하다는 뜻이 아니라 "
+                "**계산에 쓸 데이터가 없다**는 뜻입니다. 등급표는 생략합니다.",
+                "",
+            ]
+        )
+
     lines += [
         f"관망이 아닌 종목 **{len(actionable)}개** / 전체 {len(ordered)}개.",
         "",
@@ -1007,26 +1035,31 @@ def load_rating_history(root: Path) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-def resolve_run(run: str, reading_date: dt.date) -> tuple[dt.date, bool]:
+def resolve_run(run: str, at: pd.Timestamp) -> tuple[dt.date, bool]:
     """Which KR session a scheduled run reports on, and whether it persists ratings.
 
-    * ``evening`` (21:37 KST) — the session that closed today, or the previous
-      one on a holiday. This is the canonical publication: fresh KRX data
-      arrived minutes earlier, so its ratings are the ones ⑦ tracks.
-    * ``morning`` (07:07 KST) — the previous session; today's has not opened.
-      Its KR features are identical to the evening run's (no KRX call between
-      them), so persisting its ratings would write a duplicate ``-v2`` every
-      day saying nothing new.
-    """
-    from src.util.session import is_trading_day, previous_trading_day
+    Both runs report on **the last session whose close has passed**, which is
+    the only definition that survives a late start. Resolved from the running
+    clock rather than from a calendar date: the earlier version asked for
+    "today, if today is a trading day", and when GitHub fired the evening run
+    two hours and nineteen minutes late on 2026-08-06 the clock had rolled past
+    midnight in Seoul onto a Friday. It requested a session that had not
+    opened, found no features, and published thirty-one 관망 ratings at 0%
+    coverage. See :func:`src.util.session.last_closed_session`.
 
-    if run == "evening":
-        if is_trading_day("KR", reading_date):
-            return reading_date, True
-        return previous_trading_day("KR", reading_date), True
-    if run == "morning":
-        return previous_trading_day("KR", reading_date), False
-    raise ValueError(f"unknown run {run!r}")
+    * ``evening`` (21:37 KST) — normally the session that closed six hours
+      earlier. The canonical publication: fresh KRX data arrived minutes ago,
+      so its ratings are the ones ⑦ tracks.
+    * ``morning`` (07:07 KST) — the same session the evening run reported on,
+      since no KRX call happens between them. Its ratings would therefore be a
+      duplicate, so it does not persist them; what it adds is the overnight US
+      session, which is §2.2①'s subject.
+    """
+    from src.util.session import last_closed_session
+
+    if run not in {"morning", "evening"}:
+        raise ValueError(f"unknown run {run!r}")
+    return last_closed_session("KR", at), run == "evening"
 
 
 def build_summary(inputs: ReportInputs, results: Mapping[str, RatingResult]) -> str:
@@ -1234,7 +1267,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     reading_date = dt.date.fromisoformat(args.date) if args.date else to_kst(now).date()
 
     if args.run:
-        day, persist_ratings = resolve_run(args.run, reading_date)
+        # `--date` shifts the whole run, clock included, so a replay resolves
+        # the session the same way the live run would have.
+        at = now if not args.date else to_utc(f"{reading_date.isoformat()} 12:37")
+        day, persist_ratings = resolve_run(args.run, at)
         label: str | None = args.run
         as_of: pd.Timestamp | None = now
     else:

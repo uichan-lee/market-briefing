@@ -170,13 +170,23 @@ def test_kr_end_holds_back_the_session_still_trading():
     assert kr_end(after_close) == pd.Timestamp("2026-08-06").date()
 
 
-def test_kr_end_passes_a_weekend_through():
-    """No session exists on a Sunday, so nothing provisional can be stored and
-    the date needs no holding back — pykrx simply returns no Sunday rows."""
+def test_kr_end_on_a_weekend_is_fridays_session():
     from scripts.collect_daily import kr_end
 
     sunday = pd.Timestamp("2026-08-09 03:00", tz="UTC")
-    assert kr_end(sunday) == pd.Timestamp("2026-08-09").date()
+    assert kr_end(sunday) == pd.Timestamp("2026-08-07").date()
+
+
+def test_kr_end_and_the_renderer_agree():
+    """These were written separately and only the collector got the guard. On
+    2026-08-06 the renderer asked for a session that had not opened and
+    published thirty-one empty ratings; they now share one implementation."""
+    from scripts.collect_daily import kr_end
+    from src.report.render import resolve_run
+
+    for stamp in ("2026-08-06 02:00", "2026-08-06 12:37", "2026-08-06 15:00", "2026-08-09 03:00"):
+        at = pd.Timestamp(stamp, tz="UTC")
+        assert kr_end(at) == resolve_run("evening", at)[0], stamp
 
 
 # --- the status handoff ----------------------------------------------------

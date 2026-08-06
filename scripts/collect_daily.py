@@ -169,21 +169,29 @@ def write_daily(source: str, df: pd.DataFrame, *, directory: Path | None = None)
 def kr_end(at: pd.Timestamp) -> dt.date:
     """The newest end date safe to fetch KR data for.
 
-    Today is unsafe in exactly one case: it is a trading day and the session
-    has not closed yet. Fetching then would store a mid-session snapshot whose
-    ``known_at_utc`` claims the 15:30 close — a provisional number dressed as a
-    final one, which the look-ahead rule exists to forbid. The scheduled
-    evening run fires six hours after the close so this guard is normally
-    inert; it exists for early manual dispatches and local runs. A weekend or
-    holiday date passes through unchanged: no session exists on it, so there is
-    nothing provisional to store.
+    Thin wrapper over :func:`src.util.session.last_closed_session`, which the
+    renderer uses for the same question. Sharing it is the point: the two were
+    written separately, only the collector got the guard, and on 2026-08-06 the
+    renderer published thirty-one empty ratings because of the difference.
     """
-    from src.util.session import is_trading_day, previous_trading_day, session_close_utc
+    from src.util.session import last_closed_session
 
-    day = at.tz_convert("Asia/Seoul").date()
-    if is_trading_day("KR", day) and at < session_close_utc("KR", day):
-        return previous_trading_day("KR", day)
-    return day
+    return last_closed_session("KR", at)
+
+
+def us_end(at: pd.Timestamp) -> dt.date:
+    """The newest end date safe to fetch US data for.
+
+    At the scheduled morning run (22:07 UTC) the US session of that UTC date
+    has been closed for two hours, so today passes. The case this guards was
+    hit on the first local run: mid-UTC-day, today's US session had not even
+    opened, and the validator correctly reported all 48 tickers missing a
+    trading day that had not happened — 48 false failures headed for the
+    report header.
+    """
+    from src.util.session import last_closed_session
+
+    return last_closed_session("US", at)
 
 
 def collect_kr_price(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
@@ -215,24 +223,6 @@ def collect_us_price(start: dt.date, end: dt.date) -> tuple[str, ValidationRepor
     df, report = us_price_alpaca.fetch(symbols, start, end)
     new, revised = write_daily("us_price", df)
     return f"{len(df)} rows, {new} new / {revised} revised", report
-
-
-def us_end(at: pd.Timestamp) -> dt.date:
-    """The newest end date safe to fetch US data for — mirror of :func:`kr_end`.
-
-    At the scheduled morning run (22:07 UTC) the US session of that UTC date
-    has been closed for two hours, so today passes. The case this guards was
-    hit on the first local run: mid-UTC-day, today's US session had not even
-    opened, and the validator correctly reported all 48 tickers missing a
-    trading day that had not happened — 48 false failures headed for the
-    report header.
-    """
-    from src.util.session import is_trading_day, previous_trading_day, session_close_utc
-
-    day = at.tz_convert("America/New_York").date()
-    if is_trading_day("US", day) and at < session_close_utc("US", day):
-        return previous_trading_day("US", day)
-    return day
 
 
 def collect_us_preview(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
