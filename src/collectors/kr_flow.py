@@ -148,6 +148,17 @@ MISSING_THRESHOLDS = {
     "pbr": 0.20,
 }
 
+# The short-balance columns are judged only on sessions old enough that the
+# balance should have published. KRX discloses short balances on a lag —
+# measured 2026-08-06: the three most recent sessions carried no balance at
+# all, which is 43% of a daily 7-session window and would fail the 20%
+# threshold above *every single evening*. A check that fires daily is a check
+# nobody reads. The same missingness is 0.4% of a 3-year backfill, which is
+# why the backfill never surfaced it. Missing balances on sessions *older*
+# than the lag remain a real failure and still trip the threshold.
+SHORT_COLUMNS = ("short_balance", "short_ratio_pct")
+SHORT_LAG_SESSIONS = 3
+
 # Samsung Electronics' common shares outstanding on 2024-01-02. Published by
 # DART, Samsung IR and Naver Finance alike, and it moves only on an announced
 # issuance or buyback cancellation — so unlike a price it can be pinned.
@@ -274,9 +285,32 @@ def validate_frame(
     Continuity is per ticker: a frame holding several tickers has one row per
     ticker per session, and the aggregate would look duplicated.
     """
+    general = {k: v for k, v in MISSING_THRESHOLDS.items() if k not in SHORT_COLUMNS}
+    short = {k: v for k, v in MISSING_THRESHOLDS.items() if k in SHORT_COLUMNS}
+
+    # Short balances publish on a lag, so their completeness is judged only on
+    # settled sessions — see SHORT_LAG_SESSIONS. Everything else is judged on
+    # the whole frame.
+    settled = df
+    if not df.empty:
+        sessions = sorted(pd.to_datetime(df["date"]).dt.date.unique())
+        cutoff = set(sessions[-SHORT_LAG_SESSIONS:])
+        settled = df[~pd.to_datetime(df["date"]).dt.date.isin(cutoff)]
+
+    if settled.empty:
+        short_check = CheckResult(
+            "missing_ratio[settled_short]",
+            True,
+            f"no session older than the {SHORT_LAG_SESSIONS}-session publication lag to judge",
+        )
+    else:
+        inner = check_missing_ratio(settled, short)
+        short_check = CheckResult("missing_ratio[settled_short]", inner.passed, inner.detail)
+
     checks: list[CheckResult] = [
         check_schema(df, SCHEMA),
-        check_missing_ratio(df, MISSING_THRESHOLDS),
+        check_missing_ratio(df, general),
+        short_check,
         check_flow_identity(df),
     ]
 

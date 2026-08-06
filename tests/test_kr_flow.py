@@ -274,6 +274,36 @@ def test_the_identity_still_holds_across_a_halt(frames):
     assert kr_flow.check_flow_identity(merged).passed
 
 
+def test_short_balance_missing_only_on_recent_sessions_passes(merged):
+    """The daily-window case measured live on 2026-08-06: short balances
+    publish on a lag, so the newest sessions legitimately have none. A check
+    judging the whole frame failed 43% > 20% every evening — this one judges
+    only sessions old enough that the balance should exist."""
+    lagged = merged.copy()
+    sessions = sorted(lagged["date"].unique())
+    recent = sessions[-kr_flow.SHORT_LAG_SESSIONS :]
+    lagged.loc[lagged["date"].isin(recent), ["short_balance", "short_ratio_pct"]] = pd.NA
+
+    report = kr_flow.validate_frame(
+        lagged, ["005930"], dt.date(2024, 1, 2), dt.date(2024, 1, 19), known_value=False
+    )
+    settled = next(r for r in report.results if r.name == "missing_ratio[settled_short]")
+    assert settled.passed, settled.detail
+
+
+def test_short_balance_missing_on_settled_sessions_still_fails(merged):
+    """The lag exemption must not swallow a real gap in the interior."""
+    holed = merged.copy()
+    holed["short_balance"] = pd.NA
+    holed["short_ratio_pct"] = pd.NA
+
+    report = kr_flow.validate_frame(
+        holed, ["005930"], dt.date(2024, 1, 2), dt.date(2024, 1, 19), known_value=False
+    )
+    settled = next(r for r in report.results if r.name == "missing_ratio[settled_short]")
+    assert not settled.passed
+
+
 def test_missing_flows_on_a_traded_session_stay_null(frames):
     """The contrast case: absent flows where volume is non-zero is a real gap.
 
