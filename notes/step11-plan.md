@@ -43,8 +43,8 @@ on its own terms, not merely the safe one:
 
 | Run | KST | KR session state | Collects |
 |---|---|---|---|
-| `RUN_EVENING` | 21:30 | closed 15:30, final | `kr_price`, `kr_flow`, `macro` |
-| `RUN_MORNING` | 07:00 | not yet open | `us_price`, `macro` — **no KRX call** |
+| `RUN_EVENING` | 21:30 | closed 15:30, final | `kr_price`, `kr_flow`, `macro`, `us_price` (Alpaca, canonical) |
+| `RUN_MORNING` | 07:00 | not yet open | `us_price_preview` (Tiingo), `macro` — **no KRX call** |
 
 At 07:00 KST the KR session being reported on has not happened. Calling KRX then
 would spend 124 requests to re-fetch what the evening run already stored.
@@ -70,19 +70,53 @@ Tiingo behaves differently in kind: `end=2026-08-06` returned **empty**, not a
 yet — so it may well serve day D−1 at 22:00 UTC D−1. That cannot be tested at
 any other hour, so:
 
-**Probe first, decide after.** A single `workflow_dispatch` run at 22:00 UTC
-asking both vendors for that day's session settles it. Options, in the order
-they should be preferred:
+**Decided 2026-08-06: Tiingo serves the morning run, Alpaca the evening one.**
+Ricky's call, on the grounds that the briefing arriving before KOSPI opens is
+the point of the morning run.
 
-| | Option | Cost |
+### The two vendors are never mixed into one series
+
+The obvious implementation — write both vendors into `data/raw/us/price/` —
+would be wrong, and quietly. Measured on 2024-01-02, Alpaca's SIP close for SPY
+is **472.65** (agreeing with Yahoo) and Tiingo's is **472.66**. Alternating
+vendors by run would inject a spurious return at every switch, once a day, into
+the series that `rel_strength_20d` and the §2.2① correlations read. A dividend
+or split handled differently between vendors would inject far more than a cent.
+
+So the split is by path, not by row:
+
+| Path | Vendor | Read by |
 |---|---|---|
-| a | Tiingo serves the morning run, Alpaca the evening one | Two vendors on one path; the cross-check becomes load-bearing |
-| b | Move `RUN_MORNING` to 09:10 KST (00:10 UTC) | Fresh US data, but after KOSPI opens — loses SPEC's "2 hours before open" |
-| c | Keep 07:00, accept one stale US session | Guts §2.2① |
+| `data/raw/us/price/` | Alpaca only | **features, ratings, correlations** |
+| `data/raw/us/price_preview/` | Tiingo, morning only | header and §2.2① display of the session that just closed |
 
-**Regardless of the outcome, the header states the date of the US data it used.**
-That is the part which must not wait for the probe: a stale number that says so
-is a different thing from a stale number that does not.
+The evening run fetches that same session from Alpaca — by then the UTC day has
+rolled over, so the 403 does not apply — and that write is canonical. Tiingo
+never enters the feature path.
+
+**The cross-check is automatic and costs Ricky nothing.** When Alpaca supplies a
+date Tiingo already previewed, the two are compared. Agreement is silent;
+disagreement beyond tolerance becomes a header line:
+
+```
+⚠ 미국 시세 벤더 불일치: SPY 2026-08-05 Tiingo 769.79 vs Alpaca 769.78 (0.01%)
+```
+
+A line that appears every day would be noise nobody reads, which is why the
+tolerance exists; a line that appears rarely means one vendor changed its
+adjustment handling, which is worth knowing. This is what `us_price.py` being
+"kept as the cross-check" has meant since the Alpaca switch — it now has a job.
+
+**The header states the date of the US data it used**, whichever vendor supplied
+it. A stale number that says so is a different thing from a stale number that
+does not.
+
+The 22:00 UTC probe stays in verification: Tiingo returned *empty* rather than
+403 for the current UTC day, which suggests it has no policy restriction, but
+whether its EOD pipeline has published by two hours after the close is a fact
+about their operations that only that hour can settle. If it has not, the
+fallback is option (b) — move the morning run to 09:10 KST — and that is a
+schedule change, not a redesign.
 
 ### 3. GitHub drops scheduled runs
 
@@ -139,18 +173,26 @@ inventing a second approach.
 3. **`scripts/collect_daily.py` run locally for both markets**, against the real
    APIs, and the resulting parquet compared against the backfill's last day for
    schema and dtype agreement.
-4. **The 22:00 UTC vendor probe**, before the morning run's source is fixed.
-5. A report rendered from freshly collected data, read end to end.
-6. Email sent to the configured address and read on a phone — `body: summary`
+4. **The 22:00 UTC probe** — does Tiingo serve that day's session two hours
+   after the close? If not, the morning run moves to 09:10 KST.
+5. **The vendor comparison exercised on a real overlap**: Tiingo's preview of a
+   session against Alpaca's canonical write of the same session, confirming the
+   tolerance is neither so tight that it fires daily nor so loose that the
+   measured 472.65-vs-472.66 class of difference passes unnoticed.
+6. A report rendered from freshly collected data, read end to end.
+7. Email sent to the configured address and read on a phone — `body: summary`
    is a claim about legibility and cannot be verified from a test.
-7. Both workflows triggered by `workflow_dispatch` before either is left to its
+8. Both workflows triggered by `workflow_dispatch` before either is left to its
    schedule, and the push-race checked by running them at the same time.
-8. A deliberately broken collector (bad credential) run through the whole path,
+9. A deliberately broken collector (bad credential) run through the whole path,
    confirming the report still publishes and the header names the failure.
 
-## Open question for Ricky
+## Nothing is parked for Ricky in this step
 
-**Which option for the morning run's US source** — a, b, or c above. The probe
-in verification step 4 supplies the fact; the trade-off is a judgment about
-whether the briefing arriving before KOSPI opens matters more than its front
-page being current. Everything else in this step proceeds regardless.
+The one open question — the morning run's US source — was decided on 2026-08-06:
+Tiingo for the morning, Alpaca canonical, never mixed. The vendor comparison
+that follows from it is automatic and produces a header line only on
+disagreement; there is no new daily task.
+
+The two long-standing decisions (`rev_4w`'s source, the four-year backfill)
+remain parked in MANUAL-TASKS §11 and block nothing here.
