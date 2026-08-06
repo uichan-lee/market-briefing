@@ -13,7 +13,7 @@ Screen labels are quoted verbatim in Korean, because that is what the UI actuall
 
 ## Order of work
 
-Four collectors — `kr_price`, `kr_news`, `macro`, `us_price` — are built and running. One credential remains outstanding.
+Six collectors — `kr_price`, `kr_flow`, `kr_news`, `macro`, `us_price` (Tiingo) and `us_price_alpaca` — are built and running, and the three-year backfill they feed completed on 2026-08-06. One credential remains outstanding.
 
 | Credential | Status | Unblocks |
 |---|---|---|

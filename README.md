@@ -270,8 +270,8 @@ be checked against the repository rather than taken on trust.
 |---|---|---|
 | 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
-| 3 | Collectors + validation tests | ✅ 5 collectors, 370 offline tests, 9 live |
-| 4 | **3-year backfill into `data/raw/`** | **🟡 in progress** — macro (776), us_price (752), kr_price (728) done; kr_flow 244/728 |
+| 3 | Collectors + validation tests | ✅ 6 collectors, 370 offline tests, 9 live |
+| 4 | **3-year backfill into `data/raw/`** | ✅ macro (776), us_price (752), kr_price (728), kr_flow (728) |
 | 5 | Entity resolution + ambiguous ratio | ✅ 221/2,876 articles matched, **ambiguous 10.9%** (threshold 30%) |
 | 6 | Embedding pipeline (dedup + relevance) | ⬜ |
 | 7 | Golden set — 100 hand-labeled articles | ⬜ Ricky |
@@ -284,22 +284,32 @@ be checked against the repository rather than taken on trust.
 What is missing is the document at the end of it (step 10) and the LLM stages
 (6–8), which the rating does not need to produce a number.
 
-### Waiting on the backfill, not on code
+### The backfill is in and the z-scores are real
 
-Every feature currently computes to `NaN`, because a 252-session z-score needs
-257 sessions of flow history and `kr_flow` holds 244. Raw features populate
-correctly — `foreign_flow_5d` on 7,400 of 7,524 rows — so this is the backfill
-being unfinished rather than the module being wrong.
+`kr_flow` finished on 2026-08-06: **22,528 rows, 31 tickers, 728 sessions**
+spanning 2023-08-03 to 2026-08-03, with no missing values. The flow identity —
+foreign + institutional + retail + other-corporate net buying summing to zero,
+which is true by construction and is the cheapest detector of a mis-mapped
+investor column — holds on **every one of the 22,528 rows**.
 
-`scripts/backfill.py` is resumable; re-running continues where it stopped:
+With the history in place the features stopped being `NaN`:
 
-```bash
-uv run python scripts/backfill.py --years 3 --end 2026-08-03 --sources kr_flow
-```
+| feature | raw | z-scored |
+|---|---:|---:|
+| `foreign_flow_5d` | 22,383 | 14,067 |
+| `inst_flow_5d` | 22,383 | 14,067 |
+| `short_ratio` | 22,528 | 14,408 |
+| `rel_strength_20d` | 18,368 | 11,816 |
+| `valuation_band` | 0 | 0 |
 
-KRX throttles by address — roughly 250 requests earns an HTML error page for a
-few hours — and `kr_flow` costs 124 requests per year of history, so it lands
-over several windows.
+`valuation_band` is empty because it needs 756 sessions and the window holds 728
+— see the parked decisions below. 454910 carries 688 rows rather than 728
+because it listed in October 2023, which is history that does not exist rather
+than history that is missing.
+
+`scripts/backfill.py` stays resumable. KRX throttles by address — roughly 250
+requests earns an HTML error page for a few hours — and `kr_flow` costs 124
+requests per year of history, so a re-run lands over several windows.
 
 ### Two decisions parked for Ricky
 
@@ -313,12 +323,24 @@ absent, and `rate()` renormalizes.
 percentile and the window holds 728 — 28 short. Extending the backfill by a year
 turns it on. Weight 0.05.
 
-### Why step 9 came before steps 6–8
+### Why step 9 came before steps 6–8, and step 10 before them too
 
 `news_polarity` (0.20) is the only rating feature that needs an LLM. The five
 built at step 9 carry 0.75 of 1.10 total weight, above `min_weight_coverage:
 0.5`, so a real deterministic rating is reachable without the embedding
 pipeline, the golden set or the bake-off. That is why the order was inverted.
+
+The [2026-08-06 review](notes/review-2026-08-06.md) extended the same reasoning
+to step 10. PREREGISTRATION splits the two-week validation into metrics needing
+**steps 10–12** — pipeline integrity, data consistency, entity accuracy, whether
+the briefing is read — and metrics needing steps 6–8. Building the LLM stages
+first leaves that clock unstarted.
+
+It also closes a live defect. `check_feed_continuity` correctly detected that
+one feed (`etnews_economy`) had rolled 5.3 hours past the last stored article,
+and reported it into GitHub Actions logs that nothing reads. CLAUDE.md requires
+missing data to appear **in the report header, not only in logs** — so the
+header is what fixes it, and the header arrives with step 10.
 
 ---
 
