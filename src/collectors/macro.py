@@ -240,8 +240,14 @@ def _parse(observations: list[dict], name: str, series_id: str) -> pd.DataFrame:
     # Midnight UTC after the observation date, resolved forward to the next US
     # session open. Deriving it from that date's own session close would crash
     # on the FX series, which print on days NYSE is shut (see _WEEKEND note).
+    #
+    # ``Timedelta(1, "D")`` rather than ``Timedelta(days=1)``: the keyword form
+    # builds a NumPy timedelta with no unit, which NumPy has deprecated and says
+    # it will make an error. Measured on pandas 2.3.3 / numpy 2.5.1 — the
+    # keyword form warns, the positional form with an explicit unit does not.
+    # Same value either way; this one is future-proof.
     df["known_at_utc"] = [
-        next_tradeable_open("US", pd.Timestamp(d.date(), tz="UTC") + pd.Timedelta(days=1))
+        next_tradeable_open("US", pd.Timestamp(d.date(), tz="UTC") + pd.Timedelta(1, "D"))
         for d in df["date"]
     ]
     return df[list(SCHEMA)]
