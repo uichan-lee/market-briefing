@@ -1,8 +1,8 @@
 """Three-year historical backfill into ``data/raw/``. SPEC §12 step 4.
 
-    uv run python scripts/backfill.py --years 3
-    uv run python scripts/backfill.py --sources us_price macro
-    uv run python scripts/backfill.py --sources kr_price kr_flow   # resume
+    uv run python -m scripts.backfill --years 3
+    uv run python -m scripts.backfill --sources us_price macro
+    uv run python -m scripts.backfill --sources kr_price kr_flow   # resume
 
 Writes the layout SPEC §3.3 specifies — one parquet per source per session date
 — so a backfilled day and a day the daily pipeline collects are indistinguishable
