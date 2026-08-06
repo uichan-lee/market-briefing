@@ -21,6 +21,10 @@ channels:
   - type: email
     to: "rickylee7185@gmail.com"
     from: "marketbriefing.0803@gmail.com" # dedicated account, created 2026-08-03
+    # Host and port are config, not code defaults: a wrong value here is
+    # reviewable in a diff, the same assumption buried in the adapter is not.
+    host: smtp.gmail.com
+    port: 465 # SSL from the first byte; 587/STARTTLS is the other Gmail door
     smtp_secret: SMTP_PASSWORD
     body: summary # summary | full
 

@@ -38,8 +38,12 @@ class Channel(Protocol):
 
     name: str
 
-    def send(self, report: str, *, day: dt.date) -> DeliveryResult:
-        """Deliver ``report``. Records failure in the result, never raises."""
+    def send(self, report: str, *, day: dt.date, label: str | None = None) -> DeliveryResult:
+        """Deliver ``report``. Records failure in the result, never raises.
+
+        ``label`` distinguishes the two SPEC §1 runs of one day ("morning" /
+        "evening") so they do not claim the same destination.
+        """
         ...
 
 
@@ -56,10 +60,11 @@ class UnknownChannel(ValueError):
 def channel_for(config: Mapping[str, Any], *, root: Path | None = None) -> Channel:
     """Build the adapter one ``delivery.yaml`` entry describes.
 
-    ``email`` and ``webhook`` are declared in SPEC §2.0 and are not built yet;
-    they raise here rather than being silently dropped, so a report configured
-    to reach a mailbox never appears to have been delivered when it was not.
+    ``webhook`` is declared in SPEC §2.0 and deliberately not built; it raises
+    here rather than being silently dropped, so a report configured to reach a
+    destination never appears to have been delivered when it was not.
     """
+    from src.notify.email import EmailChannel
     from src.notify.vault import VaultChannel
 
     kind = config.get("type")
@@ -69,8 +74,22 @@ def channel_for(config: Mapping[str, Any], *, root: Path | None = None) -> Chann
             commit=bool(config.get("commit", False)),
             root=root,
         )
-    if kind in {"email", "webhook"}:
-        raise UnknownChannel(f"channel {kind!r} is declared in delivery.yaml but not built yet")
+    if kind == "email":
+        try:
+            return EmailChannel(
+                to=config["to"],
+                sender=config["from"],
+                host=config["host"],
+                port=int(config["port"]),
+                secret_env=str(config.get("smtp_secret", "SMTP_PASSWORD")),
+                body=str(config.get("body", "summary")),
+            )
+        except KeyError as exc:
+            # A half-configured channel must fail loudly at build time, not
+            # send to a default host nobody chose.
+            raise UnknownChannel(f"email channel is missing {exc} in delivery.yaml") from exc
+    if kind == "webhook":
+        raise UnknownChannel("channel 'webhook' is declared in delivery.yaml but not built yet")
     raise UnknownChannel(f"unknown channel type {kind!r}")
 
 
@@ -97,6 +116,8 @@ def deliver(
     channels: list[Mapping[str, Any]],
     *,
     day: dt.date,
+    label: str | None = None,
+    summary: str | None = None,
     root: Path | None = None,
 ) -> list[DeliveryResult]:
     """Send ``report`` through every configured channel.
@@ -104,6 +125,12 @@ def deliver(
     One channel failing does not stop the others, and a channel that cannot be
     built is reported as a failed delivery rather than omitted from the list —
     the caller needs to see that it was configured and did not happen.
+
+    ``summary`` is the short form for channels whose config says
+    ``body: summary``. The routing lives here rather than in the adapters so a
+    channel never has to know the document's structure — it sends what it is
+    handed. When no summary was built, every channel gets the full report; a
+    shortened copy nobody asked for would be a silent truncation.
     """
     results: list[DeliveryResult] = []
     for config in channels:
@@ -113,5 +140,7 @@ def deliver(
         except UnknownChannel as exc:
             results.append(DeliveryResult(kind, False, str(exc)))
             continue
-        results.append(adapter.send(report, day=day))
+        wants_summary = getattr(adapter, "body", "full") == "summary" and summary is not None
+        content = summary if wants_summary else report
+        results.append(adapter.send(content, day=day, label=label))
     return results

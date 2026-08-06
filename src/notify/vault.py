@@ -36,11 +36,14 @@ class VaultChannel:
         self.commit = commit
         self.root = root or Path()
 
-    def target(self, day: dt.date) -> Path:
-        return self.root / self.path / f"{day.isoformat()}.md"
+    def target(self, day: dt.date, label: str | None = None) -> Path:
+        # The label keeps the two SPEC §1 runs of one day from claiming the
+        # same file — the morning briefing must not replace the evening one.
+        stem = f"{day.isoformat()}-{label}" if label else day.isoformat()
+        return self.root / self.path / f"{stem}.md"
 
-    def send(self, report: str, *, day: dt.date) -> DeliveryResult:
-        target = self.target(day)
+    def send(self, report: str, *, day: dt.date, label: str | None = None) -> DeliveryResult:
+        target = self.target(day, label)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(report, encoding="utf-8")
