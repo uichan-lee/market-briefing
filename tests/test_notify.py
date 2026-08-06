@@ -139,6 +139,38 @@ def test_summary_goes_to_summary_channels_and_the_vault_keeps_the_full_text(tmp_
     assert _RecordingSMTP.last.messages[0].get_content().strip() == "SUMMARY"
 
 
+def test_the_email_carries_an_html_alternative(monkeypatch):
+    """Markdown is a source format, not a wire format. Sent as text/plain it
+    arrived on Ricky's phone as literal `**bold**` and `|---|` rows."""
+    monkeypatch.setenv("SMTP_PASSWORD", "app-password")
+    monkeypatch.setattr(smtplib, "SMTP_SSL", _RecordingSMTP)
+
+    channel_for(EMAIL_CONFIG).send("plain body", day=DAY, html="<p>rich</p>")
+
+    message = _RecordingSMTP.last.messages[0]
+    assert message.is_multipart()
+    subtypes = [part.get_content_subtype() for part in message.iter_parts()]
+    assert subtypes == ["plain", "html"], "html must come last so clients prefer it"
+
+
+def test_the_html_alternative_only_goes_to_summary_channels(tmp_path, monkeypatch):
+    """The vault stores markdown for Obsidian, which renders it natively."""
+    monkeypatch.setenv("SMTP_PASSWORD", "app-password")
+    monkeypatch.setattr(smtplib, "SMTP_SSL", _RecordingSMTP)
+
+    deliver(
+        "FULL",
+        [{"type": "vault", "path": "reports/"}, EMAIL_CONFIG],
+        day=DAY,
+        summary="SHORT",
+        summary_html="<p>SHORT</p>",
+        root=tmp_path,
+    )
+
+    assert (tmp_path / "reports" / "2026-08-06.md").read_text(encoding="utf-8") == "FULL"
+    assert _RecordingSMTP.last.messages[0].is_multipart()
+
+
 def test_without_a_summary_every_channel_gets_the_full_report(tmp_path, monkeypatch):
     """A shortened copy nobody built would be a silent truncation."""
     monkeypatch.setenv("SMTP_PASSWORD", "app-password")

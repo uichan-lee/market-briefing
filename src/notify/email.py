@@ -43,7 +43,14 @@ class EmailChannel:
         self.secret_env = secret_env
         self.body = body
 
-    def send(self, report: str, *, day: dt.date, label: str | None = None) -> DeliveryResult:
+    def send(
+        self,
+        report: str,
+        *,
+        day: dt.date,
+        label: str | None = None,
+        html: str | None = None,
+    ) -> DeliveryResult:
         password = os.environ.get(self.secret_env, "")
         if not password:
             # A missing secret is a delivery failure, not a crash: the vault
@@ -58,7 +65,14 @@ class EmailChannel:
         message["Subject"] = first_line or f"마켓 브리핑 {day.isoformat()}"
         message["From"] = self.sender
         message["To"] = self.to
+
+        # Plain text first, HTML as the alternative: mail clients show the last
+        # part they can render. Sending markdown as text/plain delivered literal
+        # `**bold**` and `|---|` rows to Ricky's phone on 2026-08-06 — markdown
+        # is a source format, not a wire format.
         message.set_content(report)
+        if html:
+            message.add_alternative(html, subtype="html")
 
         try:
             with smtplib.SMTP_SSL(self.host, self.port, timeout=30) as smtp:

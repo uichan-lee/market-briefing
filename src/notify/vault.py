@@ -42,7 +42,17 @@ class VaultChannel:
         stem = f"{day.isoformat()}-{label}" if label else day.isoformat()
         return self.root / self.path / f"{stem}.md"
 
-    def send(self, report: str, *, day: dt.date, label: str | None = None) -> DeliveryResult:
+    def send(
+        self,
+        report: str,
+        *,
+        day: dt.date,
+        label: str | None = None,
+        html: str | None = None,
+    ) -> DeliveryResult:
+        # `html` is ignored deliberately: the vault is read by Obsidian, which
+        # renders markdown natively, so the source form is the better artefact.
+        del html
         target = self.target(day, label)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)

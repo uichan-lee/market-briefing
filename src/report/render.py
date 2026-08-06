@@ -170,19 +170,20 @@ def _change_over(series: pd.Series, window: int) -> float | None:
 # --- header ---------------------------------------------------------------
 
 
-def render_header(inputs: ReportInputs) -> str:
-    """SPEC §2.1. Every degradation of the briefing is stated here.
+def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
+    """The header's content as data: (title, market line, warning lines).
 
-    The order is deliberate: what the reader can act on first, then everything
-    that makes today's briefing less complete than it should be. A reader who
-    stops after the header still knows what the document is not telling them.
+    Extracted so the markdown page and the HTML email state the *same* facts.
+    Two renderers each assembling the header from scratch would drift, and the
+    header is the one part of the briefing that must never be wrong about what
+    the briefing does not know.
     """
     # Titled with the *reading* moment, not the session date. The morning run
     # reads on day D+1 about session D; a title saying D reads as yesterday's
     # mail. Which sessions the numbers come from is the 데이터 기준 line's job.
     kst = to_kst(inputs.as_of)
     weekday = _WEEKDAY_KO[kst.weekday()]
-    lines = [f"# 📅 {kst:%Y-%m-%d} ({weekday}) {kst:%H:%M} KST 브리핑", ""]
+    title = f"📅 {kst:%Y-%m-%d} ({weekday}) {kst:%H:%M} KST 브리핑"
 
     market = []
     for symbol, label in (("SPY", "S&P 500"), ("QQQ", "NASDAQ"), ("SMH", "SOX")):
@@ -192,10 +193,8 @@ def render_header(inputs: ReportInputs) -> str:
     if level is not None:
         change = usdkrw.dropna().pct_change().iloc[-1] if len(usdkrw.dropna()) > 1 else None
         market.append(f"USDKRW {level:,.0f} ({_fmt_pct(change, digits=1)})")
-    if market:
-        lines += [" | ".join(market), ""]
 
-    warnings = []
+    warnings: list[str] = []
 
     # Which sessions the numbers actually come from — required by the step 11
     # plan: a stale number that says so is a different thing from a stale
@@ -227,7 +226,7 @@ def render_header(inputs: ReportInputs) -> str:
             f"⚠ 등급 근거 충족도: {present:.2f}/{total:.2f} ({present / total:.0%}){detail}"
         )
 
-    absent = ", ".join(f"{key} {title}" for key, (title, _) in ABSENT_SECTIONS.items())
+    absent = ", ".join(f"{key} {name}" for key, (name, _) in ABSENT_SECTIONS.items())
     warnings.append(f"⚠ 미구현 섹션: {absent}")
 
     if inputs.ambiguous_ratio is not None:
@@ -241,8 +240,21 @@ def render_header(inputs: ReportInputs) -> str:
             f"(기사 {inputs.articles_seen:,}건){note}"
         )
 
-    lines += warnings + [""]
-    return "\n".join(lines)
+    return title, " | ".join(market), warnings
+
+
+def render_header(inputs: ReportInputs) -> str:
+    """SPEC §2.1, as markdown. Every degradation of the briefing is stated here.
+
+    The order is deliberate: what the reader can act on first, then everything
+    that makes today's briefing less complete than it should be. A reader who
+    stops after the header still knows what the document is not telling them.
+    """
+    title, market, warnings = header_facts(inputs)
+    lines = [f"# {title}", ""]
+    if market:
+        lines += [market, ""]
+    return "\n".join(lines + warnings + [""])
 
 
 def _weight_coverage(inputs: ReportInputs) -> tuple[float, float, list[str]] | None:
@@ -1027,6 +1039,168 @@ def build_summary(inputs: ReportInputs, results: Mapping[str, RatingResult]) -> 
     return "\n".join([render_header(inputs), render_ratings(inputs, results)])
 
 
+# --- the HTML email body ---------------------------------------------------
+#
+# Generated directly rather than converted from the markdown above. Markdown in
+# an email arrives as literal `**bold**`, `|---|` and `<details>` text — Ricky's
+# phone showed exactly that on 2026-08-06 — and parsing it back would mean a
+# dependency plus a parser to keep correct. The facts come from `header_facts`
+# and the `RatingResult` objects, so both forms state the same thing.
+#
+# Styling is inline: Gmail strips <style> blocks in some clients. Colours follow
+# the Korean convention (red up, blue down) and are chosen to stay legible on
+# both light and dark backgrounds, since the reader's client picks one and the
+# message cannot know which.
+
+_UP = "#e05252"
+_DOWN = "#4a9eff"
+_MUTED = "#8a8a8a"
+
+
+def _esc(text: object) -> str:
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _rating_color(result: RatingResult) -> str:
+    if result.rating is Rating.HOLD:
+        return _MUTED
+    return _UP if result.score > 0 else _DOWN
+
+
+def build_summary_html(inputs: ReportInputs, results: Mapping[str, RatingResult]) -> str:
+    """The same summary as HTML, for the email channel."""
+    title, market, warnings = header_facts(inputs)
+    names = {entry.ticker: (entry.name or "") for entry in inputs.watchlist}
+    limit = int(inputs.rating_config.get("confidence", {}).get("max_rationale_terms", 4))
+
+    out = [
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',"
+        "'Malgun Gothic',sans-serif;font-size:15px;line-height:1.55;max-width:680px\">",
+        f'<h2 style="margin:0 0 4px;font-size:19px;">{_esc(title)}</h2>',
+    ]
+    if market:
+        out.append(f'<div style="font-size:14px;margin-bottom:12px;">{_esc(market)}</div>')
+
+    if warnings:
+        out.append(
+            '<div style="border-left:3px solid #999;padding:8px 12px;margin:0 0 18px;'
+            'font-size:13px;">' + "<br>".join(_esc(line) for line in warnings) + "</div>"
+        )
+
+    ordered = sorted(results.values(), key=lambda r: -abs(r.score))
+    actionable = [r for r in ordered if r.rating is not Rating.HOLD]
+
+    out.append(
+        f'<p style="margin:0 0 12px;"><b>관망이 아닌 종목 {len(actionable)}개</b> '
+        f"/ 전체 {len(ordered)}개</p>"
+    )
+
+    for result in actionable:
+        color = _rating_color(result)
+        out.append(
+            f'<div style="margin:0 0 14px;padding:10px 12px;border:1px solid #ccc;'
+            f'border-radius:6px;">'
+            f'<div style="font-size:16px;margin-bottom:6px;">'
+            f"<b>{_esc(result.ticker)} {_esc(names.get(result.ticker, ''))}</b> "
+            f'<span style="color:{color};font-weight:bold;">{_esc(result.rating)} '
+            f"({result.score:+.2f})</span></div>"
+        )
+        rows = []
+        for contribution in result.rationale(limit):
+            label = _FEATURE_LABEL_KO.get(contribution.feature, contribution.feature)
+            sign = _UP if contribution.value > 0 else _DOWN
+            rows.append(
+                f'<tr><td style="padding:1px 10px 1px 0;">{_esc(label)}</td>'
+                f'<td style="padding:1px 10px 1px 0;text-align:right;">'
+                f"z={contribution.z_score:+.2f}</td>"
+                f'<td style="padding:1px 0;text-align:right;color:{sign};">'
+                f"{contribution.value:+.3f}</td></tr>"
+            )
+        subtotal = sum(c.value for c in result.contributions)
+        dropped = len(result.contributions) - len(result.rationale(limit))
+        if dropped > 0:
+            residual = subtotal - sum(c.value for c in result.rationale(limit))
+            rows.append(
+                f'<tr><td style="padding:1px 10px 1px 0;">그 외 {dropped}개</td>'
+                f'<td></td><td style="padding:1px 0;text-align:right;">{residual:+.3f}</td></tr>'
+            )
+        out.append(
+            '<table style="border-collapse:collapse;font-size:13px;width:100%;">'
+            + "".join(rows)
+            + "</table>"
+        )
+        if result.weight_coverage < 1.0:
+            out.append(
+                f'<div style="font-size:12px;color:{_MUTED};margin-top:6px;">'
+                f"소계 {subtotal:+.3f} ÷ 근거 충족도 {result.weight_coverage:.0%} "
+                f"= <b>{result.score:+.2f}</b></div>"
+            )
+        out.append("</div>")
+
+    if not actionable:
+        out.append("<p>오늘은 전 종목이 <b>관망</b>입니다.</p>")
+
+    out.append('<p style="margin:18px 0 6px;"><b>전체 종목</b></p>')
+    out.append(
+        '<table style="border-collapse:collapse;font-size:13px;width:100%;">'
+        '<tr style="border-bottom:1px solid #999;">'
+        '<th style="text-align:left;padding:3px 8px 3px 0;">종목</th>'
+        '<th style="text-align:left;padding:3px 8px 3px 0;">등급</th>'
+        '<th style="text-align:right;padding:3px 8px 3px 0;">점수</th>'
+        '<th style="text-align:right;padding:3px 0;">근거</th></tr>'
+    )
+    for result in ordered:
+        color = _rating_color(result)
+        shown_name = _esc(names.get(result.ticker) or result.ticker)
+        out.append(
+            f'<tr style="border-bottom:1px solid #3a3a3a20;">'
+            f'<td style="padding:3px 8px 3px 0;">{shown_name}</td>'
+            f'<td style="padding:3px 8px 3px 0;color:{color};">{_esc(result.rating)}</td>'
+            f'<td style="padding:3px 8px 3px 0;text-align:right;">{result.score:+.2f}</td>'
+            f'<td style="padding:3px 0;text-align:right;color:{_MUTED};">'
+            f"{result.weight_coverage:.0%}</td></tr>"
+        )
+    out.append("</table>")
+
+    out.append(
+        f'<p style="font-size:12px;color:{_MUTED};margin-top:18px;">'
+        "등급은 <code>config/rating.yaml</code>의 가중합으로 <b>계산</b>됩니다. "
+        "LLM이 등급이나 그 근거를 쓰는 일은 없습니다. "
+        "이 문서는 매매를 실행하지 않습니다.</p>"
+    )
+    out.append("</div>")
+    return "\n".join(out)
+
+
+def to_plain_text(markdown: str) -> str:
+    """Strip the markdown markers that arrive as literal characters in mail.
+
+    The text/plain alternative, shown by clients that refuse HTML. Not a full
+    converter — it removes exactly the markers this renderer emits.
+    """
+    lines = []
+    for raw in markdown.splitlines():
+        line = raw.replace("**", "").replace("`", "")
+        stripped = line.strip()
+        if stripped.startswith("<") and stripped.endswith(">"):
+            continue  # <details>/<summary> tags
+        if set(stripped) <= set("|-: ") and "|" in stripped:
+            continue  # table rule rows
+        if stripped.startswith("#"):
+            line = line.lstrip("# ").strip()
+        if "|" in line:
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            line = "  ".join(cell for cell in cells if cell)
+        lines.append(line.replace("_", ""))
+    return "\n".join(lines)
+
+
 def _failure_notice(run: str, reading_date: dt.date, detail: str) -> str:
     return (
         f"# ⚠ 브리핑 생성 실패 — {reading_date.isoformat()} {run}\n\n"
@@ -1087,7 +1261,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"ratings  {written}")
 
         report = render(inputs, rating_history=load_rating_history(root))
-        summary = build_summary(inputs, results)
+        summary = to_plain_text(build_summary(inputs, results))
+        summary_html = build_summary_html(inputs, results)
     except Exception as exc:  # noqa: BLE001 - the notice is the point: no report may pass silently
         traceback.print_exc()
         notice = _failure_notice(args.run or "manual", reading_date, f"{type(exc).__name__}: {exc}")
@@ -1100,7 +1275,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(report)
         return 0
 
-    for result in deliver(report, channels, day=reading_date, label=label, summary=summary):
+    for result in deliver(
+        report,
+        channels,
+        day=reading_date,
+        label=label,
+        summary=summary,
+        summary_html=summary_html,
+    ):
         print(result)
     return 0
 

@@ -311,6 +311,58 @@ def test_the_footer_states_that_nothing_is_executed():
     assert "매매를 실행하지 않습니다" in page
 
 
+# --- the email body --------------------------------------------------------
+
+
+def test_the_html_summary_carries_no_markdown_markers():
+    """The defect this fixes: `**bold**`, `|---|` and `<details>` arrived as
+    literal characters in the inbox."""
+    from src.report.render import build_summary_html
+
+    z = {"foreign_flow_5d": 2.0, "inst_flow_5d": 1.0, "short_ratio": -1.0}
+    result = rate("005930", z, RATING_CONFIG)
+    html = build_summary_html(inputs(features=features_frame({"005930": z})), {"005930": result})
+
+    assert "**" not in html
+    assert "|---" not in html
+    assert "<details>" not in html
+    assert "<table" in html and "</table>" in html
+
+
+def test_the_html_summary_states_the_same_header_facts_as_the_page():
+    """Two renderers assembling the header separately would drift, and the
+    header is the part that must never be wrong about what is missing."""
+    from src.report.render import build_summary_html, header_facts
+
+    source = inputs(news_gaps=["etnews_economy 5.3시간"], ambiguous_ratio=0.087, articles_seen=846)
+    _, _, warnings = header_facts(source)
+    html = build_summary_html(source, {})
+
+    for line in warnings:
+        assert line in html, f"header line missing from the email: {line}"
+
+
+def test_html_escapes_a_name_containing_markup():
+    from src.report.render import build_summary_html
+
+    source = inputs(watchlist=[WatchlistEntry("005930", "A<b>&C", "반도체", False, "KR")])
+    result = rate("005930", {"foreign_flow_5d": 2.0}, RATING_CONFIG)
+    html = build_summary_html(source, {"005930": result})
+    assert "A&lt;b&gt;&amp;C" in html
+    assert "A<b>&C" not in html
+
+
+def test_to_plain_text_strips_the_markers_mail_shows_literally():
+    from src.report.render import to_plain_text
+
+    markdown = "# 제목\n\n- 소계 **+0.237** ÷ 충족도\n\n| 종목 | 등급 |\n|---|---|\n| 005930 | 매수 |\n<details>"
+    plain = to_plain_text(markdown)
+
+    assert "**" not in plain and "|---" not in plain
+    assert "<details>" not in plain
+    assert "제목" in plain and "005930  매수" in plain
+
+
 # --- step 11: run resolution ----------------------------------------------
 
 

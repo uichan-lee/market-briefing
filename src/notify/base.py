@@ -38,11 +38,20 @@ class Channel(Protocol):
 
     name: str
 
-    def send(self, report: str, *, day: dt.date, label: str | None = None) -> DeliveryResult:
+    def send(
+        self,
+        report: str,
+        *,
+        day: dt.date,
+        label: str | None = None,
+        html: str | None = None,
+    ) -> DeliveryResult:
         """Deliver ``report``. Records failure in the result, never raises.
 
         ``label`` distinguishes the two SPEC §1 runs of one day ("morning" /
-        "evening") so they do not claim the same destination.
+        "evening") so they do not claim the same destination. ``html`` is an
+        optional rendered alternative for channels that display rich text;
+        channels that store a file ignore it and keep the markdown source.
         """
         ...
 
@@ -118,6 +127,7 @@ def deliver(
     day: dt.date,
     label: str | None = None,
     summary: str | None = None,
+    summary_html: str | None = None,
     root: Path | None = None,
 ) -> list[DeliveryResult]:
     """Send ``report`` through every configured channel.
@@ -142,5 +152,6 @@ def deliver(
             continue
         wants_summary = getattr(adapter, "body", "full") == "summary" and summary is not None
         content = summary if wants_summary else report
-        results.append(adapter.send(content, day=day, label=label))
+        html = summary_html if wants_summary else None
+        results.append(adapter.send(content, day=day, label=label, html=html))
     return results
