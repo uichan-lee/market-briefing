@@ -270,7 +270,7 @@ be checked against the repository rather than taken on trust.
 |---|---|---|
 | 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
-| 3 | Collectors + validation tests | ✅ 6 collectors, 370 offline tests, 9 live |
+| 3 | Collectors + validation tests | ✅ 6 collectors, 437 offline tests, 9 live |
 | 4 | **3-year backfill into `data/raw/`** | ✅ macro (776), us_price (752), kr_price (728), kr_flow (728) |
 | 5 | Entity resolution + ambiguous ratio | ✅ 221/2,876 articles matched, **ambiguous 10.9%** (threshold 30%) |
 | 6 | Embedding pipeline (dedup + relevance) | ⬜ |
@@ -278,8 +278,9 @@ be checked against the repository rather than taken on trust.
 | 8 | Model adapter + bake-off | ⬜ |
 | 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |
 | 10 | Report renderer + delivery | ✅ vault + email live; first real briefing rendered 2026-08-06 |
-| 11 | Daily collection + report workflow | ✅ built and verified locally; **cloud dispatch unverified** |
-| 12–13 | Schedule burn-in → two-week gate | ⬜ the two-week clock starts at the first scheduled cloud run |
+| 11 | Daily collection + report workflow | ✅ **full cloud round trip 2026-08-06** — 5 collectors, render, email, commit |
+| 12 | Schedule burn-in | 🟡 **in progress** — cron has not fired on its own yet |
+| 13 | Two-week gate | ⬜ starts once step 12 is stable |
 
 **The whole deterministic path now exists — collect, resolve, compute, rate.**
 What is missing is the document at the end of it (step 10) and the LLM stages
