@@ -26,6 +26,19 @@ data/raw/*
 data/raw/kr/*
 !data/raw/kr/news/
 
+# Published ratings, one parquet per run (SPEC §2.2⑥, feeding ⑦'s shadow P&L).
+#
+# A weaker exception than news, and stated as such. A rating is reproducible in
+# principle — it is a function of data/raw and config/rating.yaml, both of which
+# are versioned — so nothing is permanently lost the way an uncollected hour is.
+# What is lost is cheapness: config/rating.yaml gets calibrated later
+# (MANUAL-TASKS §6), so reproducing what was actually published on a past day
+# means checking out that day's config and replaying. PREREGISTRATION evaluates
+# the ratings this system published, and that record should be readable
+# directly rather than reconstructed by git archaeology. Written here rather
+# than in reports/ so the Obsidian vault stays readable documents only.
+!data/ratings/
+
 # Python
 __pycache__/
 *.pyc
