@@ -96,12 +96,35 @@ feeds:
     domain: etnews.com
     enabled: true
 
-  - name: etnews_economy
-    outlet: 전자신문
-    section: 경제
-    url: https://rss.etnews.com/Section902.xml
-    domain: etnews.com
-    enabled: true
+  # Section902 was removed on 2026-08-07. It was declared `section: 경제` and was
+  # not one — the feed's own title is 속보, and it ran everything: a school
+  # shooting in Thailand and a musical's teaser poster sat between two earnings
+  # releases. Same failure as the site-wide 조선비즈 feed below, found the same
+  # way.
+  #
+  # It was also the single worst thing in the collector, and the numbers are
+  # worth keeping because they were expensive to get:
+  #
+  #   - Watchlist match rate 4.0% (224 articles, 9 matched) against a 7.0%
+  #     corpus average and 9.4% for Section901. About 3.6 useful articles a day.
+  #   - Thirty items spanning 1.2 hours — by far the fastest-rolling feed, and
+  #     the only reason MAX_COLLECTION_GAP's two hours was above a real buffer.
+  #     Without it the fastest is yna_industry at 6.5h.
+  #   - 11 of its 30 items were already arriving via Section901.
+  #   - Every observed news loss came from this feed. It is the only feed ever
+  #     named in a `feed_continuity` failure, including the 13.6h lost overnight
+  #     on 2026-08-07 when GitHub dropped eight consecutive scheduled runs.
+  #
+  # Adding a third 전자신문 feed was considered as a safety net and measured
+  # instead: every etnews hostname resolves to 112.175.235.196, so the outages
+  # are host-level and all its feeds black out together — the two always failed
+  # in the same runs, ten of thirty. Of the only other two RSS URLs the site
+  # offers, Section904 was byte-identical to Section901 (30 of 30 links) and
+  # Section903 shared zero links with either and lagged eight hours. There is no
+  # redundancy to buy inside etnews.
+  #
+  # Section901 stays: 9.4% match rate, and its 7.9h buffer means a failed run is
+  # recovered by the next one rather than lost.
 
   # Replaced the site-wide 조선비즈 feed on 2026-08-05. That one was declared
   # `section: 전체` and lived up to it: of 100 items, 36 were the Japanese

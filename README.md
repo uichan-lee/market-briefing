@@ -51,7 +51,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | API credentials | ✅ Done | KRX and Alpaca verified live; all 9 values mirrored into Actions secrets. Only KIS outstanding, and it blocks nothing yet |
 | `kr_price` collector (pykrx OHLCV) | ✅ Done | Four checks + committed fixture; known value cross-checked against Naver |
 | `macro` collector (FRED) | ✅ Done | 6 series verified live; known value cross-checked against Treasury |
-| `kr_news` collector (outlet RSS) | ✅ Done | 15 feeds via Actions, twice hourly in session; ~950 articles/poll across 8 outlets |
+| `kr_news` collector (outlet RSS) | ✅ Done | 14 feeds via Actions, twice hourly in session; ~980 articles/poll across 8 outlets |
 | `us_price` collector (Tiingo) | ✅ Done | Four checks + committed fixture; known value cross-checked against Yahoo Finance |
 | `us_price` over Alpaca | ✅ Done | The US source in use. SIP confirmed on the free plan; **48 symbols in 2 requests** where Tiingo needed 48 |
 | `kr_flow` collector (pykrx) | ✅ Done | Investor flows, short interest, cap, fundamentals — **the 55% of rating weight KRX was gating**. Six checks incl. an accounting identity and a cross-collector price check |
