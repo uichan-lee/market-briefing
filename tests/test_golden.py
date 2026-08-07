@@ -123,6 +123,48 @@ def test_selection_follows_triage_order():
     assert [row["article_id"] for row in picked] == [row["article_id"] for row in rows[:25]]
 
 
+def test_a_full_bucket_still_records_the_honest_label(tmp_path, monkeypatch, capsys):
+    """Hit live on 2026-08-07, 61 articles into the first real triage pass.
+
+    The 긍정 bucket filled at 25 and the next article was plainly positive.
+    Triage rejected the keystroke and printed "다른 분류를 고르세요" — asking for
+    a label chosen by which counter had room rather than by what the article
+    said. A golden set assembled that way measures the quota, not the judgement,
+    and it is the same contamination the worked examples were rewritten to
+    avoid.
+
+    The cap belongs at selection time, which `select_for_labelling` already
+    applies, so triage must record what Ricky actually answered.
+    """
+    import scripts.golden as golden
+
+    monkeypatch.setattr(golden, "CANDIDATES", tmp_path / "candidates.jsonl")
+    monkeypatch.setattr(golden, "TRIAGE", tmp_path / "triage.jsonl")
+
+    pool = [
+        {"article_id": f"a{i}", "ticker": "005930", "title": f"t{i}"} for i in range(PER_BUCKET + 1)
+    ]
+    for row in pool:
+        golden.append_jsonl(golden.CANDIDATES, row)
+    # Fill 긍정 to exactly the cap, leaving one candidate untriaged.
+    for row in pool[:PER_BUCKET]:
+        golden.append_jsonl(golden.TRIAGE, {**row, "bucket": "positive"})
+
+    monkeypatch.setattr(golden, "_prompt", lambda _: "1")  # 명백한 긍정
+    golden.run_triage()
+
+    recorded = golden.read_jsonl(golden.TRIAGE)
+    assert len(recorded) == PER_BUCKET + 1, "the 26th positive must be recorded, not refused"
+    assert recorded[-1]["bucket"] == "positive"
+    assert recorded[-1]["article_id"] == pool[-1]["article_id"]
+    assert "다른 분류를 고르세요" not in capsys.readouterr().out
+
+    # ...and the overflow must not reach scoring.
+    picked, counts = select_for_labelling(recorded)
+    assert counts["positive"] == PER_BUCKET
+    assert len(picked) == PER_BUCKET
+
+
 # --- score parsing ---------------------------------------------------------
 
 

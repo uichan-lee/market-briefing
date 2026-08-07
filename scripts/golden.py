@@ -338,8 +338,13 @@ def run_triage() -> int:
             break
 
         print(format_article(row, index=index, total=len(remaining)))
+        # Counts can exceed PER_BUCKET now that a full bucket still accepts the
+        # honest answer, and "26/25" reads like a bug. Show the target as met
+        # instead, which is also the more useful thing to know at a glance.
         status = "  ".join(
-            f"{short} {counts.get(name, 0)}/{PER_BUCKET}" for name, _, short in BUCKETS.values()
+            f"{short} {min(counts.get(name, 0), PER_BUCKET)}/{PER_BUCKET}"
+            + ("✓" if counts.get(name, 0) >= PER_BUCKET else " ")
+            for name, _, short in BUCKETS.values()
         )
         print(f"  진행: {status}")
 
@@ -352,11 +357,21 @@ def run_triage() -> int:
                 break
             if answer in BUCKETS:
                 name = BUCKETS[answer][0]
-                if counts.get(name, 0) >= PER_BUCKET:
-                    print(f"  '{BUCKETS[answer][1]}' 버킷은 이미 찼습니다. 다른 분류를 고르세요.")
-                    continue
+                # A full bucket never changes the answer. The earlier version
+                # rejected the input and asked for "a different classification",
+                # which is the one thing this pass must never do: it would put a
+                # label on an article because a counter was full rather than
+                # because the article said so, and a golden set built that way
+                # measures the quota instead of the judgement. The cap belongs at
+                # selection time, and `select_for_labelling` already applies it.
                 append_jsonl(TRIAGE, {**row, "bucket": name})
                 counts[name] = counts.get(name, 0) + 1
+                if counts[name] > PER_BUCKET:
+                    print(
+                        f"  기록했습니다. '{BUCKETS[answer][1]}'은 채점 대상 "
+                        f"{PER_BUCKET}건이 이미 찼으므로 이 건은 분류만 남고 2단계로는 넘어가지 "
+                        f"않습니다."
+                    )
                 break
             print("  1, 2, 3, 4, s, q 중 하나를 입력하세요.")
 
