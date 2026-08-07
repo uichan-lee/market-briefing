@@ -41,13 +41,13 @@ English: [README.md](README.md)
 | 구성요소 | 상태 | 비고 |
 |---|---|---|
 | 설계 문서 (SPEC, PREREGISTRATION, MANUAL-TASKS) | ✅ 완료 | 평가 기준 2026-08-02 고정 |
-| Python 프로젝트, 테스트, 린팅 | ✅ 완료 | `uv` + `pytest` + `ruff`, 233개 테스트 통과 |
+| Python 프로젝트, 테스트, 린팅 | ✅ 완료 | `uv` + `pytest` + `ruff`, 475개 테스트 통과 |
 | 시간·시장 세션 (`src/util/session.py`) | ✅ 완료 | 거래일, 서머타임, 룩어헤드 경계 |
 | Collector 검증 프레임워크 (`src/collectors/validate.py`) | ✅ 완료 | 모든 collector가 통과해야 하는 4가지 검사 |
 | Config 로딩·안전장치 (`src/util/config.py`) | ✅ 완료 | 별칭 충돌, 따옴표 없는 종목코드 차단 |
 | 방향성 등급 (`src/report/rating.py`) | ✅ 완료 | 7단계 등급 + 근거. 가중치는 캘리브레이션 필요 |
 | AI 총평 가드 (`src/report/consistency.py`) | ✅ 완료 | 총평이 계산된 등급과 모순되면 섹션을 드롭 |
-| Config 파일 | 🟡 일부 완료 | `watchlist.yaml` 완료 — KR 19 + US 14, 전부 실데이터로 검증. `aliases.yaml`이 **지금 Claude를 막는 유일한 것** |
+| Config 파일 | ✅ 완료 | `watchlist.yaml` KR 19 + US 14, `aliases.yaml` 둘 다 채워졌고 실데이터로 검증됨 |
 | API 인증 정보 | ✅ 완료 | KRX·Alpaca 실측 검증, 9개 값 전부 Actions secrets에 등록. KIS만 미완이고 아직 아무것도 막지 않는다 |
 | `kr_price` collector (pykrx OHLCV) | ✅ 완료 | 4가지 검사 + 커밋된 픽스처. 기준값은 네이버 금융과 교차 확인 |
 | `macro` collector (FRED) | ✅ 완료 | 6개 시리즈 실측 확인. 기준값은 미 재무부와 교차 확인 |
@@ -55,14 +55,22 @@ English: [README.md](README.md)
 | `us_price` collector (Tiingo) | ✅ 완료 | 4개 검사 + 커밋된 fixture. 기준값은 Yahoo Finance와 교차 확인 |
 | `us_price` Alpaca 버전 | ✅ 완료 | 현재 사용 중인 미국 소스. 무료 플랜에서 SIP 확인. **48종목을 요청 2개로** — Tiingo는 48개 필요했다 |
 | `kr_flow` collector (pykrx) | ✅ 완료 | 투자자별 순매수·공매도 잔고·시가총액·펀더멘털 — **KRX가 막고 있던 등급 가중치 55%**. 회계 항등식과 수집기 간 교차검증을 포함한 6개 검사 |
+| 엔티티 해석 (`src/entity/resolve.py`) | ✅ 완료 | 별칭 기반. 모호 비율은 헤더에 보고 — 현재 8.2~8.5% |
+| 피처 계산 (`src/features/compute.py`) | ✅ 완료 | 가중치 7개 중 5개. 종목별 252거래일 롤링 z-score |
+| 리포트 렌더러 + 전달 (`src/report/`, `src/notify/`) | ✅ 완료 | SPEC §2 섹션, `vault` + `email`. HTML 메일 + `text/plain` 대체본 |
+| GitHub Actions 워크플로우 | ✅ 완료 | `collect-news.yml` 시간당, `report.yml` 아침 3회 + 저녁. 2026-08-03부터 가동 |
+| 골든셋 (100건 직접 라벨링) | 🟡 진행 중 | 도구와 후보 240건 준비 완료 (`scripts/golden.py`). 라벨링은 Ricky 작업이고 모델 선택을 막고 있음 |
+| 임베딩 파이프라인 (중복 제거 + 관련성) | ⬜ 미착수 | SPEC §12 6단계. 골든셋 뒤에 막혀 있음 |
+| LLM 어댑터 + 스코어링 + 베이크오프 | ⬜ 미착수 | `src/llm/adapter.py`는 아직 없다. v1 합성 프롬프트만 작성됨 |
+| `news_polarity`, `rev_4w` 피처 | ⬜ 미착수 | 둘 다 `config/rating.yaml`에서 가중치가 살아 있다 — 아래 경고 참고 |
 | `us_filings`, `kr_filings` | ⬜ 미착수 | SEC EDGAR, DART |
-| 엔티티 해석 | ⬜ 미착수 | |
-| 임베딩 파이프라인 (중복 제거 + 관련성) | ⬜ 미착수 | |
-| 골든셋 (100건 직접 라벨링) | ⬜ 미착수 | Ricky 작업, 모델 선택을 막고 있음 |
-| LLM 어댑터 + 스코어링 + 베이크오프 | ⬜ 미착수 | |
-| 피처 계산 | ⬜ 미착수 | |
-| 리포트 렌더러 + 전달 | ⬜ 미착수 | |
-| GitHub Actions 워크플로우 | ⬜ 미착수 | |
+
+**파이프라인은 오늘 이미 끝에서 끝까지 돈다.** 수집기 → 피처 → 계산된 등급 → 렌더링된 브리핑 → 이메일까지, 하루 두 번 무인으로. 빠진 것은 점수의 *뉴스* 절반이다. LLM 단계(SPEC §12 6~8단계)가 아직 없어서 `news_polarity`가 아무것도 만들지 못한다.
+
+> [!warning]
+> **존재하지 않는 피처 두 개에 가중치가 살아 있다.** `news_polarity`(0.20)와 `rev_4w`(0.15)가 `config/rating.yaml`에서 주석 해제된 상태인데, 이 둘을 계산하는 코드가 없다. `rate()`는 실제로 존재하는 피처에 대해 재정규화하므로 모든 종목의 근거 충족도가 **0.75/1.10 = 68%**에서 상한이 걸린다. `min_weight_coverage` 하한이 0.50이니 여유가 50포인트가 아니라 18포인트뿐이다. 여기서 `foreign_flow_5d`를 추가로 잃거나, 중간 가중치 피처 두 개를 잃으면 근거가 아니라 산수 때문에 `관망`으로 밀린다. `config/rating.yaml`의 주석 자체가 이 행위를 "적극적으로 해롭다"고 적어두었고, 두 가중치는 그 주석보다 먼저 있었을 뿐 다시 주석 처리되지 않았다.
+
+**스케줄은 최선 노력(best-effort)이고, 이건 가정이 아니라 실측이다.** GitHub은 선언된 실행의 3분의 1 정도만 띄운다. 2026-08-03~07 구간에서 뉴스 워크플로우는 하루 31회를 선언하고 6~10회를 실행했고, **시간 단위 커버리지는 42.6%**(94시간 중 40시간)였다. 기록에 남은 예약 리포트 실행 두 번은 둘 다 몇 시간씩 늦었다. 하위 구조는 전부 이걸 견디도록 만들어져 있다 — `last_closed_session()`이 날짜가 아니라 시계로 실행 대상 세션을 정하고, 아침 리포트는 발행 여부 검사 뒤에 3중으로 예약되며, `check_feed_continuity`는 추측 대신 그 공백이 실제로 얼마를 앗아갔는지 잰다. `etnews_economy` 제거 후 관측된 공백 45개 중 **1개(2.2%)**만 남은 피드 중 가장 짧은 버퍼를 넘겼다. 커버리지 숫자는 무섭지만 실제 유실은 그렇지 않다.
 
 **한국 뉴스 수집은 이미 동작하고 막힌 게 없다** — `kr_news`가 언론사 RSS 14개를 GitHub Actions로 읽는다 — 장중에는 30분마다, 그 외 시간에는 시간당. 인증 정보가 전혀 필요 없다. 다만 RSS는 소급 수집이 안 되므로, `collect-news.yml`이 기본 브랜치에 올라간 시점부터만 쌓인다.
 
@@ -203,14 +211,19 @@ market-briefing/
 │   │   ├── session.py         ✅ UTC/KST, 거래일, 룩어헤드 경계
 │   │   └── config.py          ✅ config 로딩 + 수기 편집 안전장치
 │   ├── collectors/
-│   │   │   ├── validate.py    ✅ 모든 collector가 통과해야 하는 4가지 검사
-│   │   ├── kr_price.py    ✅ pykrx 일봉
-│   │   ├── kr_news.py     ✅ 언론사 RSS, 측정된 주기로 수집
-│   │   ├── us_price.py    ✅ Tiingo 일별 OHLCV
-│   │   └── macro.py       ✅ FRED 국면 지표
-│   ├── entity/                ⬜ 종목 매칭
-│   ├── embed/                 ⬜ 중복 제거 + 관련성
-│   ├── features/              ⬜ 계산 + 정규화
+│   │   ├── validate.py        ✅ 모든 collector가 통과해야 하는 4가지 검사
+│   │   ├── kr_price.py        ✅ pykrx 일봉
+│   │   ├── kr_flow.py         ✅ 투자자별 순매수·공매도·시총·펀더멘털
+│   │   ├── kr_news.py         ✅ 언론사 RSS, 측정된 주기로 수집
+│   │   ├── us_price.py        ✅ Tiingo 일별 OHLCV (아침 프리뷰 전용)
+│   │   ├── us_price_alpaca.py ✅ Alpaca SIP, 저녁 정본 경로
+│   │   └── macro.py           ✅ FRED 국면 지표
+│   ├── entity/
+│   │   └── resolve.py         ✅ 별칭 기반 종목 매칭 + 모호 버킷
+│   ├── features/
+│   │   ├── compute.py         ✅ 가중치 7개 중 5개 계산
+│   │   └── normalize.py       ✅ 252거래일 롤링 z-score
+│   ├── embed/                 ⬜ 중복 제거 + 관련성 (6단계)
 │   ├── llm/
 │   │   ├── prompts/
 │   │   │   └── v1_synthesis.md ✅ AI 총평 프롬프트
@@ -218,14 +231,18 @@ market-briefing/
 │   ├── report/
 │   │   ├── rating.py          ✅ 7단계 방향성 등급
 │   │   ├── consistency.py     ✅ 총평을 계산된 등급과 대조
-│   │   └── render.py          ⬜ 마크다운 렌더링
-│   ├── notify/                ⬜ vault, email, webhook 어댑터
+│   │   └── render.py          ✅ SPEC §2 섹션 렌더링 + 요약 HTML
+│   ├── notify/                ✅ vault, email 어댑터
 │   └── eval/                  ⬜ 골든셋, 베이크오프, IC, 섀도 포트폴리오
 │
 ├── scripts/
-│   └── config_helper.py       ✅ 수기 config용 find / scaffold / audit
-├── tests/                     272개 테스트, 전부 오프라인
-└── data/                      gitignore 대상 — raw, embeddings, features, scores
+│   ├── config_helper.py       ✅ 수기 config용 find / scaffold / audit
+│   ├── backfill.py            ✅ 3년치 초기 적재
+│   ├── collect_daily.py       ✅ 아침/저녁 실행 드라이버
+│   └── golden.py              ✅ 골든셋 표본추출·분류·채점·검사
+├── .github/workflows/         ✅ collect-news.yml, report.yml
+├── tests/                     475개 테스트, 네트워크 9개 제외 전부 오프라인
+└── data/                      raw / ratings / golden 만 커밋, 나머지는 gitignore
 ```
 
 ### 완성된 모듈이 실제로 하는 일
@@ -272,21 +289,27 @@ cp .env.example .env             # 그 다음 API 키 입력
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ KR 31 + US 40종목, 별칭 31개 항목 |
 | 3 | 수집기 + 검증 테스트 | ✅ 수집기 6개, 오프라인 437개 · 라이브 9개 |
 | 4 | **3년치 백필 → `data/raw/`** | ✅ macro(776)·us_price(752)·kr_price(728)·kr_flow(728) |
-| 5 | 엔티티 해석 + 모호 비율 | ✅ 2,876건 중 221건 매칭, **모호 10.9%** (기준선 30%) |
+| 5 | 엔티티 해석 + 모호 비율 | ✅ 가동 중, **모호 8.2~8.5%** (기준선 30%) |
 | 6 | 임베딩 파이프라인 (중복제거 + 관련성) | ⬜ |
-| 7 | 골든셋 100건 직접 라벨링 | ⬜ Ricky |
+| 7 | 골든셋 100건 직접 라벨링 | 🟡 Ricky — 도구·후보 240건 준비 완료, 라벨링 진행 중 |
 | 8 | 모델 어댑터 + 베이크오프 | ⬜ |
 | 9 | 피처 계산 | ✅ 등급 피처 7개 중 5개, 가중치 0.75/1.10 |
 | 10 | 리포트 렌더러 + 발송 | ✅ vault + 이메일 작동. 첫 실제 브리핑 2026-08-06 |
 | 11 | 일일 수집 + 리포트 워크플로우 | ✅ **클라우드 왕복 성공 2026-08-06** — 수집 5종·렌더·이메일·커밋 |
-| 12 | 스케줄 정착 (번인) | 🟡 **진행 중** — cron 자동 발화는 아직 0회 |
+| 12 | 스케줄 정착 (번인) | 🟡 **진행 중** — cron 발화 확인. 지연·누락 4건 잡아서 수정 |
 | 13 | 2주 게이트 | ⬜ 12단계가 안정되면 시작 |
 
-**파이프라인이 오늘부터 스스로 돈다.** 사람이 손대지 않아도 수집 → 해석 → 계산 →
-등급 → 문서 → 이메일이 클라우드에서 한 바퀴 완주했다. 증거는 셋이다: 받은편지함의
-브리핑, `reports/2026-08-06-evening.md`, GitHub Actions 봇이 남긴 데이터 커밋.
+**파이프라인이 스스로 돈다.** 사람이 손대지 않아도 수집 → 해석 → 계산 → 등급 →
+문서 → 이메일이 클라우드에서 하루 두 번 완주한다. 증거는 셋이다: 받은편지함의
+브리핑, `reports/`의 문서, GitHub Actions 봇이 남긴 데이터 커밋.
 
-남은 것은 LLM 경로(6~8단계)와, 스케줄이 실제로 매일 뜨는지 지켜보는 일(12단계)뿐이다.
+**번인은 그 자체가 성과를 내고 있다.** 12단계의 목적은 스케줄이 뜨는지 보는 것이지만,
+실제로 잡힌 것은 코드 결함이었다 — 늦게 뜬 cron이 열리지도 않은 세션의 등급을 매겨
+전 종목을 `관망`으로 발행한 일, 마크다운이 그대로 나간 이메일, 러너 배정 실패로
+날아간 뉴스 8시간, 그리고 연결 실패한 피드를 조용히 통과시키던 연속성 검사. 넷 다
+실측으로 확인하고 수정했다. 라이브가 아니었으면 넷 다 못 봤을 것들이다.
+
+남은 것은 LLM 경로(6~8단계)이고, 그 전체가 7단계 골든셋 하나에 막혀 있다.
 
 ### 백필이 들어왔고 z-score가 실제로 나온다
 

@@ -41,13 +41,13 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Component | Status | Notes |
 |---|---|---|
 | Design docs (SPEC, PREREGISTRATION, MANUAL-TASKS) | ✅ Done | Evaluation criteria frozen 2026-08-02 |
-| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 233 tests passing |
+| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 475 tests passing |
 | Time & market sessions (`src/util/session.py`) | ✅ Done | Trading days, DST, look-ahead boundary |
 | Collector validation framework (`src/collectors/validate.py`) | ✅ Done | The four checks every collector must pass |
 | Config loading & safeguards (`src/util/config.py`) | ✅ Done | Rejects alias collisions, unquoted tickers |
 | Directional rating (`src/report/rating.py`) | ✅ Done | 7-point scale + rationale; weights need calibration |
 | AI commentary guard (`src/report/consistency.py`) | ✅ Done | Drops the 총평 if it contradicts the computed rating |
-| Config files | 🟡 Partial | `watchlist.yaml` done — 19 KR + 14 US, all verified against live data. `aliases.yaml` is **the only thing blocking Claude** |
+| Config files | ✅ Done | `watchlist.yaml` 19 KR + 14 US and `aliases.yaml` both filled and verified against live data |
 | API credentials | ✅ Done | KRX and Alpaca verified live; all 9 values mirrored into Actions secrets. Only KIS outstanding, and it blocks nothing yet |
 | `kr_price` collector (pykrx OHLCV) | ✅ Done | Four checks + committed fixture; known value cross-checked against Naver |
 | `macro` collector (FRED) | ✅ Done | 6 series verified live; known value cross-checked against Treasury |
@@ -55,20 +55,28 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | `us_price` collector (Tiingo) | ✅ Done | Four checks + committed fixture; known value cross-checked against Yahoo Finance |
 | `us_price` over Alpaca | ✅ Done | The US source in use. SIP confirmed on the free plan; **48 symbols in 2 requests** where Tiingo needed 48 |
 | `kr_flow` collector (pykrx) | ✅ Done | Investor flows, short interest, cap, fundamentals — **the 55% of rating weight KRX was gating**. Six checks incl. an accounting identity and a cross-collector price check |
+| Entity resolution (`src/entity/resolve.py`) | ✅ Done | Alias-driven, ambiguous bucket reported in the header — running at 8.2–8.5% |
+| Feature computation (`src/features/compute.py`) | ✅ Done | 5 of the 7 weighted features; 252-day rolling z-score per ticker |
+| Report renderer + delivery (`src/report/`, `src/notify/`) | ✅ Done | SPEC §2 sections, `vault` + `email`, HTML mail with a `text/plain` alternative |
+| GitHub Actions workflow | ✅ Done | `collect-news.yml` hourly, `report.yml` morning ×3 + evening; live since 2026-08-03 |
+| Golden set (100 hand-labeled articles) | 🟡 In progress | Tooling and 240 candidates ready (`scripts/golden.py`); labelling is Ricky's, and blocks model selection |
+| Embedding pipeline (dedup + relevance) | ⬜ Not started | SPEC §12 step 6, blocked behind the golden set |
+| LLM adapter + scoring + bake-off | ⬜ Not started | `src/llm/adapter.py` does not exist yet; only the v1 synthesis prompt is written |
+| `news_polarity`, `rev_4w` features | ⬜ Not started | Both carry live weight in `config/rating.yaml` — see the caveat below |
 | `us_filings`, `kr_filings` | ⬜ Not started | SEC EDGAR and DART |
-| Entity resolution | ⬜ Not started | |
-| Embedding pipeline (dedup + relevance) | ⬜ Not started | |
-| Golden set (100 hand-labeled articles) | ⬜ Not started | Ricky's task, blocks model selection |
-| LLM adapter + scoring + bake-off | ⬜ Not started | |
-| Feature computation | ⬜ Not started | |
-| Report renderer + delivery | ⬜ Not started | |
-| GitHub Actions workflow | ⬜ Not started | |
 
-**Korean news collection is live and unblocked** — `kr_news` reads 15 outlet RSS feeds via GitHub Actions — twice an hour through the KRX session, hourly otherwise — needing no credential at all. Because RSS cannot be backfilled, that clock only starts once `collect-news.yml` is on the default branch.
+**The pipeline runs end to end today.** Collectors → features → computed rating → rendered briefing → email, twice a day, unattended. What is missing is the *news* half of the score: the LLM stage (SPEC §12 steps 6–8) is not built, so `news_polarity` produces nothing.
+
+> [!warning]
+> **Two weights are active for features that do not exist.** `news_polarity` (0.20) and `rev_4w` (0.15) are uncommented in `config/rating.yaml`, but nothing computes them. `rate()` renormalizes over the features actually present, so every ticker is capped at **0.75/1.10 = 68% weight coverage** against a `min_weight_coverage` floor of 0.50 — leaving 18 points of margin instead of 50. A ticker that also loses `foreign_flow_5d`, or any two of the mid-weight features, is forced to `관망` by arithmetic rather than by evidence. `config/rating.yaml`'s own comment calls doing this "actively harmful"; the two weights predate that comment and were never commented back out.
+
+**Korean news collection is live and unblocked** — `kr_news` reads 14 outlet RSS feeds via GitHub Actions — twice an hour through the KRX session, hourly otherwise — needing no credential at all. Because RSS cannot be backfilled, that clock only starts once `collect-news.yml` is on the default branch.
 
 **The KRX blocker is cleared.** `data.krx.co.kr` went members-only and returned HTTP 400 `LOGOUT` without a session, which withheld investor flows, short interest, market cap and fundamentals — **55% of the rating weight**, enough to force every ticker to `관망`. A login now works and all six gated endpoints were verified live on 2026-08-04 ([API-KEYS.md §0](API-KEYS.md)). `kr_flow` is now built on top of it and passing.
 
-**What blocks Claude now is `config/aliases.yaml`.** The watchlist is filled — 19 Korean tickers including the 두산, 삼성, 한화 and LG clusters that make Korean entity resolution hard, plus 14 US names. Each Korean ticker needs an alias entry; `scripts/config_helper.py` generates the mechanical half and audits the result against the news already collected — see [MANUAL-TASKS.md §3](MANUAL-TASKS.md).
+**What blocks Claude now is the golden set.** `config/aliases.yaml` is filled and running at an 8.2–8.5% ambiguous ratio. The next three SPEC §12 steps — the embedding pipeline, the model bake-off, and therefore `news_polarity` — all sit behind 100 hand-labelled articles. `scripts/golden.py` has sampled 240 candidates and carries the whole labelling flow; see [MANUAL-TASKS.md §4](MANUAL-TASKS.md).
+
+**The schedule is best-effort, and that is measured, not assumed.** GitHub fires roughly a third of the declared runs: over 2026-08-03..07 the news workflow declared 31 runs a day and delivered 6–10, for **42.6% hourly coverage** (40 of 94 hours). Both scheduled report runs on record were hours late. Everything downstream is built to survive it — `last_closed_session()` resolves a run from the clock rather than the date, the morning report is declared three times behind a published-check, and `check_feed_continuity` measures what a gap actually cost instead of guessing. With `etnews_economy` removed, **1 of 45 observed gaps (2.2%)** exceeded the fastest remaining feed buffer, so the coverage number is alarming but the realised loss is not.
 
 ---
 
