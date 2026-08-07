@@ -102,9 +102,24 @@ MISSING_THRESHOLDS = {"title": 0.0, "link": 0.0, "published_at": 0.0}
 # 매일경제 26.6–58.2, and everything else past 70. So two hours costs nothing at
 # that time of day. It was set at two anyway, because the measurement was taken
 # during the Korean night: a buffer is a fixed item count, so its span shrinks in
-# proportion to how fast the outlet is publishing, and the fastest feeds hold
-# 50 items. This threshold is deliberately tighter than any measurement supports
-# until the same measurement exists for a market-hours peak.
+# proportion to how fast the outlet is publishing.
+#
+# The market-hours measurement that comment was waiting for was taken 2026-08-07
+# at 09:20 KST, mid-session, and it settles the question in the unwelcome
+# direction. `etnews_economy` holds thirty items and spanned **1.2 hours** —
+# below this threshold, not above it. `etnews_main` held 7.9h and `yna_industry`
+# 6.5h; everything else stayed past 20h.
+#
+# So two hours is knowingly too loose for the fastest feed, and passing this
+# check does **not** mean nothing was lost. That is not a bug to be fixed by
+# lowering the number: GitHub fires roughly a third of the declared runs
+# (31 declared, 6–10 observed per day), so a one-hour limit would fail nearly
+# every run and say nothing a caller could act on. The threshold stays an early
+# warning and `check_feed_continuity` remains the thing that reads evidence.
+#
+# Confirmed live the same morning, both statements in one run at 06:54Z:
+# `collection_gap` passed at 1.5h while `feed_continuity` failed with
+# `etnews_economy lost 0.4h`.
 MAX_COLLECTION_GAP = dt.timedelta(hours=2)
 
 # A published_at outside this window means the date parse produced garbage.
@@ -175,6 +190,7 @@ def check_collection_gap(
 def check_feed_continuity(
     buffer_oldest: Mapping[str, pd.Timestamp],
     newest_stored: Mapping[str, pd.Timestamp],
+    unfetched: Iterable[str] = (),
 ) -> CheckResult:
     """Detect articles that were actually lost, rather than inferring it.
 
@@ -191,6 +207,20 @@ def check_feed_continuity(
     Reported per feed rather than in aggregate: 한국경제 경제 held 4.0 hours of
     history when 인포스탁 held 101.6, so a gap that is harmless for most of the
     fourteen can still be lossy for two of them.
+
+    ``unfetched`` names the feeds that did not answer this run, and exists
+    because their absence is otherwise indistinguishable from health. A feed
+    that fails to connect contributes no ``buffer_oldest`` entry, so the loop
+    below never sees it and the check reports "all feeds overlap" while the
+    riskiest feed in the set is unaccounted for. That masking was live on
+    2026-08-06/07: 전자신문 failed to connect in ten of thirty runs, and every
+    briefing header in between said only ``kr_news/fetch``, which reads as a
+    transient blip rather than as articles being gone.
+
+    Unverifiable is reported as a failure, not a pass. Whether those feeds lost
+    anything is unknown, and for a 30-item buffer the answer is usually yes —
+    but the check refuses to estimate, because the honest statement is that the
+    evidence needed to decide was never fetched.
     """
     losses: list[str] = []
     compared = 0
@@ -204,13 +234,28 @@ def check_feed_continuity(
             missed = (oldest - previous).total_seconds() / 3600
             losses.append(f"{feed} lost {missed:.1f}h (buffer starts at {oldest:%Y-%m-%d %H:%M}Z)")
 
-    if losses:
-        return CheckResult(
-            "feed_continuity",
-            False,
-            f"{len(losses)} of {compared} feeds rolled past the last stored article — "
-            + "; ".join(losses),
-        )
+    # Only feeds with stored history are unverifiable; one that has never been
+    # collected has no window to have rolled past in the first place.
+    blind = sorted(name for name in set(unfetched) if name in newest_stored)
+    unknown = [
+        f"{name} unverified, last stored article "
+        f"{(pd.Timestamp(newest_stored[name]).tz_convert('UTC')):%Y-%m-%d %H:%M}Z"
+        for name in blind
+    ]
+
+    if losses or unknown:
+        parts = []
+        if losses:
+            parts.append(
+                f"{len(losses)} of {compared} feeds rolled past the last stored article — "
+                + "; ".join(losses)
+            )
+        if unknown:
+            parts.append(
+                f"{len(unknown)} feeds did not answer, so their loss is unmeasured — "
+                + "; ".join(unknown)
+            )
+        return CheckResult("feed_continuity", False, ". ".join(parts))
     if not compared:
         return CheckResult("feed_continuity", True, "no feed has prior articles to compare against")
     return CheckResult("feed_continuity", True, f"{compared} feeds overlap the stored history")
@@ -267,13 +312,15 @@ def validate_frame(
     now: pd.Timestamp | None = None,
     buffer_oldest: Mapping[str, pd.Timestamp] | None = None,
     newest_stored: Mapping[str, pd.Timestamp] | None = None,
+    unfetched: Iterable[str] = (),
 ) -> ValidationReport:
     """Run the four checks, one of them substituted. See the module docstring.
 
-    ``buffer_oldest`` and ``newest_stored`` are what :func:`check_feed_continuity`
-    needs. They default to empty, which makes that check a no-op — the right
-    behaviour for callers validating a frame in isolation, since a frame carries
-    no record of what its feeds were holding at the time.
+    ``buffer_oldest``, ``newest_stored`` and ``unfetched`` are what
+    :func:`check_feed_continuity` needs. They default to empty, which makes that
+    check a no-op — the right behaviour for callers validating a frame in
+    isolation, since a frame carries no record of what its feeds were holding at
+    the time, nor of which ones failed to answer.
     """
     return validate(
         COLLECTOR,
@@ -283,7 +330,7 @@ def validate_frame(
             if len(df)
             else CheckResult("missing_ratio", True, "no rows"),
             check_collection_gap(df, previous_run, now=now),
-            check_feed_continuity(buffer_oldest or {}, newest_stored or {}),
+            check_feed_continuity(buffer_oldest or {}, newest_stored or {}, unfetched),
             check_structural_invariants(df, feeds, now=now),
         ],
     )
@@ -546,11 +593,13 @@ def fetch(
 
     frames: list[pd.DataFrame] = []
     failures: list[str] = []
+    unfetched: list[str] = []
 
     for feed in feeds:
         parsed, failure = _fetch_one(feed, collected_at, timeout=timeout, attempts=attempts)
         if failure:
             failures.append(failure)
+            unfetched.append(feed.name)
         elif parsed is not None and not parsed.empty:
             frames.append(parsed)
 
@@ -576,6 +625,7 @@ def fetch(
         now=collected_at,
         buffer_oldest=buffer_oldest,
         newest_stored=newest_stored_per_feed(root, collected_at.date()),
+        unfetched=unfetched,
     )
     report.add(
         CheckResult(

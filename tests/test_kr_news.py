@@ -270,6 +270,58 @@ def test_feed_continuity_is_inert_when_the_caller_supplies_nothing(frame):
     assert any(r.name == "feed_continuity" and r.passed for r in report.results)
 
 
+# --- the feeds that did not answer -----------------------------------------
+
+
+def test_a_feed_that_did_not_answer_is_reported_not_skipped():
+    """The masking bug, in one assertion. A feed that fails to connect sends no
+    buffer, so the comparison loop never sees it and every run in the outage
+    read "1 feeds overlap the stored history" — a pass, while the fastest feed
+    in the set was unaccounted for. Live 2026-08-06/07: 전자신문 failed to
+    connect in ten of thirty runs and no header ever said so."""
+    oldest = {"hankyung_finance": NOW - dt.timedelta(hours=6)}
+    stored = {
+        "hankyung_finance": NOW - dt.timedelta(hours=4),
+        "etnews_economy": NOW - dt.timedelta(hours=4),
+    }
+    result = check_feed_continuity(oldest, stored, unfetched=["etnews_economy"])
+
+    assert not result.passed
+    assert "etnews_economy unverified" in result.detail
+    assert "did not answer" in result.detail
+
+
+def test_an_unanswered_feed_with_no_stored_history_is_not_reported():
+    """Nothing has been collected from it, so no window can have rolled past.
+    Reporting it would turn a newly added feed into a permanent failure."""
+    result = check_feed_continuity({}, {}, unfetched=["brand_new"])
+    assert result.passed
+
+
+def test_loss_and_silence_are_reported_together():
+    """The two failure modes are independent and one must not hide the other:
+    a measured loss on one feed says nothing about the feed that never
+    answered."""
+    oldest = {"hankyung_finance": NOW - dt.timedelta(hours=1)}
+    stored = {
+        "hankyung_finance": NOW - dt.timedelta(hours=4),
+        "etnews_economy": NOW - dt.timedelta(hours=4),
+    }
+    result = check_feed_continuity(oldest, stored, unfetched=["etnews_economy"])
+
+    assert not result.passed
+    assert "hankyung_finance lost 3.0h" in result.detail
+    assert "etnews_economy unverified" in result.detail
+
+
+def test_a_clean_run_still_passes():
+    """The guard must not turn every healthy run into a failure."""
+    oldest = {"hankyung_finance": NOW - dt.timedelta(hours=6)}
+    stored = {"hankyung_finance": NOW - dt.timedelta(hours=4)}
+    result = check_feed_continuity(oldest, stored, unfetched=[])
+    assert result.passed
+
+
 # --- check four's substitute ----------------------------------------------
 
 
