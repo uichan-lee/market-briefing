@@ -20,7 +20,8 @@ from scripts.golden import (
     DIMENSIONS,
     PER_BUCKET,
     InputError,
-    parse_scores,
+    collate_scores,
+    parse_score,
     select_for_labelling,
     stratified_sample,
 )
@@ -168,42 +169,76 @@ def test_a_full_bucket_still_records_the_honest_label(tmp_path, monkeypatch, cap
 # --- score parsing ---------------------------------------------------------
 
 
-def test_five_numbers_map_onto_the_spec_dimensions():
-    scores = parse_scores("0.9 -0.4 0.6 0.3 0.8")
-    assert scores == {
-        "relevance": 0.9,
-        "polarity": -0.4,
-        "intensity": 0.6,
-        "uncertainty": 0.3,
-        "forwardness": 0.8,
-    }
-
-
-def test_commas_are_accepted():
-    assert parse_scores("0.9, -0.4, 0.6, 0.3, 0.8")["polarity"] == -0.4
+def test_one_number_is_parsed_for_its_own_dimension():
+    assert parse_score("0.9", "relevance", 0.0, 1.0) == 0.9
+    assert parse_score("-0.4", "polarity", -1.0, 1.0) == -0.4
 
 
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("0.9 -0.4 0.6 0.3", "5개"),
-        ("0.9 -0.4 0.6 0.3 0.8 0.1", "5개"),
-        ("0.9 x 0.6 0.3 0.8", "숫자가 아닙니다"),
-        ("1.5 -0.4 0.6 0.3 0.8", "범위"),
-        ("0.9 -2.0 0.6 0.3 0.8", "범위"),
+        ("0.9 0.4", "1개"),
+        ("", "1개"),
+        ("x", "숫자가 아닙니다"),
+        ("1.5", "범위"),
+        ("-0.2", "범위"),
     ],
 )
 def test_malformed_input_is_reported_not_stored(text, message):
     """A bad line must return to the prompt. Writing it would put an
     out-of-range score into the file every model is measured against."""
     with pytest.raises(InputError, match=message):
-        parse_scores(text)
+        parse_score(text, "relevance", 0.0, 1.0)
+
+
+# --- collation -------------------------------------------------------------
+
+
+def _score_rows(article: str, **values) -> list[dict]:
+    return [
+        {
+            "article_id": article,
+            "ticker": "005930",
+            "bucket": "positive",
+            "dimension": name,
+            "value": v,
+            "labeled_at": "2026-08-07T10:00:00+00:00",
+        }
+        for name, v in values.items()
+    ]
+
+
+def test_collation_pivots_per_dimension_records_into_one_row():
+    rows = _score_rows(
+        "a1", relevance=0.9, polarity=-0.4, intensity=0.6, uncertainty=0.3, forwardness=0.8
+    )
+    (row,) = collate_scores(rows)
+    assert row["article_id"] == "a1"
+    assert (row["relevance"], row["polarity"], row["forwardness"]) == (0.9, -0.4, 0.8)
+
+
+def test_a_partially_scored_example_is_omitted():
+    """Scoring runs one dimension at a time, so a quit mid-pass leaves most
+    examples holding one or two of five. Writing those into the golden set
+    would hand the bake-off rows to be measured on dimensions nobody gave."""
+    assert collate_scores(_score_rows("a1", relevance=0.9, polarity=0.2)) == []
+
+
+def test_collation_survives_a_rescored_dimension():
+    """The progress file is append-only, so re-answering a dimension appends a
+    second record rather than replacing the first. The later one must win."""
+    rows = _score_rows(
+        "a1", relevance=0.1, polarity=0.0, intensity=0.0, uncertainty=0.0, forwardness=0.0
+    )
+    rows += _score_rows("a1", relevance=0.9)
+    (row,) = collate_scores(rows)
+    assert row["relevance"] == 0.9
 
 
 def test_polarity_alone_accepts_negative_values():
     """The four other dimensions are magnitudes; polarity is the only signed
     one, and rejecting its sign would make every negative article unlabelable."""
-    bounds = {name: (low, high) for name, low, high, _ in DIMENSIONS}
+    bounds = {name: (low, high) for name, low, high, _, _ in DIMENSIONS}
     assert bounds["polarity"] == (-1.0, 1.0)
     assert all(low == 0.0 for name, (low, _) in bounds.items() if name != "polarity")
 

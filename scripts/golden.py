@@ -31,6 +31,7 @@ import glob
 import gzip
 import json
 import random
+import re
 import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -62,12 +63,76 @@ PER_BUCKET = 25
 POOL_SIZE = 240
 
 # The five dimensions, in the order the prompt asks for them. SPEC §6.2.
+#
+# Each carries anchors, because the one-line description alone left the middle
+# of every scale undefined and "0.3 vs 0.7" was being decided fresh each time.
+# The anchors are stated as *rules about the article*, never as worked examples
+# from the corpus — an example drawn from the pool would put a suggested answer
+# next to an article that is about to be scored.
 DIMENSIONS = (
-    ("relevance", 0.0, 1.0, "이 회사의 실적·주가와 얼마나 관련되나"),
-    ("polarity", -1.0, 1.0, "방향만. 크기는 intensity가 받는다"),
-    ("intensity", 0.0, 1.0, "재무적 충격의 크기"),
-    ("uncertainty", 0.0, 1.0, "그 결과가 실제로 일어날지"),
-    ("forwardness", 0.0, 1.0, "0=이미 반영된 과거, 1=미래 기대를 바꿈"),
+    (
+        "relevance",
+        0.0,
+        1.0,
+        "이 회사의 실적·주가와 얼마나 관련되나",
+        (
+            "0.0  이름만 스쳐감 — 리포트 작성 증권사, 업종 나열, 인사·채용·게시판",
+            "0.3  회사 얘기지만 손익과 연결이 멀다 — 행사, MOU, 수상, 사회공헌",
+            "0.7  본업에 닿는다 — 신제품, 수주, 증설, 점유율, 경쟁구도",
+            "1.0  숫자가 직접 나온다 — 실적, 가이던스, 계약금액, 목표주가",
+        ),
+    ),
+    (
+        "polarity",
+        -1.0,
+        1.0,
+        "방향만. 크기는 intensity가 받는다",
+        (
+            "-1.0  명백히 악재",
+            " 0.0  방향 없음 또는 호악재가 맞물림",
+            "+1.0  명백히 호재",
+            "기준: 이 기사만 읽은 투자자가 주식을 더 사고 싶어지는가, 팔고 싶어지는가.",
+            "질문한 종목 기준으로 판단한다 — A가 B에 밀렸다는 기사는 A와 B의 부호가 다르다.",
+        ),
+    ),
+    (
+        "intensity",
+        0.0,
+        1.0,
+        "재무적 충격의 크기",
+        (
+            "0.0  방향은 있으나 금액으로 환산되지 않는다",
+            "0.3  단발성이거나 매출의 1% 미만 수준",
+            "0.7  분기 실적을 눈에 띄게 움직인다",
+            "1.0  연간 실적이나 사업 구조를 바꾼다",
+            "polarity와 독립이다. 큰 악재도 intensity는 1.0이다.",
+        ),
+    ),
+    (
+        "uncertainty",
+        0.0,
+        1.0,
+        "그 결과가 실제로 일어날지",
+        (
+            "0.0  이미 확정 — 발표된 실적, 체결된 계약, 집행된 처분",
+            "0.3  공시·계약은 됐으나 이행이 남음",
+            "0.7  전망·목표·계획 — 증권사 추정, 회사 가이던스",
+            "1.0  추측 — '검토 중', '알려졌다', 익명 소식통",
+        ),
+    ),
+    (
+        "forwardness",
+        0.0,
+        1.0,
+        "0=이미 반영된 과거, 1=미래 기대를 바꿈",
+        (
+            "0.0  이미 알려진 사실의 반복·정리 기사",
+            "0.3  지난 분기에 일어난 일의 확인",
+            "0.7  앞으로 몇 분기의 기대를 바꾼다",
+            "1.0  처음 나온 정보이고 중기 전망을 다시 짜게 한다",
+            "uncertainty와 다르다. 확정된 사실도 처음 알려졌다면 forwardness는 높다.",
+        ),
+    ),
 )
 
 # Items re-labelled a day later to measure Ricky against himself (SPEC §7.3).
@@ -217,6 +282,38 @@ def key_of(row: dict) -> tuple[str, str]:
 # --- selection after triage ------------------------------------------------
 
 
+"""Title overlap above which two *different* articles are one event.
+
+Jaccard over title tokens. Measured against the first real triage pass: at 0.5
+every pair it caught was genuinely the same story carried by several outlets —
+한화에어로's UAM contract cancellation appeared three times, HD현대일렉's
+transformer milestone twice — and nothing distinct was merged.
+"""
+SAME_EVENT_SIMILARITY = 0.5
+
+
+def _title_tokens(title: str) -> set[str]:
+    return set(re.findall(r"[가-힣A-Za-z0-9]+", title or ""))
+
+
+def _same_event(a: dict, b: dict) -> bool:
+    """Whether two rows are the same story reported twice.
+
+    Deliberately *not* true when two rows share an ``article_id`` and differ by
+    ticker. One article naming both 현대차 and 기아 is two different examples —
+    the model has to condition its answer on which ticker it was asked about,
+    and that is exactly the ability worth measuring. Only distinct articles
+    telling the same story are redundant.
+    """
+    if a["article_id"] == b["article_id"]:
+        return False
+    first, second = _title_tokens(a.get("title", "")), _title_tokens(b.get("title", ""))
+    union = first | second
+    if not union:
+        return False
+    return len(first & second) / len(union) >= SAME_EVENT_SIMILARITY
+
+
 def select_for_labelling(
     triaged: Sequence[dict], *, per_bucket: int = PER_BUCKET
 ) -> tuple[list[dict], dict[str, int]]:
@@ -225,12 +322,25 @@ def select_for_labelling(
     Takes the first ``per_bucket`` of each bucket in triage order, so the
     selection is a function of what Ricky did rather than of a second random
     draw he cannot see.
+
+    One story reported by several outlets is taken once. The first triage pass
+    put 한화에어로's UAM cancellation into the 부정 bucket three times, from
+    매일경제, 전자신문 and 연합뉴스 — 12% of that bucket for a single event. A
+    model that happens to read that one story well would score as though it read
+    Korean market news well, which is the same skew `stratified_sample` exists
+    to prevent one level up. Dropping the repeats also refills the slot from the
+    next candidate, so the bucket still reaches `per_bucket`.
+
+    Only *distinct articles* are collapsed. See :func:`_same_event` for why a
+    single article attached to two tickers is kept twice.
     """
     picked: list[dict] = []
     counts: dict[str, int] = {name: 0 for name, _, _ in BUCKETS.values()}
     for row in triaged:
         bucket = row["bucket"]
         if counts.get(bucket, 0) >= per_bucket:
+            continue
+        if any(chosen["bucket"] == bucket and _same_event(chosen, row) for chosen in picked):
             continue
         counts[bucket] = counts.get(bucket, 0) + 1
         picked.append(row)
@@ -281,27 +391,60 @@ class InputError(ValueError):
     """A malformed score line, reported back to the prompt rather than raised."""
 
 
-def parse_scores(text: str) -> dict[str, float]:
-    """Parse five space-separated numbers into the §6.2 dimensions.
+def parse_score(text: str, name: str, low: float, high: float) -> float:
+    """Parse one number for one dimension.
 
-    One line of five numbers rather than five prompts: the judgment is a single
-    act and splitting it into five round trips triples the wall time without
-    improving any of them.
+    Scoring runs a dimension at a time across the whole set rather than five
+    dimensions per article. The earlier version took all five on one line, on
+    the reasoning that the judgement is a single act — but the five are not one
+    judgement, they are five scales, and interleaving them means the scale for
+    ``intensity`` is rebuilt from memory on every article. Holding one scale
+    over a hundred articles is what makes the numbers comparable, which is the
+    only property the bake-off actually consumes.
+
+    The cost is real and worth naming: five passes over the set instead of one,
+    so every article gets read five times.
     """
-    parts = text.replace(",", " ").split()
-    if len(parts) != len(DIMENSIONS):
-        raise InputError(f"숫자 {len(DIMENSIONS)}개가 필요합니다 (입력 {len(parts)}개)")
+    raw = text.replace(",", " ").split()
+    if len(raw) != 1:
+        raise InputError(f"숫자 1개가 필요합니다 (입력 {len(raw)}개)")
+    try:
+        value = float(raw[0])
+    except ValueError as exc:
+        raise InputError(f"{name}: {raw[0]!r}은 숫자가 아닙니다") from exc
+    if not low <= value <= high:
+        raise InputError(f"{name}은 {low}~{high} 범위여야 합니다 (입력 {value})")
+    return value
 
-    scores: dict[str, float] = {}
-    for (name, low, high, _), raw in zip(DIMENSIONS, parts, strict=True):
-        try:
-            value = float(raw)
-        except ValueError as exc:
-            raise InputError(f"{name}: {raw!r}은 숫자가 아닙니다") from exc
-        if not low <= value <= high:
-            raise InputError(f"{name}은 {low}~{high} 범위여야 합니다 (입력 {value})")
-        scores[name] = value
-    return scores
+
+def collate_scores(scored: Sequence[dict]) -> list[dict]:
+    """Pivot per-dimension progress records into one row per (article, ticker).
+
+    ``scores.jsonl`` is append-only and holds one record per dimension, which is
+    what makes a five-pass run resumable at any point. The finished golden set
+    keeps the original one-row-per-example shape, so `verify` and the bake-off
+    are unaffected by how the numbers were gathered.
+
+    Rows missing any dimension are omitted rather than written with holes: a
+    partially scored example would otherwise reach the bake-off and be measured
+    on dimensions nobody supplied.
+    """
+    by_example: dict[tuple[str, str], dict] = {}
+    for record in scored:
+        key = (record["article_id"], record["ticker"])
+        entry = by_example.setdefault(
+            key,
+            {
+                "article_id": record["article_id"],
+                "ticker": record["ticker"],
+                "bucket": record.get("bucket", ""),
+            },
+        )
+        entry[record["dimension"]] = record["value"]
+        entry["labeled_at"] = max(entry.get("labeled_at", ""), record.get("labeled_at", ""))
+
+    names = [name for name, _, _, _, _ in DIMENSIONS]
+    return [row for row in by_example.values() if all(name in row for name in names)]
 
 
 # --- the interactive passes ------------------------------------------------
@@ -320,11 +463,17 @@ def run_triage() -> int:
         print("후보가 없습니다. 먼저 `sample`을 실행하세요.")
         return 1
 
-    done = {key_of(row) for row in read_jsonl(TRIAGE)}
+    triaged = read_jsonl(TRIAGE)
+    done = {key_of(row) for row in triaged}
     remaining = [row for row in candidates if key_of(row) not in done]
-    counts: dict[str, int] = {name: 0 for name, _, _ in BUCKETS.values()}
-    for row in read_jsonl(TRIAGE):
-        counts[row["bucket"]] = counts.get(row["bucket"], 0) + 1
+
+    # Counted through select_for_labelling rather than by tallying buckets, so
+    # the progress line and the stop condition both mean "how many usable
+    # examples exist" rather than "how many keystrokes were made". They differ:
+    # the first pass ended with 25 부정 of which 2 were the same 한화에어로 story,
+    # so the raw tally said full while the bucket held 23. Counting raw would
+    # have shown "다 찼습니다" and sent Ricky to `label` with a short bucket.
+    _, counts = select_for_labelling(triaged)
 
     print(f"\n1단계 — 4지선다 분류. 남은 후보 {len(remaining)}건 (완료 {len(done)}건)")
     print("각 기사를 읽고 어느 쪽인지만 고르세요. 숫자는 2단계에서 매깁니다.\n")
@@ -365,13 +514,20 @@ def run_triage() -> int:
                 # measures the quota instead of the judgement. The cap belongs at
                 # selection time, and `select_for_labelling` already applies it.
                 append_jsonl(TRIAGE, {**row, "bucket": name})
-                counts[name] = counts.get(name, 0) + 1
-                if counts[name] > PER_BUCKET:
-                    print(
-                        f"  기록했습니다. '{BUCKETS[answer][1]}'은 채점 대상 "
-                        f"{PER_BUCKET}건이 이미 찼으므로 이 건은 분류만 남고 2단계로는 넘어가지 "
-                        f"않습니다."
+                triaged.append({**row, "bucket": name})
+                # Re-derived rather than incremented: this answer may be the
+                # same story as one already chosen, in which case it adds a
+                # keystroke but not a usable example, and the counter has to say
+                # so or the pass stops two examples short.
+                before = counts.get(name, 0)
+                _, counts = select_for_labelling(triaged)
+                if counts.get(name, 0) == before:
+                    reason = (
+                        f"'{BUCKETS[answer][1]}' {PER_BUCKET}건이 이미 찼습니다"
+                        if before >= PER_BUCKET
+                        else "이미 뽑힌 기사와 같은 사건입니다"
                     )
+                    print(f"  기록했습니다. 다만 {reason} — 채점 대상에는 안 들어갑니다.")
                 break
             print("  1, 2, 3, 4, s, q 중 하나를 입력하세요.")
 
@@ -379,54 +535,88 @@ def run_triage() -> int:
     return 0
 
 
-def run_label(*, target: Path = LABELS, source: Sequence[dict] | None = None) -> int:
+def run_label(
+    *,
+    target: Path = LABELS,
+    source: Sequence[dict] | None = None,
+    progress: Path | None = None,
+) -> int:
     triaged = read_jsonl(TRIAGE)
     if not triaged:
         print("분류 결과가 없습니다. 먼저 `triage`를 실행하세요.")
         return 1
 
     picked = list(source) if source is not None else select_for_labelling(triaged)[0]
-    done = {key_of(row) for row in read_jsonl(target)}
-    remaining = [row for row in picked if key_of(row) not in done]
+    progress = progress or target.with_name(target.stem + "-scores.jsonl")
+    scored = read_jsonl(progress)
+    done = {(r["article_id"], r["ticker"], r["dimension"]) for r in scored}
 
-    print(f"\n2단계 — 5개 차원 채점. 남은 {len(remaining)}건 (완료 {len(done)}건)")
-    print("  한 줄에 숫자 5개를 공백으로 구분해 입력합니다. 예: 0.9 -0.4 0.6 0.3 0.8\n")
-    for name, low, high, hint in DIMENSIONS:
-        print(f"  {name:<12} [{low:g}~{high:g}]  {hint}")
-    print("\n  s = 건너뛰기    q = 저장하고 종료")
-    print("  ⚠ 그 뒤 주가가 어떻게 됐는지 보지 말고 매길 것 (MANUAL-TASKS §4)\n")
+    print(f"\n2단계 — 채점. 대상 {len(picked)}건 × 차원 {len(DIMENSIONS)}개")
+    print("  한 차원씩 전부 훑습니다. 한 척도를 끝까지 유지해야 숫자가 비교 가능해집니다.")
+    print("  s = 건너뛰기    q = 저장하고 종료")
+    print("  ⚠ 그 뒤 주가가 어떻게 됐는지 보지 말고 매길 것 (MANUAL-TASKS §4)")
 
-    for index, row in enumerate(remaining, start=1):
-        print(format_article(row, index=index, total=len(remaining)))
-        print(f"  분류: {row.get('bucket', '?')}")
-        print(f"  순서: {' '.join(name for name, _, _, _ in DIMENSIONS)}")
+    for name, low, high, hint, anchors in DIMENSIONS:
+        remaining = [row for row in picked if (row["article_id"], row["ticker"], name) not in done]
+        if not remaining:
+            continue
 
-        while True:
-            answer = _prompt("  점수 > ")
-            if answer.lower() == "q":
-                print(f"\n저장 완료. {target}")
-                return 0
-            if answer.lower() == "s":
+        print(f"\n{'━' * 68}")
+        print(f"  차원 {name}  [{low:g} ~ {high:g}]   {hint}")
+        print(f"  남은 {len(remaining)}건 / {len(picked)}건")
+        for line in anchors:
+            print(f"    {line}")
+        print("━" * 68)
+
+        for index, row in enumerate(remaining, start=1):
+            print(format_article(row, index=index, total=len(remaining)))
+            print(f"  분류: {row.get('bucket', '?')}")
+
+            while True:
+                answer = _prompt(f"  {name} [{low:g}~{high:g}] > ")
+                if answer.lower() == "q":
+                    _finalise_labels(progress, target)
+                    print(f"\n저장 완료. 진행 {progress}")
+                    return 0
+                if answer.lower() == "s":
+                    break
+                try:
+                    value = parse_score(answer, name, low, high)
+                except InputError as exc:
+                    print(f"  {exc}")
+                    continue
+                append_jsonl(
+                    progress,
+                    {
+                        "article_id": row["article_id"],
+                        "ticker": row["ticker"],
+                        "bucket": row.get("bucket", ""),
+                        "dimension": name,
+                        "value": value,
+                        "labeled_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+                    },
+                )
                 break
-            try:
-                scores = parse_scores(answer)
-            except InputError as exc:
-                print(f"  {exc}")
-                continue
-            append_jsonl(
-                target,
-                {
-                    "article_id": row["article_id"],
-                    "ticker": row["ticker"],
-                    "bucket": row.get("bucket", ""),
-                    **scores,
-                    "labeled_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
-                },
-            )
-            break
 
-    print(f"\n채점 완료 → {target}")
+    complete = _finalise_labels(progress, target)
+    print(f"\n채점 완료 {complete}건 → {target}")
     return 0
+
+
+def _finalise_labels(progress: Path, target: Path) -> int:
+    """Rewrite ``target`` from whatever is complete in ``progress``.
+
+    Rewritten rather than appended because a partially scored example becomes
+    complete later, and appending would leave the earlier incomplete copy in
+    place. ``progress`` stays append-only, so nothing Ricky typed is ever
+    rewritten — only the derived file is.
+    """
+    complete = collate_scores(read_jsonl(progress))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8") as handle:
+        for row in complete:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return len(complete)
 
 
 def run_recheck(*, size: int = RECHECK_SIZE, seed: int = 20260807) -> int:
@@ -484,7 +674,7 @@ def verify() -> tuple[bool, list[str]]:
         seen.add(key)
 
     for row in labelled:
-        for name, low, high, _ in DIMENSIONS:
+        for name, low, high, _, _ in DIMENSIONS:
             if name not in row:
                 problems.append(f"{key_of(row)}: {name} 없음")
             elif not low <= float(row[name]) <= high:
@@ -504,7 +694,7 @@ def verify() -> tuple[bool, list[str]]:
             if not other:
                 continue
             gaps.append(
-                max(abs(float(row[name]) - float(other[name])) for name, _, _, _ in DIMENSIONS)
+                max(abs(float(row[name]) - float(other[name])) for name, _, _, _, _ in DIMENSIONS)
             )
         if gaps:
             worst = max(gaps)
