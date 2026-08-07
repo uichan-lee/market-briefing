@@ -25,6 +25,8 @@ from scripts.golden import (
     latest_triage,
     parse_score,
     review_influence,
+    score_conflicts,
+    scored_rows,
     select_for_labelling,
     stratified_sample,
 )
@@ -373,6 +375,117 @@ def test_collation_survives_a_rescored_dimension():
     rows += _score_rows("a1", relevance=0.9)
     (row,) = collate_scores(rows)
     assert row["relevance"] == 0.9
+
+
+# --- rules over the scores -------------------------------------------------
+
+
+def _scored(bucket, title, *, name="삼성전자", **values):
+    return {
+        "article_id": "a1",
+        "ticker": "005930",
+        "name": name,
+        "bucket": bucket,
+        "title": title,
+        "description": "",
+        **values,
+    }
+
+
+def test_a_positive_bucket_scored_neutral_is_flagged():
+    """Two of Ricky's own decisions disagreeing. The check names the conflict
+    and stops there — which one gives way is not something a rule can know."""
+    (conflict,) = score_conflicts([_scored("positive", "삼성전자 2분기 최대 실적", polarity=0.0)])
+    assert conflict["dimension"] == "polarity"
+
+
+def test_a_negative_bucket_scored_negative_is_left_alone():
+    assert score_conflicts([_scored("negative", "삼성전자 리콜", polarity=-0.8)]) == []
+
+
+def test_an_irrelevant_row_may_shade_without_being_flagged():
+    """The bucket means the article is not about this company's results, not
+    that it must read as exactly neutral. Only a real sign is a conflict."""
+    assert score_conflicts([_scored("irrelevant", "업종 동향 정리", polarity=0.2)]) == []
+    assert len(score_conflicts([_scored("irrelevant", "업종 동향 정리", polarity=0.6)])) == 1
+
+
+def test_a_flow_column_scored_as_if_it_touched_earnings_is_flagged():
+    """`relevance` is on 손익 as of 2026-08-07, and a 매매동향 column is the one
+    place the old summary line and the anchors disagreed."""
+    (conflict,) = score_conflicts(
+        [_scored("positive", "주식 초고수들, 삼성전자 보통주 팔고 우선주 샀다", relevance=0.9)]
+    )
+    assert conflict["dimension"] == "relevance"
+
+
+def test_an_earnings_article_at_high_relevance_is_not_flagged():
+    """The keyword list has to be narrow enough to spare what it is not about."""
+    assert score_conflicts([_scored("positive", "삼성전자 2분기 영업익 12조", relevance=0.9)]) == []
+
+
+def test_a_flow_column_already_scored_low_is_not_flagged():
+    assert score_conflicts([_scored("positive", "초고수는 삼성전자를 담았다", relevance=0.2)]) == []
+
+
+def test_a_brokerage_authoring_a_view_must_score_zero_on_its_own_row():
+    """Ricky's standing rule (MANUAL-TASKS §4). The ticker on this row is the
+    brokerage, so a sign here is the SK하이닉스 reading leaking onto it.
+
+    Bucketed 애매 on purpose: the sign-vs-bucket rules say nothing about that
+    bucket, so this is the case only the author rule can reach."""
+    (conflict,) = score_conflicts(
+        [
+            _scored(
+                "ambiguous",
+                "한투증권, SK하이닉스 목표주가 상향 제시했다",
+                name="한국금융지주",
+                polarity=0.5,
+            )
+        ]
+    )
+    assert "증권사" in conflict["reason"]
+
+
+def test_a_brokerages_own_results_are_not_caught_by_the_author_rule():
+    assert (
+        score_conflicts([_scored("ambiguous", "한국투자증권 2분기 순이익 1조", polarity=0.5)]) == []
+    )
+
+
+def test_an_unscored_dimension_raises_nothing():
+    """`score_conflicts` runs mid-labelling, where most dimensions are absent."""
+    assert score_conflicts([_scored("positive", "삼성전자 2분기 최대 실적")]) == []
+
+
+def test_partial_progress_is_merged_back_onto_its_article(tmp_path):
+    """`collate_scores` drops incomplete rows, which is right for the finished
+    set and wrong here: a conflict is worth seeing before all five arrive."""
+    progress = tmp_path / "scores.jsonl"
+    progress.write_text(
+        "\n".join(
+            json.dumps(row, ensure_ascii=False)
+            for row in _score_rows("a1", relevance=0.9, polarity=0.2)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    picked = [_article("a1", "005930", "positive", "삼성전자 2분기 최대 실적")]
+    (row,) = scored_rows(progress, picked)
+    assert (row["relevance"], row["polarity"]) == (0.9, 0.2)
+    assert row["title"] == "삼성전자 2분기 최대 실적"
+
+
+def test_a_rescored_dimension_wins_when_progress_is_merged(tmp_path):
+    progress = tmp_path / "scores.jsonl"
+    rows = _score_rows("a1", relevance=0.9) + _score_rows("a1", relevance=0.2)
+    progress.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8"
+    )
+    picked = [_article("a1", "005930", "positive", "초고수는 삼성전자를 담았다")]
+    (row,) = scored_rows(progress, picked)
+    assert row["relevance"] == 0.2
+    assert score_conflicts([row]) == []
 
 
 def test_polarity_alone_accepts_negative_values():

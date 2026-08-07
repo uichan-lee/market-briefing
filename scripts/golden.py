@@ -72,16 +72,34 @@ POOL_SIZE = 240
 # from the corpus — an example drawn from the pool would put a suggested answer
 # next to an article that is about to be scored.
 DIMENSIONS = (
+    # `relevance` used to read "실적·주가와 얼마나 관련되나" while every anchor
+    # below it was written on 손익. 수급 기사 is exactly where the two part: a
+    # 매매동향 column is all about 주가 and touches no line of the income
+    # statement. Ricky labelled the first pass by the summary line and gave six
+    # 매일경제 「주식 초고수는 지금」 articles relevance 0.6–0.9, which was
+    # faithful to the text he was shown and inconsistent with the ladder.
+    #
+    # Resolved toward 손익 on 2026-08-07, for two reasons. It puts `relevance`
+    # on the same axis as `intensity` — does this move a line of this company's
+    # P&L — so the five dimensions measure five different things. And
+    # `news_polarity` is a *relevance-weighted* average polarity (SPEC §2.2③),
+    # so a high-relevance 매매동향 column would enter the rating with the weight
+    # of an earnings surprise, on top of the flow it already contributes through
+    # `foreign_flow_5d`.
+    #
+    # The six affected scores are re-asked by `label --redo relevance`; the rule
+    # in `score_conflicts` is what finds them.
     (
         "relevance",
         0.0,
         1.0,
-        "이 회사의 실적·주가와 얼마나 관련되나",
+        "이 회사의 손익에 얼마나 닿나",
         (
             "0.0  이름만 스쳐감 — 리포트 작성 증권사, 업종 나열, 인사·채용·게시판",
             "0.3  회사 얘기지만 손익과 연결이 멀다 — 행사, MOU, 수상, 사회공헌",
             "0.7  본업에 닿는다 — 신제품, 수주, 증설, 점유율, 경쟁구도",
             "1.0  숫자가 직접 나온다 — 실적, 가이던스, 계약금액, 목표주가",
+            "수급·매매동향은 주가 얘기지만 손익에는 닿지 않는다 — 0.0~0.3.",
         ),
     ),
     (
@@ -507,6 +525,120 @@ def find_flags(triaged: Sequence[dict]) -> list[dict]:
     return unique
 
 
+# --- rules over the scores -------------------------------------------------
+#
+# The same device as `find_flags`, one stage later. `find_flags` compares two of
+# Ricky's bucket decisions against each other; these compare a number he gave
+# against a bucket he gave, or against a rule he stated himself. Neither ever
+# proposes a value, for the reason at the top of this file: `polarity` is what
+# the bake-off measures most directly, so a number originating with a model
+# would turn the bake-off into a similarity test against that model.
+#
+# Everything here is a warning, never a verify failure. A conflict means two of
+# Ricky's decisions disagree; which one gives way is his call, and a check that
+# forced a change would be supplying the answer through the back door.
+
+# Titles about who is buying, not about what the company earns. Narrow on
+# purpose: "실적" or "매출" would catch the articles this rule exists to spare.
+_MARKET_STRUCTURE = (
+    "초고수",
+    "차익실현",
+    "차익 실현",
+    "수급",
+    "매수세",
+    "매도세",
+    "공매도",
+    "패시브",
+    "지수 편입",
+    "거래대금",
+    "순매수",
+    "순매도",
+)
+
+# Above this, a number is disagreeing with its bucket rather than shading it.
+_SIGN_CONFLICT = 0.4
+_STRUCTURE_RELEVANCE = 0.5
+
+
+def score_conflicts(rows: Sequence[dict]) -> list[dict]:
+    """Scores that contradict the bucket beside them, or a rule Ricky stated.
+
+    Takes collated rows — one per (article, ticker), carrying ``bucket`` and
+    whichever dimensions have been scored so far — so it works mid-run on
+    partial progress as well as on the finished set.
+    """
+    conflicts: list[dict] = []
+
+    def add(row: dict, dimension: str, reason: str) -> None:
+        conflicts.append(
+            {
+                "article_id": row["article_id"],
+                "ticker": row["ticker"],
+                "dimension": dimension,
+                "reason": reason,
+            }
+        )
+
+    for row in rows:
+        bucket = row.get("bucket", "")
+        polarity = row.get("polarity")
+        relevance = row.get("relevance")
+        title = row.get("title", "")
+
+        if polarity is not None:
+            polarity = float(polarity)
+            if bucket == "positive" and polarity <= 0:
+                add(row, "polarity", f"긍정 버킷인데 polarity={polarity:+.1f}")
+            elif bucket == "negative" and polarity >= 0:
+                add(row, "polarity", f"부정 버킷인데 polarity={polarity:+.1f}")
+            elif bucket == "irrelevant" and abs(polarity) >= _SIGN_CONFLICT:
+                add(row, "polarity", f"무관 버킷인데 polarity={polarity:+.1f}")
+
+            # Ricky's own standing rule (MANUAL-TASKS §4): a brokerage named as
+            # the author of a view about someone else scores 0 on that row.
+            if _is_author_mention(row) and abs(polarity) >= 0.2:
+                add(
+                    row,
+                    "polarity",
+                    f"증권사가 남의 회사 견해의 작성자인데 polarity={polarity:+.1f} "
+                    "— 이 행의 종목은 증권사입니다",
+                )
+
+        if relevance is not None:
+            relevance = float(relevance)
+            if bucket == "irrelevant" and relevance >= _STRUCTURE_RELEVANCE:
+                add(row, "relevance", f"무관 버킷인데 relevance={relevance:.1f}")
+            elif relevance >= _STRUCTURE_RELEVANCE and any(
+                word in title for word in _MARKET_STRUCTURE
+            ):
+                add(
+                    row,
+                    "relevance",
+                    f"수급·매매동향 기사인데 relevance={relevance:.1f} — 손익 기준이면 0.0~0.3",
+                )
+
+    return conflicts
+
+
+def scored_rows(progress: Path, picked: Sequence[dict]) -> list[dict]:
+    """Merge whatever has been scored so far back onto the articles it came from.
+
+    ``collate_scores`` drops examples missing a dimension, which is right for
+    the finished set and wrong here — a conflict between two scores is worth
+    seeing before the other three arrive.
+    """
+    known = {key_of(row): row for row in picked}
+    merged: dict[tuple[str, str], dict] = {}
+    for record in read_jsonl(progress):
+        key = (record["article_id"], record["ticker"])
+        entry = merged.setdefault(key, dict(known.get(key, {})))
+        entry.setdefault("article_id", record["article_id"])
+        entry.setdefault("ticker", record["ticker"])
+        entry["bucket"] = record.get("bucket", entry.get("bucket", ""))
+        entry[record["dimension"]] = record["value"]
+    return list(merged.values())
+
+
 # --- display ---------------------------------------------------------------
 
 
@@ -700,6 +832,7 @@ def run_label(
     target: Path = LABELS,
     source: Sequence[dict] | None = None,
     progress: Path | None = None,
+    redo: str | None = None,
 ) -> int:
     triaged = read_jsonl(TRIAGE)
     if not triaged:
@@ -711,12 +844,30 @@ def run_label(
     scored = read_jsonl(progress)
     done = {(r["article_id"], r["ticker"], r["dimension"]) for r in scored}
 
+    # `--redo` re-asks only what a rule flags, never a whole dimension. Re-asking
+    # all 100 after a definition change would mean re-deriving the scale from
+    # memory, which is the thing scoring one dimension at a time exists to avoid.
+    reasons: dict[tuple[str, str, str], str] = {}
+    if redo:
+        for conflict in score_conflicts(scored_rows(progress, picked)):
+            if conflict["dimension"] != redo:
+                continue
+            key = (conflict["article_id"], conflict["ticker"], conflict["dimension"])
+            done.discard(key)
+            reasons[key] = conflict["reason"]
+        if not reasons:
+            print(f"\n{redo} 차원에서 규칙에 걸린 항목이 없습니다.")
+            return 0
+        print(f"\n재채점 — {redo} 차원에서 규칙에 걸린 {len(reasons)}건")
+
     print(f"\n2단계 — 채점. 대상 {len(picked)}건 × 차원 {len(DIMENSIONS)}개")
     print("  한 차원씩 전부 훑습니다. 한 척도를 끝까지 유지해야 숫자가 비교 가능해집니다.")
     print("  s = 건너뛰기    q = 저장하고 종료")
     print("  ⚠ 그 뒤 주가가 어떻게 됐는지 보지 말고 매길 것 (MANUAL-TASKS §4)")
 
     for name, low, high, hint, anchors in DIMENSIONS:
+        if redo and name != redo:
+            continue
         remaining = [row for row in picked if (row["article_id"], row["ticker"], name) not in done]
         if not remaining:
             continue
@@ -731,6 +882,9 @@ def run_label(
         for index, row in enumerate(remaining, start=1):
             print(format_article(row, index=index, total=len(remaining)))
             print(f"  분류: {row.get('bucket', '?')}")
+            reason = reasons.get((row["article_id"], row["ticker"], name))
+            if reason:
+                print(f"  ⚑ {reason}")
 
             while True:
                 answer = _prompt(f"  {name} [{low:g}~{high:g}] > ")
@@ -957,6 +1111,20 @@ def verify() -> tuple[bool, list[str]]:
 
     problems.extend(review_influence(labelled, read_jsonl(REVIEW)))
 
+    # Reported, never failed. See the note above `score_conflicts`: a conflict
+    # says two of Ricky's decisions disagree, and choosing which one gives way
+    # is exactly the judgement no automated check may make here.
+    context = {key_of(row): row for row in select_for_labelling(read_jsonl(TRIAGE))[0]}
+    conflicts = score_conflicts([{**context.get(key_of(row), {}), **row} for row in labelled])
+    if conflicts:
+        print(f"\n⚑ 규칙에 걸린 점수 {len(conflicts)}건 — 실패가 아니라 확인 요청입니다.")
+        for conflict in conflicts:
+            article = context.get((conflict["article_id"], conflict["ticker"]), {})
+            print(f"  [{conflict['dimension']}] {article.get('name', '?')} — {conflict['reason']}")
+            print(f"      {article.get('title', '')[:60]}")
+        first = conflicts[0]["dimension"]
+        print(f"  고치려면: uv run python -m scripts.golden label --redo {first}\n")
+
     recheck = read_jsonl(RECHECK)
     if recheck:
         first = {key_of(row): row for row in labelled}
@@ -1013,7 +1181,12 @@ def main(argv: list[str] | None = None) -> int:
     sampler.add_argument("--size", type=int, default=POOL_SIZE)
     sub.add_parser("triage", help="1단계 — 4지선다 분류")
     sub.add_parser("review", help="규칙이 걸러낸 분류를 다시 본다")
-    sub.add_parser("label", help="2단계 — 차원별 채점")
+    labeller = sub.add_parser("label", help="2단계 — 차원별 채점")
+    labeller.add_argument(
+        "--redo",
+        choices=[name for name, _, _, _, _ in DIMENSIONS],
+        help="그 차원에서 규칙에 걸린 항목만 다시 매긴다",
+    )
     sub.add_parser("recheck", help="하루 뒤 재라벨링 검사")
     sub.add_parser("verify", help="완성된 골든셋을 검사한다")
 
@@ -1026,7 +1199,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "review":
         return run_review()
     if args.command == "label":
-        return run_label()
+        return run_label(redo=args.redo)
     if args.command == "recheck":
         return run_recheck()
 
