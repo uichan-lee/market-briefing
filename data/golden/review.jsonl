@@ -7,3 +7,13 @@
 {"article_id": "079219cacf7c436541a8", "ticker": "039490", "flag": "rule:broker_as_author", "before": "ambiguous", "after": "irrelevant", "changed": true, "decided_by": "ricky", "decided_at": "2026-08-07T09:09:45+00:00"}
 {"article_id": "3f093a5caf9e1450aec1", "ticker": "016360", "flag": "rule:broker_as_author", "before": "ambiguous", "after": "irrelevant", "changed": true, "decided_by": "ricky", "decided_at": "2026-08-07T09:09:45+00:00"}
 {"article_id": "f2c664b7023129c2ed54", "ticker": "000270", "flag": "rule:comparative_winner", "before": "negative", "after": "positive", "changed": true, "decided_by": "ricky", "decided_at": "2026-08-07T09:09:45+00:00"}
+{"article_id": "3d480a17019e5fed1c00", "ticker": "066570", "flag": "contradiction", "before": "ambiguous", "after": "ambiguous", "changed": false, "decided_at": "2026-08-07T09:15:27+00:00"}
+{"article_id": "abf3fbde3c03af060d1f", "ticker": "066570", "flag": "contradiction", "before": "irrelevant", "after": "ambiguous", "changed": true, "decided_at": "2026-08-07T09:15:30+00:00"}
+{"article_id": "f72139209505b0824c3e", "ticker": "039490", "flag": "contradiction", "before": "ambiguous", "after": "ambiguous", "changed": false, "decided_at": "2026-08-07T09:15:45+00:00"}
+{"article_id": "0070fd8d9de2cfd0fd4e", "ticker": "039490", "flag": "contradiction", "before": "irrelevant", "after": "ambiguous", "changed": true, "decided_at": "2026-08-07T09:15:48+00:00"}
+{"article_id": "3ffb81bff8a05463742f", "ticker": "035420", "flag": "contradiction", "before": "irrelevant", "after": "irrelevant", "changed": false, "decided_at": "2026-08-07T09:15:53+00:00"}
+{"article_id": "9922aac6bac5f1adc8e9", "ticker": "035420", "flag": "contradiction", "before": "ambiguous", "after": "irrelevant", "changed": true, "decided_at": "2026-08-07T09:15:54+00:00"}
+{"article_id": "0d5f4b2604e0bcebafbb", "ticker": "071050", "flag": "shared_sign", "before": "positive", "after": "irrelevant", "changed": true, "decided_at": "2026-08-07T09:16:12+00:00"}
+{"article_id": "0d5f4b2604e0bcebafbb", "ticker": "000660", "flag": "shared_sign", "before": "positive", "after": "positive", "changed": false, "decided_at": "2026-08-07T09:16:14+00:00"}
+{"article_id": "f39dd617a7827f8b77d2", "ticker": "005380", "flag": "shared_sign", "before": "negative", "after": "negative", "changed": false, "decided_at": "2026-08-07T10:12:07+00:00"}
+{"article_id": "f39dd617a7827f8b77d2", "ticker": "000270", "flag": "shared_sign", "before": "negative", "after": "negative", "changed": false, "decided_at": "2026-08-07T10:12:10+00:00"}
