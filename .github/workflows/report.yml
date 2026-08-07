@@ -11,9 +11,31 @@ name: report
 #            from the Tiingo preview path; Alpaca refuses the current UTC day.
 #   evening  12:37 UTC Mon–Fri = 21:37 KST, six hours after the KRX close.
 #            The canonical run: KRX + Alpaca, and the one that persists ratings.
+#
+# The morning run is declared three times because a briefing that arrives after
+# the opening bell has missed its entire purpose, and both scheduled report runs
+# on record were late: the evening one by 2h19m on 2026-08-06, the morning one
+# by 3h25m on 2026-08-07, which put a pre-open briefing in the inbox at 10:35
+# KST — an hour and a half after the market opened.
+#
+# Each cron is an independent draw against whatever makes GitHub drop or delay a
+# firing, so three of them turn one bad draw into a late report instead of a
+# useless one. The `Already published` step below makes the extra firings free:
+# whichever one lands first publishes, the rest exit before spending anything.
+#
+# All three sit between the US close and the KOSPI open. The lower bound is the
+# *winter* US close of 06:00 KST rather than the 05:00 DST one, since a cron
+# line cannot move with DST — and the upper bound is 09:00 KST.
+#
+# The evening run gets no backstop on purpose. Its collectors include kr_flow,
+# at 124 KRX requests against a block observed near 250, so two evening runs in
+# one day is the one schedule change that could take out the data source. The
+# morning run touches no KRX endpoint, which is what makes duplicating it safe.
 on:
   schedule:
-    - cron: "7 22 * * 0-4" # morning
+    - cron: "7 22 * * 0-4" # morning   07:07 KST — primary
+    - cron: "47 22 * * 0-4" # morning   07:47 KST — backstop
+    - cron: "23 23 * * 0-4" # morning   08:23 KST — last chance before the open
     - cron: "37 12 * * 1-5" # evening
   workflow_dispatch:
     inputs:
@@ -53,21 +75,73 @@ jobs:
         with:
           enable-cache: true
 
+      # Matching the evening cron rather than the morning ones: morning has
+      # three lines and will grow more, and every added line would otherwise
+      # need a matching branch here to avoid silently running as evening.
       - name: Determine run
         id: which
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "run=${{ inputs.run }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "7 22 * * 0-4" ]; then
-            echo "run=morning" >> "$GITHUB_OUTPUT"
-          else
+          elif [ "${{ github.event.schedule }}" = "37 12 * * 1-5" ]; then
             echo "run=evening" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=morning" >> "$GITHUB_OUTPUT"
+          fi
+
+      # What makes the duplicate morning crons free. The renderer writes
+      # `reports/<KST date>-<run>.md`, so an existing file for today's run means
+      # a briefing already went out and this firing has nothing to add.
+      #
+      # Read from the remote, not the working tree, and this is the whole
+      # subtlety: `actions/checkout` fetches the commit the run was *created*
+      # at, so a firing delayed by three hours checks out a tree from before the
+      # backstop pushed anything and would find no file, exactly when the guard
+      # matters most. `git cat-file` against a freshly fetched FETCH_HEAD asks
+      # what is on the branch now.
+      #
+      # A run that failed leaves no report file, so a genuine failure is still
+      # retried by the next firing rather than suppressed. workflow_dispatch is
+      # never skipped: a manual re-render has to be able to replace a bad one.
+      #
+      # Scoped to the morning run, and that scope is load-bearing. The evening
+      # run has no backstop to deduplicate, so the guard could only ever cost it
+      # something — and nearly did: the file name carries the *reading* date, so
+      # the late evening run of 2026-08-06 rendered after midnight KST and left
+      # a `2026-08-07-evening.md` behind. A guard covering evening would have
+      # read that stale file and suppressed the real 2026-08-07 evening
+      # briefing. Caught by running this shell against the live remote before
+      # the workflow ever shipped.
+      - name: Already published
+        id: published
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" != "schedule" ] \
+            || [ "${{ steps.which.outputs.run }}" != "morning" ]; then
+            echo "guard applies only to the scheduled morning run"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          day="$(TZ=Asia/Seoul date +%F)"
+          target="reports/${day}-${{ steps.which.outputs.run }}.md"
+          git fetch --depth=1 origin "${GITHUB_REF_NAME}"
+
+          if git cat-file -e "FETCH_HEAD:${target}" 2>/dev/null; then
+            echo "${target} already published; nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "${target} not published yet; proceeding"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Collect
+        if: steps.published.outputs.skip != 'true'
         run: uv run python -m scripts.collect_daily --run "${{ steps.which.outputs.run }}"
 
       - name: Render and deliver
+        if: steps.published.outputs.skip != 'true'
         run: uv run python -m src.report.render --run "${{ steps.which.outputs.run }}"
 
       # Backstop for the case render's own failure notice cannot cover: the
