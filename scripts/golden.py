@@ -2,7 +2,8 @@
 
     uv run python -m scripts.golden sample     # 1. pick candidates
     uv run python -m scripts.golden triage     # 2. sort into four buckets  (~17 min)
-    uv run python -m scripts.golden label      # 3. score the chosen 100    (~30 min)
+    uv run python -m scripts.golden review     # 3. revisit the rule-flagged  (~5 min)
+    uv run python -m scripts.golden label      # 4. score the chosen 100    (~30 min)
     uv run python -m scripts.golden recheck    # 4. next day, re-label ten
     uv run python -m scripts.golden verify     # 5. check the result
 
@@ -44,6 +45,7 @@ CANDIDATES = GOLDEN / "candidates.jsonl"
 TRIAGE = GOLDEN / "triage.jsonl"
 LABELS = GOLDEN / "v1.jsonl"
 RECHECK = GOLDEN / "recheck.jsonl"
+REVIEW = GOLDEN / "review.jsonl"
 
 # SPEC §7.3 composition: key → (stored name, prompt label, progress label).
 # The progress label is separate because "명백한 긍정" and "명백한 부정" share a
@@ -279,9 +281,29 @@ def key_of(row: dict) -> tuple[str, str]:
     return (row["article_id"], row["ticker"])
 
 
+def latest_triage(triaged: Sequence[dict]) -> list[dict]:
+    """One row per example, the most recent decision winning.
+
+    ``triage.jsonl`` is append-only, so a label changed during `review` lands as
+    a second row for the same key rather than replacing the first. Nothing Ricky
+    typed is ever rewritten; the readers resolve it. Original order is kept so
+    that `select_for_labelling` still picks in triage order — a changed label
+    keeps its original position rather than jumping to the end of its bucket.
+    """
+    order: list[tuple[str, str]] = []
+    newest: dict[tuple[str, str], dict] = {}
+    for row in triaged:
+        key = key_of(row)
+        if key not in newest:
+            order.append(key)
+        newest[key] = row
+    return [newest[key] for key in order]
+
+
 # --- selection after triage ------------------------------------------------
 
 
+SAME_EVENT_SIMILARITY = 0.5
 """Title overlap above which two *different* articles are one event.
 
 Jaccard over title tokens. Measured against the first real triage pass: at 0.5
@@ -289,7 +311,6 @@ every pair it caught was genuinely the same story carried by several outlets —
 한화에어로's UAM contract cancellation appeared three times, HD현대일렉's
 transformer milestone twice — and nothing distinct was merged.
 """
-SAME_EVENT_SIMILARITY = 0.5
 
 
 def _title_tokens(title: str) -> set[str]:
@@ -336,7 +357,7 @@ def select_for_labelling(
     """
     picked: list[dict] = []
     counts: dict[str, int] = {name: 0 for name, _, _ in BUCKETS.values()}
-    for row in triaged:
+    for row in latest_triage(triaged):
         bucket = row["bucket"]
         if counts.get(bucket, 0) >= per_bucket:
             continue
@@ -345,6 +366,145 @@ def select_for_labelling(
         counts[bucket] = counts.get(bucket, 0) + 1
         picked.append(row)
     return picked, counts
+
+
+# --- flags for review ------------------------------------------------------
+#
+# Every flag below is a **rule**, never an opinion about a particular article.
+# That distinction is the whole design. Ricky asked for suspicious labels to be
+# surfaced rather than corrected, and the obvious way to do that would be for
+# Claude to read the set and say which ones look wrong — which is the golden
+# set's one forbidden move wearing a different hat. Flags chosen per article
+# would still steer the labels toward the model that chose them, and would do it
+# invisibly, because only the disagreements get surfaced.
+#
+# A rule is safe where a judgement is not, for three reasons: it applies to
+# every article alike rather than to the ones a model happened to dislike, it is
+# written down and auditable before anyone sees an answer, and it points at a
+# *conflict between two of Ricky's own decisions* rather than at a preferred
+# label. `run_review` never shows a suggested bucket for that last reason.
+#
+# CLAUDE.md's determinism-first rule reaches the same place from the other
+# direction: this is string matching over labels Ricky already made, so an LLM
+# call here would be both unjustified and unsafe.
+
+# Watchlist names whose articles are usually *about somebody else*. A brokerage
+# is named as the author of a view far more often than as the subject of news,
+# and the resolver cannot tell the two apart.
+_AUTHOR_LIKE = ("증권", "금융지주", "자산운용")
+
+# A brokerage is the author, not the subject, when its name appears next to one
+# of these. Deliberately narrow: matching "밝혔다" alone would catch the
+# company's own announcements too.
+_AUTHOR_MARKERS = (
+    "목표가",
+    "목표주가",
+    "투자의견",
+    "제시했다",
+    "평가했다",
+    "진단했다",
+    "분석이 나왔다",
+    "전망했다",
+    "대해",
+)
+
+
+def _is_author_mention(row: dict) -> bool:
+    """Whether a brokerage row reads as the author of a view about someone else."""
+    if not any(marker in row.get("name", "") for marker in _AUTHOR_LIKE):
+        return False
+    text = f"{row.get('title', '')} {row.get('description', '')}"
+    short = row.get("name", "")[:4]
+    # Its own results are the counter-case and must never be flagged: the name
+    # sits next to its own numbers rather than next to a view about a third party.
+    own_news = ("영업이익", "순이익", "실적", "출시", "협약", "MOU", "승진", "채용")
+    if any(word in row.get("title", "") for word in own_news) and short in row.get("title", ""):
+        return False
+    return any(marker in text for marker in _AUTHOR_MARKERS)
+
+
+def find_flags(triaged: Sequence[dict]) -> list[dict]:
+    """Label pairs that conflict with each other, or with a stated rule.
+
+    Returns one entry per row worth a second look, each carrying the reason and
+    the evidence — never a proposed answer.
+    """
+    flags: list[dict] = []
+
+    # 1. The same story, the same ticker, two different buckets. Whatever the
+    #    right answer is, both cannot be it.
+    for index, row in enumerate(triaged):
+        for other in triaged[index + 1 :]:
+            if row["ticker"] != other["ticker"] or row["bucket"] == other["bucket"]:
+                continue
+            if not _same_event(row, other):
+                continue
+            for side, against in ((row, other), (other, row)):
+                flags.append(
+                    {
+                        "article_id": side["article_id"],
+                        "ticker": side["ticker"],
+                        "flag": "contradiction",
+                        "reason": (
+                            f"같은 사건인데 버킷이 다릅니다: 이 건은 '{side['bucket']}', "
+                            f"'{against['title'][:40]}'({against['outlet']})는 "
+                            f"'{against['bucket']}'"
+                        ),
+                    }
+                )
+
+    # 2. One article, several tickers, all in one bucket. Correct whenever the
+    #    story is good or bad for everyone in it, and wrong whenever it is a
+    #    comparison — which the rule cannot tell apart, so it asks.
+    by_article: dict[str, list[dict]] = {}
+    for row in triaged:
+        by_article.setdefault(row["article_id"], []).append(row)
+    for group in by_article.values():
+        if len(group) < 2 or len({row["bucket"] for row in group}) != 1:
+            continue
+        if group[0]["bucket"] not in {"positive", "negative"}:
+            continue
+        names = ", ".join(row["name"] for row in group)
+        for row in group:
+            flags.append(
+                {
+                    "article_id": row["article_id"],
+                    "ticker": row["ticker"],
+                    "flag": "shared_sign",
+                    "reason": (
+                        f"기사 하나에 {names} 가 모두 '{group[0]['bucket']}'입니다. "
+                        f"한쪽이 다른 쪽에 밀렸다는 내용이면 부호가 갈려야 합니다."
+                    ),
+                }
+            )
+
+    # 3. A brokerage matched as the author of a view about a third party.
+    #    Silent once the row already sits in 무관: Ricky's standing rule
+    #    (MANUAL-TASKS §4) is that an author mention belongs there, so a row
+    #    that agrees with the rule has nothing left to decide. Flagging it
+    #    anyway would bury the rows that do disagree.
+    for row in triaged:
+        if row["bucket"] != "irrelevant" and _is_author_mention(row):
+            flags.append(
+                {
+                    "article_id": row["article_id"],
+                    "ticker": row["ticker"],
+                    "flag": "author_mention",
+                    "reason": (
+                        f"{row['name']}이 다른 회사에 대한 견해의 '작성자'로 잡혔습니다. "
+                        f"기사의 주어가 이 회사인지 확인이 필요합니다."
+                    ),
+                }
+            )
+
+    seen: set[tuple[str, str, str]] = set()
+    unique: list[dict] = []
+    for flag in flags:
+        key = (flag["article_id"], flag["ticker"], flag["flag"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(flag)
+    return unique
 
 
 # --- display ---------------------------------------------------------------
@@ -619,6 +779,80 @@ def _finalise_labels(progress: Path, target: Path) -> int:
     return len(complete)
 
 
+def run_review() -> int:
+    """Walk the rule-flagged labels. Ricky keeps or changes each; nothing else does.
+
+    Every outcome is written to ``review.jsonl``, kept even when nothing
+    changes. That record is the point as much as the corrections are: it makes
+    the flagging's influence on the finished set a number rather than a
+    reassurance. `verify` reports it, and if the bake-off ever ranks models
+    differently on the flagged subset than on the rest, the record is what makes
+    that checkable after the fact.
+    """
+    triaged = read_jsonl(TRIAGE)
+    if not triaged:
+        print("분류 결과가 없습니다. 먼저 `triage`를 실행하세요.")
+        return 1
+
+    current = {key_of(row): row for row in latest_triage(triaged)}
+    flags = find_flags(list(current.values()))
+    decided = {(r["article_id"], r["ticker"], r["flag"]) for r in read_jsonl(REVIEW)}
+    remaining = [f for f in flags if (f["article_id"], f["ticker"], f["flag"]) not in decided]
+
+    if not remaining:
+        print(f"\n검토할 flag가 없습니다. (전체 {len(flags)}건 모두 판정 완료)")
+        return 0
+
+    print(f"\n검토 — 규칙이 걸러낸 {len(remaining)}건 (전체 flag {len(flags)}건)")
+    print("  전부 '두 판단이 서로 안 맞는다'는 지적이지, 정답 제시가 아닙니다.")
+    print("  그대로가 맞다고 판단되면 Enter를 누르면 됩니다. 그것도 기록됩니다.\n")
+    for key, (_, label, _) in BUCKETS.items():
+        print(f"  {key} = {label}")
+    print("  Enter = 그대로 유지    s = 나중에    q = 저장하고 종료\n")
+
+    for index, flag in enumerate(remaining, start=1):
+        row = current.get((flag["article_id"], flag["ticker"]))
+        if row is None:
+            continue
+
+        print(format_article(row, index=index, total=len(remaining)))
+        print(f"  현재 분류: {row['bucket']}")
+        print(f"  ⚑ {flag['flag']} — {flag['reason']}")
+
+        while True:
+            answer = _prompt("  유지=Enter / 변경=[1/2/3/4] / s / q > ").lower()
+            if answer == "q":
+                print(f"\n저장 완료. {REVIEW}")
+                return 0
+            if answer == "s":
+                break
+            if answer == "" or answer in BUCKETS:
+                after = BUCKETS[answer][0] if answer else row["bucket"]
+                if after != row["bucket"]:
+                    append_jsonl(TRIAGE, {**row, "bucket": after})
+                    current[key_of(row)] = {**row, "bucket": after}
+                append_jsonl(
+                    REVIEW,
+                    {
+                        "article_id": row["article_id"],
+                        "ticker": row["ticker"],
+                        "flag": flag["flag"],
+                        "before": row["bucket"],
+                        "after": after,
+                        "changed": after != row["bucket"],
+                        "decided_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+                    },
+                )
+                moved = f" → {after}" if after != row["bucket"] else " 유지"
+                print(f"  → {row['bucket']}{moved}")
+                break
+            print("  Enter, 1, 2, 3, 4, s, q 중 하나를 입력하세요.")
+
+    changed = sum(1 for r in read_jsonl(REVIEW) if r.get("changed"))
+    print(f"\n검토 완료. 판정 {len(read_jsonl(REVIEW))}건 중 변경 {changed}건 → {REVIEW}")
+    return 0
+
+
 def run_recheck(*, size: int = RECHECK_SIZE, seed: int = 20260807) -> int:
     """Re-label a subset a day later, without showing the first answers.
 
@@ -648,6 +882,42 @@ def run_recheck(*, size: int = RECHECK_SIZE, seed: int = 20260807) -> int:
 
 
 # --- verification ----------------------------------------------------------
+
+
+# Share of the finished set that may be reworked after a flag before the
+# flagging stops being a nudge and starts being an author. No measurement backs
+# this number — it is a declared limit, set before any flag was reviewed so that
+# it cannot be widened to fit whatever the review turned out to do.
+MAX_REVIEW_INFLUENCE = 0.15
+
+
+def review_influence(labelled: Sequence[dict], reviewed: Sequence[dict]) -> list[str]:
+    """How much of the finished set changed because a rule flagged it.
+
+    The flags in :func:`find_flags` are rules rather than opinions, which is what
+    keeps them out of the labels. It is still worth counting: rules were written
+    by reading this corpus, and a rule that fires on a fifth of the set and
+    changes every label it touches has authored a fifth of the answers however
+    mechanical each step looked.
+
+    Reported as a number rather than trusted as an argument. If the bake-off
+    ever ranks models differently on the flagged subset than on the rest,
+    ``review.jsonl`` is what makes that checkable after the fact.
+    """
+    if not labelled:
+        return []
+    changed = {(row["article_id"], row["ticker"]) for row in reviewed if row.get("changed")} & {
+        key_of(row) for row in labelled
+    }
+    share = len(changed) / len(labelled)
+    if share > MAX_REVIEW_INFLUENCE:
+        return [
+            f"검토 후 바뀐 항목이 {len(changed)}/{len(labelled)}건 ({share:.0%}) — "
+            f"한도 {MAX_REVIEW_INFLUENCE:.0%}를 넘었습니다. 규칙이 라벨을 대신 쓰고 있는지 "
+            f"확인이 필요하고, 베이크오프는 flag된 항목을 뺀 부분집합에서도 같은 순위가 "
+            f"나오는지 함께 봐야 합니다"
+        ]
+    return []
 
 
 def verify() -> tuple[bool, list[str]]:
@@ -684,6 +954,8 @@ def verify() -> tuple[bool, list[str]]:
     strong = sum(1 for row in labelled if abs(float(row.get("polarity", 0))) >= 0.5)
     if labelled and strong < len(labelled) * 0.25:
         problems.append(f"|polarity| ≥ 0.5 인 항목이 {strong}건뿐 — 쉬운 사례만 모였을 수 있습니다")
+
+    problems.extend(review_influence(labelled, read_jsonl(REVIEW)))
 
     recheck = read_jsonl(RECHECK)
     if recheck:
@@ -740,7 +1012,8 @@ def main(argv: list[str] | None = None) -> int:
     sampler = sub.add_parser("sample", help="후보를 추출한다")
     sampler.add_argument("--size", type=int, default=POOL_SIZE)
     sub.add_parser("triage", help="1단계 — 4지선다 분류")
-    sub.add_parser("label", help="2단계 — 5개 차원 채점")
+    sub.add_parser("review", help="규칙이 걸러낸 분류를 다시 본다")
+    sub.add_parser("label", help="2단계 — 차원별 채점")
     sub.add_parser("recheck", help="하루 뒤 재라벨링 검사")
     sub.add_parser("verify", help="완성된 골든셋을 검사한다")
 
@@ -750,6 +1023,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_sample(args.size)
     if args.command == "triage":
         return run_triage()
+    if args.command == "review":
+        return run_review()
     if args.command == "label":
         return run_label()
     if args.command == "recheck":

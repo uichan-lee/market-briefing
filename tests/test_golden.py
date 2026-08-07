@@ -21,7 +21,10 @@ from scripts.golden import (
     PER_BUCKET,
     InputError,
     collate_scores,
+    find_flags,
+    latest_triage,
     parse_score,
+    review_influence,
     select_for_labelling,
     stratified_sample,
 )
@@ -164,6 +167,143 @@ def test_a_full_bucket_still_records_the_honest_label(tmp_path, monkeypatch, cap
     picked, counts = select_for_labelling(recorded)
     assert counts["positive"] == PER_BUCKET
     assert len(picked) == PER_BUCKET
+
+
+# --- flags -----------------------------------------------------------------
+
+
+def _article(article_id, ticker, bucket, title, *, name="삼성전자", desc="", outlet="연합뉴스"):
+    return {
+        "article_id": article_id,
+        "ticker": ticker,
+        "name": name,
+        "bucket": bucket,
+        "title": title,
+        "description": desc,
+        "outlet": outlet,
+    }
+
+
+def test_the_same_story_labelled_two_ways_is_flagged_on_both_sides():
+    """Whatever the right answer is, both cannot be it. Flagging one side only
+    would make the answer depend on which outlet happened to be read first."""
+    rows = [
+        _article("a1", "066570", "ambiguous", "LG전자, IFA 2026서 AI 홈 비전 공개", name="LG전자"),
+        _article("a2", "066570", "irrelevant", "LG전자, IFA 2026서 AI 홈 비전 공개", name="LG전자"),
+    ]
+    flagged = [f for f in find_flags(rows) if f["flag"] == "contradiction"]
+    assert {f["article_id"] for f in flagged} == {"a1", "a2"}
+
+
+def test_the_same_story_labelled_the_same_way_is_not_flagged():
+    rows = [
+        _article("a1", "066570", "ambiguous", "LG전자, IFA 2026 공개", name="LG전자"),
+        _article("a2", "066570", "ambiguous", "LG전자, IFA 2026 공개", name="LG전자"),
+    ]
+    assert [f for f in find_flags(rows) if f["flag"] == "contradiction"] == []
+
+
+def test_one_article_giving_two_tickers_the_same_sign_is_flagged():
+    """The comparative case: 현대차 losing ground to 기아 is not bad news for
+    both, and the rule cannot read which way round it is — so it asks."""
+    rows = [
+        _article(
+            "a1", "005380", "negative", "파업에 발목 잡힌 현대차…기아에 추월 허용", name="현대차"
+        ),
+        _article(
+            "a1", "000270", "negative", "파업에 발목 잡힌 현대차…기아에 추월 허용", name="기아"
+        ),
+    ]
+    flagged = [f for f in find_flags(rows) if f["flag"] == "shared_sign"]
+    assert len(flagged) == 2
+
+
+def test_opposite_signs_on_one_article_are_left_alone():
+    """Already the careful answer; flagging it would train the reviewer to
+    dismiss the flag."""
+    rows = [
+        _article("a1", "005930", "negative", "초고수 삼성전자 팔고 원전주 샀다"),
+        _article(
+            "a1", "034020", "positive", "초고수 삼성전자 팔고 원전주 샀다", name="두산에너빌리티"
+        ),
+    ]
+    assert [f for f in find_flags(rows) if f["flag"] == "shared_sign"] == []
+
+
+def test_a_brokerage_named_as_the_author_of_a_view_is_flagged():
+    rows = [
+        _article(
+            "a1",
+            "039490",
+            "negative",
+            "키움증권, 디어유 목표가↓",
+            name="키움증권",
+            desc="키움증권은 5일 디어유에 대해 목표주가를 낮췄다",
+        )
+    ]
+    assert [f["flag"] for f in find_flags(rows)] == ["author_mention"]
+
+
+def test_a_brokerages_own_results_are_not_flagged():
+    """The counter-case that keeps the rule usable — 삼성증권's own earnings are
+    genuinely about 삼성증권, and flagging them would bury the real ones."""
+    rows = [
+        _article(
+            "a1",
+            "016360",
+            "positive",
+            "삼성증권, 2분기 영업이익 6758억원…역대 최대",
+            name="삼성증권",
+            desc="삼성증권이 자산관리와 기업금융 부문 성장에 힘입어 최대 실적을 경신했다",
+        )
+    ]
+    assert find_flags(rows) == []
+
+
+def test_an_author_mention_already_in_the_irrelevant_bucket_is_silent():
+    """Ricky's standing rule sends author mentions to 무관, so a row that
+    already agrees has nothing to decide."""
+    rows = [
+        _article(
+            "a1",
+            "039490",
+            "irrelevant",
+            "팔로알토, AI 보안 수요 확대-키움",
+            name="키움증권",
+            desc="키움증권은 팔로알토에 대해 평가했다",
+        )
+    ]
+    assert find_flags(rows) == []
+
+
+# --- append-only revisions -------------------------------------------------
+
+
+def test_a_relabelled_example_keeps_its_place_and_its_newest_bucket():
+    """`review` appends rather than rewriting, so the reader resolves it. Order
+    must survive: selection walks triage order, and a corrected label jumping to
+    the end of its bucket would silently change which examples make the 100."""
+    rows = [
+        _article("a1", "005930", "positive", "first"),
+        _article("a2", "005930", "negative", "second"),
+        _article("a1", "005930", "irrelevant", "first"),
+    ]
+    latest = latest_triage(rows)
+    assert [r["article_id"] for r in latest] == ["a1", "a2"]
+    assert latest[0]["bucket"] == "irrelevant"
+
+
+def test_review_influence_is_silent_below_the_declared_limit():
+    labelled = [_article(f"a{i}", "005930", "positive", "t") for i in range(20)]
+    reviewed = [{"article_id": "a0", "ticker": "005930", "changed": True}]
+    assert review_influence(labelled, reviewed) == []
+
+
+def test_review_influence_reports_when_the_rules_touched_too_much():
+    labelled = [_article(f"a{i}", "005930", "positive", "t") for i in range(10)]
+    reviewed = [{"article_id": f"a{i}", "ticker": "005930", "changed": True} for i in range(5)]
+    (problem,) = review_influence(labelled, reviewed)
+    assert "50%" in problem
 
 
 # --- score parsing ---------------------------------------------------------
