@@ -21,34 +21,50 @@
 # Every input is already a 252-trading-day rolling z-score (SPEC §5), so the
 # weights below are comparable to each other and the composite is itself in
 # roughly z units. Signs are deliberate: `short_ratio` rising is bearish.
-weights:
+# Only features src/features/compute.py actually produces belong here. Every
+# name below is in its FEATURES tuple; a name that is not lands in
+# `deferred_weights` instead, and tests/test_config.py holds the two apart.
+weights:                     # sums to 0.75
   foreign_flow_5d: 0.30      # SPEC §3.1 calls this the most differentiated KR feature
   inst_flow_5d: 0.15
-  news_polarity: 0.20        # aggregated per SPEC §6.2, relevance-weighted
   rel_strength_20d: 0.15
-  rev_4w: 0.15               # consensus EPS revision
   short_ratio: -0.10
   valuation_band: 0.05       # 3-year PBR percentile, low = cheap = positive
 
+# Designed weight for features that have no producer yet. Read by the report
+# header so the briefing keeps naming what is absent; never read by rate().
+#
+# This key exists because listing them above was actively harmful, not merely
+# useless: rate() computes `score = raw ÷ coverage`, so 0.35 of weight that
+# never arrives inflated every score by 1.47× and left the 0.5 coverage floor
+# 18 points of margin instead of 50 — enough that losing one more feature
+# forced 관망 by arithmetic rather than by evidence. Measured against
+# 2026-08-07: moving these two changed 8 of 31 published ratings and cleared
+# all five tickers that the floor had been forcing to 관망. PREREGISTRATION §R,
+# 2026-08-08.
+#
+# When a producer arrives, move the name up and rebalance the actives rather
+# than adding on top — weights are relative shares, so appending silently
+# rescales what every existing weight means.
+deferred_weights:            # sums to 0.35
+  news_polarity: 0.20        # aggregated per SPEC §6.2 — the LLM stage, SPEC §12 steps 6–8
+  rev_4w: 0.15               # 4-week consensus EPS change — needs an estimates vendor
+
   # --- medium-term features (SPEC §5, added v0.5) -----------------------------
-  # Inactive until src/features/compute.py produces them. Uncommenting early
-  # would be actively harmful, not merely useless: rate() renormalizes over the
-  # features that are present, so a weight for a feature that never arrives
-  # lowers every ticker's weight_coverage and can trip the 0.5 floor below,
-  # forcing 관망 on tickers that have complete data for everything that exists.
-  #
-  # When activating, rebalance the seven above rather than adding on top —
-  # weights are read as relative shares, and appending 0.25 of new weight
-  # silently rescales what every existing weight means.
+  # Left commented rather than listed above, and the distinction is deliberate:
+  # these were never activated, so unlike the two names above they have never
+  # distorted a published rating. Listing them would make the header name five
+  # absent features and restate the design total as 1.35, which is a separate
+  # decision from the defect this key was added to fix.
   #
   # rel_strength_120d: 0.10    # 120-day return − sector, the slow companion to rel_strength_20d
   # flow_persistence_60d: 0.10 # 60-day cumulative foreign net buying ÷ trading value
   # rev_trend_12w: 0.05        # 12-week consensus EPS change
   #
   # Macro and industry regime indicators (SPEC §2.2⑨) deliberately do NOT belong
-  # here. They are common to every ticker, so they cancel in the sector-excess
-  # return that PREREGISTRATION §8.4 evaluates against — they could add variance
-  # to this composite but never IC. They are reported as their own section.
+  # in either mapping. They are common to every ticker, so they cancel in the
+  # sector-excess return that PREREGISTRATION §8.4 evaluates against — they could
+  # add variance to this composite but never IC. They are their own section.
 
 # Cut points on the composite score. Symmetric by construction — an asymmetric
 # scale bakes in a directional prior, and any such prior belongs in the weights

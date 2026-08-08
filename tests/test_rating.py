@@ -222,10 +222,53 @@ def test_missing_cut_points_are_rejected():
 
 
 def test_the_committed_rating_config_loads_and_drives_a_rating():
+    """A uniform z=2.5 reaches 매수, not 강한 매수, because short_ratio pulls back.
+
+    It reached 강한 매수 until 2026-08-08, when news_polarity and rev_4w moved to
+    `deferred_weights`. That number was an artefact: this test fills every key in
+    `weights`, so it was crediting two features nothing produces.
+    """
     config = load_rating()
     result = rate("005930", dict.fromkeys(config["weights"], 2.5), config)
-    assert result.rating is Rating.STRONG_BUY
+    assert result.rating is Rating.BUY
     assert not result.low_confidence
+
+
+def test_the_outer_bucket_needs_a_z_of_two_point_seven():
+    """Pins where 강한 매수 begins, because that moved on 2026-08-08 and the cut
+    points did not.
+
+    The composite is **not** in z units: with coverage at 1.0 the score is
+    ``Σ|weight| × z``, so its scale tracks the total weight rather than z. Taking
+    0.35 of never-arriving weight out of `weights` therefore compressed the whole
+    scale by 0.75/1.10, and a uniform reading with every sign aligned — the shape
+    of a genuinely one-directional tape, short interest *falling* — now needs
+    z ≈ 2.67 to reach ±2.0 where it used to need z ≈ 1.82.
+
+    Left as measured rather than corrected: PREREGISTRATION §8.4 allows revising
+    cut points for distributional reasons, and doing it here, in the same change
+    that moved the scale, would make the two indistinguishable afterwards.
+    """
+    config = load_rating()
+
+    def aligned(z: float) -> dict[str, float]:
+        return {name: z if weight > 0 else -z for name, weight in config["weights"].items()}
+
+    assert rate("005930", aligned(2.5), config).rating is Rating.BUY
+    assert rate("005930", aligned(2.7), config).rating is Rating.STRONG_BUY
+    assert rate("005930", aligned(2.0), config).score == pytest.approx(1.5)
+
+
+def test_rate_ignores_deferred_weights():
+    """`deferred_weights` is the header's business. If rate() ever read it, the
+    phantom-weight defect would come straight back under a new key name."""
+    config = {**CONFIG, "deferred_weights": {"rev_4w": 0.15, "news_polarity": 0.20}}
+    with_deferred = rate("005930", {"foreign_flow_5d": 1.0, "news_polarity": 1.0}, config)
+    without = rate("005930", {"foreign_flow_5d": 1.0, "news_polarity": 1.0}, CONFIG)
+
+    assert with_deferred.weight_coverage == without.weight_coverage == 1.0
+    assert with_deferred.score == without.score
+    assert with_deferred.missing == ()
 
 
 def test_committed_config_marks_short_ratio_as_bearish():
@@ -258,3 +301,44 @@ def test_a_config_with_impossible_coverage_is_rejected_at_load(tmp_path):
     )
     with pytest.raises(ConfigError, match="min_weight_coverage"):
         load_rating(path)
+
+
+def test_a_feature_cannot_be_active_and_deferred_at_once(tmp_path):
+    """It would be counted as live weight and reported as absent in one run."""
+    path = tmp_path / "rating.yaml"
+    path.write_text(
+        "weights:\n  foreign_flow_5d: 1.0\n"
+        "deferred_weights:\n  foreign_flow_5d: 0.2\n"
+        "cut_points:\n  strong: 2.0\n  moderate: 1.0\n  weak: 0.4\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="both active and deferred"):
+        load_rating(path)
+
+
+def test_a_non_numeric_deferred_weight_is_rejected(tmp_path):
+    path = tmp_path / "rating.yaml"
+    path.write_text(
+        "weights:\n  foreign_flow_5d: 1.0\n"
+        "deferred_weights:\n  rev_4w: soon\n"
+        "cut_points:\n  strong: 2.0\n  moderate: 1.0\n  weak: 0.4\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="deferred weight"):
+        load_rating(path)
+
+
+def test_no_deferred_feature_already_has_a_producer():
+    """Catches the opposite drift: the feature arrived, the config did not move.
+    The header would keep calling it absent while rate() ignored its weight."""
+    from src.features.compute import FEATURES
+
+    deferred = load_rating().get("deferred_weights") or {}
+    assert not set(deferred) & set(FEATURES)
+
+
+def test_every_active_weight_has_a_producer():
+    """The defect this key was added for, pinned against the committed config."""
+    from src.features.compute import FEATURES
+
+    assert set(load_rating()["weights"]) <= set(FEATURES)

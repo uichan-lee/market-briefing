@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -23,11 +24,13 @@ from src.report.render import (
     ABSENT_SECTIONS,
     ReportInputs,
     _transmission_correlation,
+    load_rating_history,
     ratings_frame,
     render,
     render_header,
     render_ratings,
     render_scan,
+    render_shadow,
     volatility_z,
     write_ratings,
 )
@@ -40,14 +43,22 @@ RATING_CONFIG = {
     "weights": {
         "foreign_flow_5d": 0.30,
         "inst_flow_5d": 0.15,
-        "news_polarity": 0.20,
         "rel_strength_20d": 0.15,
-        "rev_4w": 0.15,
         "short_ratio": -0.10,
         "valuation_band": 0.05,
     },
+    "deferred_weights": {"news_polarity": 0.20, "rev_4w": 0.15},
     "cut_points": {"strong": 2.0, "moderate": 1.0, "weak": 0.4},
     "confidence": {"min_weight_coverage": 0.5, "max_rationale_terms": 4},
+}
+
+# The shape config/rating.yaml carried until 2026-08-08: a weight declared for a
+# feature nothing produces. Kept so the header's warning for that mistake stays
+# tested after the committed config stopped making it.
+LEGACY_RATING_CONFIG = {
+    **RATING_CONFIG,
+    "weights": {**RATING_CONFIG["weights"], "news_polarity": 0.20},
+    "deferred_weights": {},
 }
 
 
@@ -99,6 +110,31 @@ def test_the_header_lists_the_unbuilt_sections():
         assert section in header
 
 
+def test_the_header_names_the_features_that_do_not_exist_yet():
+    """The line above now reads 100%, which on its own would say the rating is
+    better-supported than it is. This is the line that keeps it honest."""
+    header = render_header(inputs())
+
+    assert "미구현 피처: news_polarity(0.20), rev_4w(0.15)" in header
+    assert "설계 가중치 1.10의 32%" in header
+
+
+def test_the_header_says_nothing_about_deferred_weights_when_there_are_none():
+    config = {**RATING_CONFIG, "deferred_weights": {}}
+    header = render_header(inputs(rating_config=config))
+
+    assert "미구현 피처" not in header
+    assert "등급 근거 충족도: 0.75/0.75 (100%)" in header
+
+
+def test_a_weight_for_a_feature_with_no_producer_is_still_flagged():
+    """The mistake `deferred_weights` was added to stop. Moving the two names
+    out of `weights` must not disarm the check that catches the next one."""
+    header = render_header(inputs(rating_config=LEGACY_RATING_CONFIG))
+
+    assert "⚠ 등급 근거 충족도: 0.75/0.95 (79%) — news_polarity 부재" in header
+
+
 def test_a_run_with_no_data_at_all_still_renders():
     """CLAUDE.md requires a partial report over no report, so empty inputs must
     produce a page rather than an exception."""
@@ -128,8 +164,7 @@ def test_a_failed_delivery_channel_reaches_the_header():
 
 def test_the_header_states_how_much_rating_weight_is_covered():
     header = render_header(inputs())
-    assert "0.75/1.10" in header
-    assert "news_polarity" in header and "rev_4w" in header
+    assert "0.75/0.75 (100%)" in header
 
 
 def test_an_ambiguous_ratio_over_the_threshold_is_flagged():
@@ -303,6 +338,108 @@ def test_ratings_are_persisted_without_overwriting(tmp_path):
 
 def test_an_empty_rating_frame_writes_nothing(tmp_path):
     assert write_ratings(pd.DataFrame(), tmp_path, DAY) is None
+
+
+def test_an_all_zero_coverage_frame_is_not_archived(tmp_path):
+    """What produced data/ratings/2026-08-07.parquet: 31 관망 for a session that
+    had not opened. render_ratings already refuses to publish this; persistence
+    ran first and archived it anyway."""
+    blank = {
+        t: rate(t, dict.fromkeys(RATING_CONFIG["weights"]), RATING_CONFIG) for t in ("005930",)
+    }
+    frame = ratings_frame(inputs(), blank)
+
+    assert not frame.empty
+    assert write_ratings(frame, tmp_path, DAY) is None
+    assert not (tmp_path / "ratings").exists()
+
+
+def test_one_covered_ticker_is_enough_to_archive(tmp_path):
+    """The guard must catch a broken run, not a thin one. A single ticker with a
+    single feature is a real session that happens to be sparse."""
+    results = {
+        "005930": rate("005930", {"foreign_flow_5d": 2.0}, RATING_CONFIG),
+        "000660": rate("000660", dict.fromkeys(RATING_CONFIG["weights"]), RATING_CONFIG),
+    }
+    assert write_ratings(ratings_frame(inputs(), results), tmp_path, DAY) is not None
+
+
+# --- the archive, read back ------------------------------------------------
+
+
+def _archive(directory: Path, name: str, day: dt.date, tickers: int = 2) -> None:
+    """One parquet under `directory`, shaped like ratings_frame()'s output."""
+    directory.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "date": [pd.Timestamp(day)] * tickers,
+            "ticker": [f"{i:06d}" for i in range(tickers)],
+            "rating": ["관망"] * tickers,
+            "score": [0.0] * tickers,
+            "weight_coverage": [0.5] * tickers,
+            "missing": [""] * tickers,
+        }
+    ).to_parquet(directory / name, index=False)
+
+
+def test_history_keeps_one_version_per_session(tmp_path):
+    """A session re-rendered four times is one session, not four.
+
+    Counting it four times is invisible today — ⑦ reads date.nunique() — and
+    corrupting at PREREGISTRATION §8.4, where these rows become an IC.
+    """
+    directory = tmp_path / "ratings"
+    for name in ("2026-08-06.parquet", "2026-08-06-v2.parquet", "2026-08-06-v3.parquet"):
+        _archive(directory, name, dt.date(2026, 8, 6))
+    _archive(directory, "2026-08-07.parquet", dt.date(2026, 8, 7))
+
+    history = load_rating_history(tmp_path)
+
+    assert len(history) == 4
+    assert history["date"].nunique() == 2
+
+
+def test_the_newest_version_is_the_one_kept(tmp_path):
+    directory = tmp_path / "ratings"
+    _archive(directory, "2026-08-06.parquet", dt.date(2026, 8, 6), tickers=1)
+    _archive(directory, "2026-08-06-v2.parquet", dt.date(2026, 8, 6), tickers=3)
+
+    assert len(load_rating_history(tmp_path)) == 3
+
+
+def test_version_ten_beats_version_two(tmp_path):
+    """Lexical sorting cannot do this. '-' (0x2D) precedes '.' (0x2E), so
+    `-v2.parquet` sorts before `.parquet`, and `-v10` before `-v2`."""
+    directory = tmp_path / "ratings"
+    _archive(directory, "2026-08-06-v2.parquet", dt.date(2026, 8, 6), tickers=2)
+    _archive(directory, "2026-08-06-v10.parquet", dt.date(2026, 8, 6), tickers=7)
+
+    assert len(load_rating_history(tmp_path)) == 7
+
+
+def test_an_unreadable_filename_is_kept_rather_than_dropped(tmp_path):
+    """Nothing else writes here, so a name this cannot parse is a surprise.
+    Silently discarding it is the failure mode CLAUDE.md puts first."""
+    directory = tmp_path / "ratings"
+    _archive(directory, "2026-08-06.parquet", dt.date(2026, 8, 6), tickers=2)
+    _archive(directory, "backup.parquet", dt.date(2026, 8, 6), tickers=2)
+
+    assert len(load_rating_history(tmp_path)) == 4
+
+
+def test_an_absent_archive_is_not_an_error(tmp_path):
+    assert load_rating_history(tmp_path).empty
+
+
+def test_the_shadow_section_counts_sessions_not_rows(tmp_path):
+    """⑦ must not read a re-rendered day as extra history."""
+    directory = tmp_path / "ratings"
+    for name in ("2026-08-06.parquet", "2026-08-06-v2.parquet"):
+        _archive(directory, name, dt.date(2026, 8, 6))
+
+    section = render_shadow(inputs(), load_rating_history(tmp_path))
+
+    assert "1일치" in section
 
 
 def test_the_footer_states_that_nothing_is_executed():

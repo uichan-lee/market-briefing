@@ -275,6 +275,20 @@ def load_rating(path: Path | None = None) -> dict[str, Any]:
         if not isinstance(weight, int | float):
             raise ConfigError(f"{path.name}: weight for {feature!r} is not a number")
 
+    # Designed weight for features nothing produces yet. The report header reads
+    # it so the briefing keeps naming what is absent; rate() never does. A name
+    # in both mappings is the one contradiction worth rejecting outright — it
+    # would be counted as active weight and reported as missing in the same run.
+    deferred = raw.get("deferred_weights") or {}
+    if not isinstance(deferred, dict):
+        raise ConfigError(f"{path.name}: 'deferred_weights' must be a mapping")
+    for feature, weight in deferred.items():
+        if not isinstance(weight, int | float):
+            raise ConfigError(f"{path.name}: deferred weight for {feature!r} is not a number")
+    both = sorted(deferred.keys() & weights.keys())
+    if both:
+        raise ConfigError(f"{path.name}: {both} are both active and deferred weights")
+
     cut_points = raw.get("cut_points")
     if not isinstance(cut_points, dict):
         raise ConfigError(f"{path.name}: 'cut_points' must be a mapping")

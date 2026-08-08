@@ -279,8 +279,14 @@ def test_an_unknown_ticker_or_day_yields_all_none():
     assert z_scores_for(out, "999999", days[-1]) == dict.fromkeys(FEATURES)
 
 
-def test_the_composite_survives_two_missing_features():
-    """news_polarity and rev_4w are absent by design; rate() must still work."""
+def test_the_five_built_features_cover_the_active_weights():
+    """What this module produces is exactly what the rating asks for.
+
+    Until 2026-08-08 the same five features covered only 0.75 of a declared 1.10,
+    because news_polarity and rev_4w carried live weight with no producer. They
+    now sit in `deferred_weights`, so full coverage here is the assertion that
+    the two mappings have not drifted apart again.
+    """
     from src.report.rating import rate
     from src.util.config import load_rating
 
@@ -295,9 +301,9 @@ def test_the_composite_survives_two_missing_features():
         },
         load_rating(),
     )
-    assert result.weight_coverage > 0.5
-    assert "news_polarity" in result.missing
-    assert "rev_4w" in result.missing
+    assert result.weight_coverage == 1.0
+    assert result.missing == ()
+    assert not result.low_confidence
 
 
 # --- loading --------------------------------------------------------------

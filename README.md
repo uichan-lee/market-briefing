@@ -67,11 +67,12 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 
 **The pipeline runs end to end today.** Collectors → features → computed rating → rendered briefing → email, twice a day, unattended. What is missing is the *news* half of the score: the LLM stage (SPEC §12 steps 6–8) is not built, so `news_polarity` produces nothing.
 
-> [!warning]
-> **Two weights are active for features that do not exist.** `news_polarity` (0.20) and `rev_4w` (0.15) are uncommented in `config/rating.yaml`, but nothing computes them. `rate()` renormalizes over the features actually present, so every ticker is capped at **0.75/1.10 = 68% weight coverage** against a `min_weight_coverage` floor of 0.50 — leaving 18 points of margin instead of 50. A ticker that also loses `foreign_flow_5d`, or any two of the mid-weight features, is forced to `관망` by arithmetic rather than by evidence. `config/rating.yaml`'s own comment calls doing this "actively harmful"; the two weights predate that comment and were never commented back out.
+**The two weights for features that do not exist are gone (2026-08-08).** `news_polarity` (0.20) and `rev_4w` (0.15) sat in `config/rating.yaml`'s `weights` with nothing computing them, so `rate()` renormalized against 1.10 of intended weight while only 0.75 could ever arrive — leaving 18 points of margin above the `min_weight_coverage: 0.5` floor instead of 50. They now live in a `deferred_weights` key that `rate()` never reads and the report header still names. It was not a bookkeeping change: because the composite is `Σ|weight| × z`, every score fell by 0.75/1.10 = 0.68×, **8 of 31 published ratings changed label**, and the five tickers the floor had been forcing to `관망` were released. Rank order is preserved, so PREREGISTRATION §8.4's IC, ICIR and quantile spread are unaffected — only the displayed bucket moved. Logged in [PREREGISTRATION §R](PREREGISTRATION.md).
 
-> [!warning]
-> **The rating archive counts some sessions more than once, and one session that never opened.** `load_rating_history()` concatenates every parquet under `data/ratings/` without picking one version per session, and `write_ratings()` persists before `render()` checks coverage. As of 2026-08-08 that leaves **217 rows for 3 real sessions**: 2026-08-06 stored four times, and `2026-08-07.parquet` holding 31 tickers at 0% coverage — the all-관망 output of a run that fired before KRX opened, with the corrected `-v2` sitting beside it. Harmless today (§7 only counts distinct dates); corrupting at PREREGISTRATION §8.4, where these rows become an IC computation. Fix and its cost: [notes/review-2026-08-07.md](notes/review-2026-08-07.md) H1.
+> [!note]
+> **The outer buckets are now harder to reach, and that is unresolved.** The composite's scale tracks total weight, so `강한 매수`/`강한 매도` begin at a uniform z of **2.67** where they began at 1.82. Rescaling the cut points is permitted by §8.4 for distributional reasons, but doing it inside the same change that moved the scale would have made the two indistinguishable afterwards. Left as measured, and pinned by `test_the_outer_bucket_needs_a_z_of_two_point_seven`. It belongs with the calibration in [MANUAL-TASKS §6](MANUAL-TASKS.md).
+
+**The rating archive stopped double-counting sessions (2026-08-08).** `load_rating_history()` was concatenating every parquet under `data/ratings/` — **217 rows for 3 real sessions**, with 2026-08-06 stored four times and `2026-08-07.parquet` holding 31 tickers at 0% coverage from a run that fired before KRX opened. It now selects the newest version per session (93 rows), and `write_ratings()` refuses a frame the report already refuses to publish. Nothing was deleted: the superseded files stay on disk as the record that the bug reached publication.
 
 **Korean news collection is live and unblocked** — `kr_news` reads 14 outlet RSS feeds via GitHub Actions — twice an hour through the KRX session, hourly otherwise — needing no credential at all. Because RSS cannot be backfilled, that clock only starts once `collect-news.yml` is on the default branch.
 
@@ -293,7 +294,7 @@ be checked against the repository rather than taken on trust.
 | 10 | Report renderer + delivery | ✅ vault + email live; 5 briefings rendered, 2026-08-03..07 |
 | 11 | Daily collection + report workflow | ✅ **full cloud round trip 2026-08-06** — 5 collectors, render, email, commit |
 | 12 | Schedule burn-in | 🟡 **in progress** — cron fires unattended; delivery is ~1/3 of declared runs |
-| 13 | Two-week gate | ⬜ start date not pinned; blocked on the H1 archive fix |
+| 13 | Two-week gate | ⬜ archive fixed 2026-08-08; start date still to be pinned |
 
 **The whole deterministic path now exists and runs unattended — collect,
 resolve, compute, rate, render, deliver.** What is missing is the LLM stages
@@ -380,10 +381,11 @@ numbers already look usable. It is not optional. Without it, a disagreement
 between two models cannot be told apart from a schema that means different
 things on different days, and the bake-off would rank models on that noise.
 
-**Claude is not idle while task 1 waits.** Three defects found in the
-[2026-08-07 review](notes/review-2026-08-07.md) — H1 (rating archive), H2
-(phantom weights), M1 (news-failure reporting) — need no golden set, and neither
-does the dedup half of step 6.
+**Claude is not idle while task 1 waits.** Of the defects found in the
+[2026-08-07 review](notes/review-2026-08-07.md), H1 (rating archive) and H2
+(phantom weights) are fixed as of 2026-08-08. M1 (news-failure reporting) and
+L1 remain, neither costing anything today, and the dedup half of step 6 needs no
+golden set either — only a decision on a local embedding dependency.
 
 ---
 

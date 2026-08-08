@@ -28,6 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import gzip
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -221,9 +222,22 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
     coverage = _weight_coverage(inputs)
     if coverage is not None:
         present, total, missing = coverage
+        mark = "⚠" if missing else "ℹ"
         detail = f" — {', '.join(missing)} 부재" if missing else ""
         warnings.append(
-            f"⚠ 등급 근거 충족도: {present:.2f}/{total:.2f} ({present / total:.0%}){detail}"
+            f"{mark} 등급 근거 충족도: {present:.2f}/{total:.2f} ({present / total:.0%}){detail}"
+        )
+
+    # The line above can only report what the config asks for, so on its own it
+    # would read 100% once the unbuilt features were taken out of `weights` —
+    # better-supported than the rating actually is. This names them instead.
+    deferred = _deferred_weights(inputs)
+    if deferred:
+        named = ", ".join(f"{name}({weight:.2f})" for name, weight in deferred)
+        share = sum(weight for _, weight in deferred)
+        designed = share + (coverage[1] if coverage else 0.0)
+        warnings.append(
+            f"⚠ 미구현 피처: {named} — 설계 가중치 {designed:.2f}의 {share / designed:.0%}"
         )
 
     # An all-관망 page is a legitimate outcome and an empty-feature page is a
@@ -282,6 +296,23 @@ def _weight_coverage(inputs: ReportInputs) -> tuple[float, float, list[str]] | N
     present = sum(abs(float(w)) for name, w in weights.items() if name in FEATURES)
     missing = [name for name in weights if name not in FEATURES]
     return present, total, missing
+
+
+def _deferred_weights(inputs: ReportInputs) -> list[tuple[str, float]]:
+    """Designed weight for features nothing produces yet, largest first.
+
+    Separate from :func:`_weight_coverage` because the two answer different
+    questions. That one asks whether the *active* config is honest — a weight
+    for a feature with no producer still trips its warning, which is the defect
+    this key was introduced to stop repeating. This one asks how far the working
+    rating sits from the designed one, which the header would otherwise stop
+    saying the moment the unbuilt weights were taken out of ``weights``.
+    """
+    deferred = inputs.rating_config.get("deferred_weights")
+    if not isinstance(deferred, Mapping) or not deferred:
+        return []
+    named = [(name, abs(float(weight))) for name, weight in deferred.items()]
+    return sorted(named, key=lambda item: (-item[1], item[0]))
 
 
 # --- ① US → KR transmission ----------------------------------------------
@@ -783,8 +814,18 @@ def write_ratings(frame: pd.DataFrame, root: Path, day: dt.date) -> Path | None:
     Same ``-v2`` discipline as the collectors, for the same reason: what was
     published is a fact about that run, and a re-render with different config
     produces a different fact rather than a correction of the first.
+
+    A frame the report refuses to *publish* is not archived either. The
+    condition is the one :func:`render_ratings` already uses to suppress the
+    rating table — every ticker at zero coverage means no feature reached
+    :func:`rate` at all, which is a broken run rather than a quiet market.
+    `data/ratings/2026-08-07.parquet` is what this prevents: thirty-one 관망
+    ratings for a session that had not opened, written because persistence ran
+    before the render-side check. Both guards must move together.
     """
     if frame.empty:
+        return None
+    if (frame["weight_coverage"] == 0).all():
         return None
     directory = root / "ratings"
     directory.mkdir(parents=True, exist_ok=True)
@@ -1026,12 +1067,49 @@ def read_status(root: Path) -> tuple[list[str], list[str]]:
     return failures, gaps
 
 
+_ARCHIVED = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:-v(\d+))?$")
+
+
+def latest_rating_files(directory: Path) -> list[Path]:
+    """One file per session — the newest version of each.
+
+    :func:`write_ratings` never overwrites, so a session re-rendered four times
+    leaves four parquets. Reading all of them weights that session four times
+    against one rendered once, which is invisible today (⑦ only counts distinct
+    dates) and corrupting at PREREGISTRATION §8.4, where these rows become an IC
+    computation.
+
+    **Newest wins.** A re-render happens because the earlier run was wrong, and
+    keeping a known-wrong rating for evaluation measures the bug rather than the
+    method. It also keeps this directory agreeing with ``reports/``, which a
+    re-render overwrites in place — two artefacts stating different ratings for
+    one day would be worse than either choice on its own.
+
+    **Sorting cannot do this.** ``-`` (0x2D) sorts before ``.`` (0x2E), so
+    ``2026-08-06-v2.parquet`` precedes ``2026-08-06.parquet`` lexically, and
+    ``-v10`` precedes ``-v2``. The version has to be parsed as a number.
+
+    A name this cannot parse is kept under its own stem rather than dropped:
+    nothing else writes here, so an unrecognised file is a surprise worth
+    surfacing in the data, and silently discarding it is exactly the failure
+    mode CLAUDE.md puts first.
+    """
+    best: dict[str, tuple[int, Path]] = {}
+    for path in sorted(directory.glob("*.parquet")):
+        match = _ARCHIVED.match(path.stem)
+        session = match.group(1) if match else path.stem
+        version = int(match.group(2) or 1) if match else 1
+        if version > best.get(session, (0, path))[0]:
+            best[session] = (version, path)
+    return [path for _, (_, path) in sorted(best.items())]
+
+
 def load_rating_history(root: Path) -> pd.DataFrame:
-    """Every rating this system has published, for ⑦."""
+    """Every rating this system has published, for ⑦ — one version per session."""
     directory = root / "ratings"
     if not directory.exists():
         return pd.DataFrame()
-    frames = [pd.read_parquet(path) for path in sorted(directory.glob("*.parquet"))]
+    frames = [pd.read_parquet(path) for path in latest_rating_files(directory)]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
@@ -1295,6 +1373,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             written = write_ratings(ratings_frame(inputs, results), root, day)
             if written:
                 print(f"ratings  {written}")
+            else:
+                print(f"ratings  not archived — {day} produced no rateable feature")
 
         report = render(inputs, rating_history=load_rating_history(root))
         summary = to_plain_text(build_summary(inputs, results))
