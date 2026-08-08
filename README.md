@@ -36,18 +36,18 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 
 ## Current status
 
-**Foundation stage.** The plumbing that everything else depends on is built and tested. No data has been collected yet — `data/` is empty and no collector has ever run.
+**Running stage.** The deterministic pipeline collects, resolves, computes, rates, renders and delivers twice a day without supervision, and has done so since 2026-08-03. `data/raw/` holds a 3-year backfill plus six days of live news. The one thing still missing is the news half of the score — and as of 2026-08-08 the hand-labelling that gates it is done, pending its reproducibility check.
 
 | Component | Status | Notes |
 |---|---|---|
 | Design docs (SPEC, PREREGISTRATION, MANUAL-TASKS) | ✅ Done | Evaluation criteria frozen 2026-08-02 |
-| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 475 tests passing |
+| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 510 offline tests passing, 9 network |
 | Time & market sessions (`src/util/session.py`) | ✅ Done | Trading days, DST, look-ahead boundary |
 | Collector validation framework (`src/collectors/validate.py`) | ✅ Done | The four checks every collector must pass |
 | Config loading & safeguards (`src/util/config.py`) | ✅ Done | Rejects alias collisions, unquoted tickers |
 | Directional rating (`src/report/rating.py`) | ✅ Done | 7-point scale + rationale; weights need calibration |
 | AI commentary guard (`src/report/consistency.py`) | ✅ Done | Drops the 총평 if it contradicts the computed rating |
-| Config files | ✅ Done | `watchlist.yaml` 19 KR + 14 US and `aliases.yaml` both filled and verified against live data |
+| Config files | ✅ Done | `watchlist.yaml` 31 KR + 40 US and `aliases.yaml` both filled and verified against live data |
 | API credentials | ✅ Done | KRX and Alpaca verified live; all 9 values mirrored into Actions secrets. Only KIS outstanding, and it blocks nothing yet |
 | `kr_price` collector (pykrx OHLCV) | ✅ Done | Four checks + committed fixture; known value cross-checked against Naver |
 | `macro` collector (FRED) | ✅ Done | 6 series verified live; known value cross-checked against Treasury |
@@ -55,11 +55,11 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | `us_price` collector (Tiingo) | ✅ Done | Four checks + committed fixture; known value cross-checked against Yahoo Finance |
 | `us_price` over Alpaca | ✅ Done | The US source in use. SIP confirmed on the free plan; **48 symbols in 2 requests** where Tiingo needed 48 |
 | `kr_flow` collector (pykrx) | ✅ Done | Investor flows, short interest, cap, fundamentals — **the 55% of rating weight KRX was gating**. Six checks incl. an accounting identity and a cross-collector price check |
-| Entity resolution (`src/entity/resolve.py`) | ✅ Done | Alias-driven, ambiguous bucket reported in the header — running at 8.2–8.5% |
+| Entity resolution (`src/entity/resolve.py`) | ✅ Done | Alias-driven, ambiguous bucket reported in the header — running at 8.1% of 972 articles |
 | Feature computation (`src/features/compute.py`) | ✅ Done | 5 of the 7 weighted features; 252-day rolling z-score per ticker |
 | Report renderer + delivery (`src/report/`, `src/notify/`) | ✅ Done | SPEC §2 sections, `vault` + `email`, HTML mail with a `text/plain` alternative |
 | GitHub Actions workflow | ✅ Done | `collect-news.yml` hourly, `report.yml` morning ×3 + evening; live since 2026-08-03 |
-| Golden set (100 hand-labeled articles) | 🟡 In progress | Tooling and 240 candidates ready (`scripts/golden.py`); labelling is Ricky's, and blocks model selection |
+| Golden set (100 hand-labeled articles) | 🟡 Labelled | 100 examples × 5 dimensions scored by Ricky on 2026-08-07/08; `verify` passes with 0 rule conflicts. One check outstanding — the next-day re-label (SPEC §7.3) |
 | Embedding pipeline (dedup + relevance) | ⬜ Not started | SPEC §12 step 6, blocked behind the golden set |
 | LLM adapter + scoring + bake-off | ⬜ Not started | `src/llm/adapter.py` does not exist yet; only the v1 synthesis prompt is written |
 | `news_polarity`, `rev_4w` features | ⬜ Not started | Both carry live weight in `config/rating.yaml` — see the caveat below |
@@ -70,11 +70,16 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 > [!warning]
 > **Two weights are active for features that do not exist.** `news_polarity` (0.20) and `rev_4w` (0.15) are uncommented in `config/rating.yaml`, but nothing computes them. `rate()` renormalizes over the features actually present, so every ticker is capped at **0.75/1.10 = 68% weight coverage** against a `min_weight_coverage` floor of 0.50 — leaving 18 points of margin instead of 50. A ticker that also loses `foreign_flow_5d`, or any two of the mid-weight features, is forced to `관망` by arithmetic rather than by evidence. `config/rating.yaml`'s own comment calls doing this "actively harmful"; the two weights predate that comment and were never commented back out.
 
+> [!warning]
+> **The rating archive counts some sessions more than once, and one session that never opened.** `load_rating_history()` concatenates every parquet under `data/ratings/` without picking one version per session, and `write_ratings()` persists before `render()` checks coverage. As of 2026-08-08 that leaves **217 rows for 3 real sessions**: 2026-08-06 stored four times, and `2026-08-07.parquet` holding 31 tickers at 0% coverage — the all-관망 output of a run that fired before KRX opened, with the corrected `-v2` sitting beside it. Harmless today (§7 only counts distinct dates); corrupting at PREREGISTRATION §8.4, where these rows become an IC computation. Fix and its cost: [notes/review-2026-08-07.md](notes/review-2026-08-07.md) H1.
+
 **Korean news collection is live and unblocked** — `kr_news` reads 14 outlet RSS feeds via GitHub Actions — twice an hour through the KRX session, hourly otherwise — needing no credential at all. Because RSS cannot be backfilled, that clock only starts once `collect-news.yml` is on the default branch.
 
 **The KRX blocker is cleared.** `data.krx.co.kr` went members-only and returned HTTP 400 `LOGOUT` without a session, which withheld investor flows, short interest, market cap and fundamentals — **55% of the rating weight**, enough to force every ticker to `관망`. A login now works and all six gated endpoints were verified live on 2026-08-04 ([API-KEYS.md §0](API-KEYS.md)). `kr_flow` is now built on top of it and passing.
 
-**What blocks Claude now is the golden set.** `config/aliases.yaml` is filled and running at an 8.2–8.5% ambiguous ratio. The next three SPEC §12 steps — the embedding pipeline, the model bake-off, and therefore `news_polarity` — all sit behind 100 hand-labelled articles. `scripts/golden.py` has sampled 240 candidates and carries the whole labelling flow; see [MANUAL-TASKS.md §4](MANUAL-TASKS.md).
+**The golden set is labelled.** All 100 examples carry all five dimensions, the four buckets are 25 each, and `verify` reports no rule conflicts. The labelling was Ricky's alone — no model supplied or corrected a value, which is the property the whole bake-off rests on. What automation did contribute is measured rather than assumed: **8% of the finished set had its bucket changed after a rule flagged it, and 14% holds at least one score a rule sent back to be re-scored** (`review_influence` and `redo_influence` in `scripts/golden.py`). Both numbers undercount, because two dimension *definitions* were sharpened mid-run with Claude's input — recorded in [PREREGISTRATION §R](PREREGISTRATION.md).
+
+One check remains before the set is usable: `golden recheck` re-labels 10 examples a day later without showing the first answers. A mean gap above 0.25 means the schema is underdefined and the bake-off would be measuring noise rather than model quality (SPEC §7.3). See [MANUAL-TASKS.md §4](MANUAL-TASKS.md).
 
 **The schedule is best-effort, and that is measured, not assumed.** GitHub fires roughly a third of the declared runs: over 2026-08-03..07 the news workflow declared 31 runs a day and delivered 6–10, for **42.6% hourly coverage** (40 of 94 hours). Both scheduled report runs on record were hours late. Everything downstream is built to survive it — `last_closed_session()` resolves a run from the clock rather than the date, the morning report is declared three times behind a published-check, and `check_feed_continuity` measures what a gap actually cost instead of guessing. With `etnews_economy` removed, **1 of 45 observed gaps (2.2%)** exceeded the fastest remaining feed buffer, so the coverage number is alarming but the realised loss is not.
 
@@ -278,21 +283,22 @@ be checked against the repository rather than taken on trust.
 |---|---|---|
 | 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
-| 3 | Collectors + validation tests | ✅ 6 collectors, 437 offline tests, 9 live |
+| 3 | Collectors + validation tests | ✅ 6 collectors, 510 offline tests, 9 live |
 | 4 | **3-year backfill into `data/raw/`** | ✅ macro (776), us_price (752), kr_price (728), kr_flow (728) |
-| 5 | Entity resolution + ambiguous ratio | ✅ 221/2,876 articles matched, **ambiguous 10.9%** (threshold 30%) |
-| 6 | Embedding pipeline (dedup + relevance) | ⬜ |
-| 7 | Golden set — 100 hand-labeled articles | ⬜ Ricky |
-| 8 | Model adapter + bake-off | ⬜ |
+| 5 | Entity resolution + ambiguous ratio | ✅ **ambiguous 8.1%** of 972 articles (threshold 30%) |
+| 6 | Embedding pipeline (dedup + relevance) | ⬜ needs a local embedding dependency — not blocked by the golden set |
+| 7 | Golden set — 100 hand-labeled articles | 🟡 **labelled 2026-08-08**; `recheck` outstanding |
+| 8 | Model adapter + bake-off | ⬜ blocked behind step 7's `recheck` |
 | 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |
-| 10 | Report renderer + delivery | ✅ vault + email live; first real briefing rendered 2026-08-06 |
+| 10 | Report renderer + delivery | ✅ vault + email live; 5 briefings rendered, 2026-08-03..07 |
 | 11 | Daily collection + report workflow | ✅ **full cloud round trip 2026-08-06** — 5 collectors, render, email, commit |
-| 12 | Schedule burn-in | 🟡 **in progress** — cron has not fired on its own yet |
-| 13 | Two-week gate | ⬜ starts once step 12 is stable |
+| 12 | Schedule burn-in | 🟡 **in progress** — cron fires unattended; delivery is ~1/3 of declared runs |
+| 13 | Two-week gate | ⬜ start date not pinned; blocked on the H1 archive fix |
 
-**The whole deterministic path now exists — collect, resolve, compute, rate.**
-What is missing is the document at the end of it (step 10) and the LLM stages
-(6–8), which the rating does not need to produce a number.
+**The whole deterministic path now exists and runs unattended — collect,
+resolve, compute, rate, render, deliver.** What is missing is the LLM stages
+(6–8), which the rating does not need to produce a number, and which step 7 has
+now stopped blocking.
 
 ### The backfill is in and the z-scores are real
 
@@ -356,22 +362,28 @@ header is what fixes it, and the header arrives with step 10.
 
 ## What's blocking progress
 
-Nothing is blocking Claude. These are Ricky's, in the order they will be needed.
-Full detail in [MANUAL-TASKS.md](MANUAL-TASKS.md).
+These are Ricky's, in the order they will be needed. Full detail in
+[MANUAL-TASKS.md](MANUAL-TASKS.md).
 
 | # | Task | Est. time | Blocks |
 |---|---|---|---|
-| 1 | Golden set — 100 hand-labeled articles | ~2 hours | Model selection (step 8) |
+| 1 | `golden recheck` — re-label 10 examples a day later | 5 min | Model selection (step 8) |
 | 2 | Bake-off decision | 30 min | Scoring model choice |
 | 3 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
 | 4 | KIS application | 15 min | Real-time quotes only; blocks nothing today |
 
-Credentials, the `.env` fixes, the watchlist, the Alpaca switch and the alias
-dictionary are all done.
+Credentials, the `.env` fixes, the watchlist, the Alpaca switch, the alias
+dictionary and the golden-set labelling itself are all done.
 
-Task 1 is the one that will feel skippable. It is the only step involving no
-code, and skipping it makes the bake-off impossible — model selection then ends
-at "Claude seemed good."
+Task 1 is the one that will feel skippable — the labelling is finished and the
+numbers already look usable. It is not optional. Without it, a disagreement
+between two models cannot be told apart from a schema that means different
+things on different days, and the bake-off would rank models on that noise.
+
+**Claude is not idle while task 1 waits.** Three defects found in the
+[2026-08-07 review](notes/review-2026-08-07.md) — H1 (rating archive), H2
+(phantom weights), M1 (news-failure reporting) — need no golden set, and neither
+does the dedup half of step 6.
 
 ---
 
