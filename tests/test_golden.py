@@ -453,6 +453,52 @@ def test_a_brokerages_own_results_are_not_caught_by_the_author_rule():
     )
 
 
+def test_saying_a_story_misses_the_books_then_scoring_it_large_is_flagged():
+    """`relevance` and `intensity` ask the same question at two magnitudes —
+    does a line of this company's P&L move. Hit live on 2026-08-08: two
+    브로커리지 목표가 rows both at relevance 0.0, one scored intensity 0.8 and
+    the other 0.0."""
+    (conflict,) = score_conflicts(
+        [
+            _scored(
+                "irrelevant",
+                '키움증권 "SK바이오팜 우려 과도"…목표가↓',
+                relevance=0.0,
+                intensity=0.8,
+            )
+        ]
+    )
+    assert conflict["dimension"] == "intensity"
+
+
+def test_a_low_intensity_story_that_touches_the_books_is_left_alone():
+    """The reverse is not a conflict: a 신제품 출시 reaches the business and
+    still moves no money this quarter."""
+    assert (
+        score_conflicts([_scored("positive", "삼성전자 신제품 공개", relevance=0.9, intensity=0.1)])
+        == []
+    )
+
+
+def test_a_price_move_caused_by_flow_is_flagged():
+    (conflict,) = score_conflicts(
+        [_scored("negative", "하이닉스 10%대 폭락…외인·기관 팔았다", relevance=1.0)]
+    )
+    assert conflict["dimension"] == "relevance"
+
+
+def test_a_business_event_reported_through_its_price_move_is_not_flagged():
+    """The rule needs a market-side cause as well as a price word. Matching
+    급등 alone would flag a supply contract wearing a price headline, and a
+    check that fires on the wrong rows buries the right ones."""
+    assert (
+        score_conflicts(
+            [_scored("positive", "테슬라 카메라 모듈 공급 싹쓸이에…삼성전기 급등", relevance=0.8)]
+        )
+        == []
+    )
+
+
 def test_an_unscored_dimension_raises_nothing():
     """`score_conflicts` runs mid-labelling, where most dimensions are absent."""
     assert score_conflicts([_scored("positive", "삼성전자 2분기 최대 실적")]) == []

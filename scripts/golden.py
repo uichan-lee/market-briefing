@@ -555,9 +555,22 @@ _MARKET_STRUCTURE = (
     "순매도",
 )
 
+# A price move is not a P&L event, but a business event is often *reported*
+# through the price it caused — "테슬라 공급 싹쓸이에…삼성전기 급등" is a supply
+# contract wearing a price headline. Matching 급등/급락 alone would flag those
+# too and bury the rows worth seeing, so a market-side cause is also required.
+_PRICE_MOVE = ("폭락", "급등", "급락", "반등", "신고가", "신저가", "상한가", "하한가", "특징주")
+_MARKET_CAUSE = ("외인", "외국인", "기관", "투자심리", "투자 심리", "동시호가", "투자주의", "수급")
+
 # Above this, a number is disagreeing with its bucket rather than shading it.
 _SIGN_CONFLICT = 0.4
 _STRUCTURE_RELEVANCE = 0.5
+
+# `relevance` and `intensity` ask the same question — does a line of *this
+# company's* P&L move — at two magnitudes. Saying no to the first and yes to
+# the second is a contradiction whichever number turns out to be wrong.
+_DETACHED_RELEVANCE = 0.3
+_DETACHED_INTENSITY = 0.7
 
 
 def score_conflicts(rows: Sequence[dict]) -> list[dict]:
@@ -606,6 +619,9 @@ def score_conflicts(rows: Sequence[dict]) -> list[dict]:
 
         if relevance is not None:
             relevance = float(relevance)
+            price_only = any(word in title for word in _PRICE_MOVE) and any(
+                word in title for word in _MARKET_CAUSE
+            )
             if bucket == "irrelevant" and relevance >= _STRUCTURE_RELEVANCE:
                 add(row, "relevance", f"무관 버킷인데 relevance={relevance:.1f}")
             elif relevance >= _STRUCTURE_RELEVANCE and any(
@@ -616,6 +632,27 @@ def score_conflicts(rows: Sequence[dict]) -> list[dict]:
                     "relevance",
                     f"수급·매매동향 기사인데 relevance={relevance:.1f} — 손익 기준이면 0.0~0.3",
                 )
+            elif relevance >= _STRUCTURE_RELEVANCE and price_only:
+                add(
+                    row,
+                    "relevance",
+                    f"주가 움직임 자체가 기사인데 relevance={relevance:.1f} "
+                    "— 원인이 수급이면 손익 줄은 움직이지 않습니다",
+                )
+
+        intensity = row.get("intensity")
+        if (
+            intensity is not None
+            and relevance is not None
+            and float(relevance) <= _DETACHED_RELEVANCE
+            and float(intensity) >= _DETACHED_INTENSITY
+        ):
+            add(
+                row,
+                "intensity",
+                f"relevance={float(relevance):.1f}인데 intensity={float(intensity):.1f} "
+                "— 손익에 닿지 않는다면서 손익 충격은 크다는 뜻이 됩니다",
+            )
 
     return conflicts
 
