@@ -572,6 +572,16 @@ _STRUCTURE_RELEVANCE = 0.5
 _DETACHED_RELEVANCE = 0.3
 _DETACHED_INTENSITY = 0.7
 
+# Two write-ups of one event, scored far apart. Looser than
+# `SAME_EVENT_SIMILARITY` on purpose: that constant decides which articles are
+# *selected*, so loosening it now would drop scored rows and pull in unscored
+# replacements. This one only flags, so it can afford to ask about pairs that
+# are merely probably the same story — SK실트론's 신용등급 하향검토 was written
+# up by 나이스신평 and by 신평 3사 with a 0.38 overlap, under the selection
+# threshold and plainly one event.
+_DIVERGENCE_SIMILARITY = 0.35
+_DIVERGENCE_GAP = 0.4
+
 
 def score_conflicts(rows: Sequence[dict]) -> list[dict]:
     """Scores that contradict the bucket beside them, or a rule Ricky stated.
@@ -653,6 +663,33 @@ def score_conflicts(rows: Sequence[dict]) -> list[dict]:
                 f"relevance={float(relevance):.1f}인데 intensity={float(intensity):.1f} "
                 "— 손익에 닿지 않는다면서 손익 충격은 크다는 뜻이 됩니다",
             )
+
+    names = [name for name, _, _, _, _ in DIMENSIONS]
+    for index, row in enumerate(rows):
+        for other in rows[index + 1 :]:
+            if row["ticker"] != other["ticker"] or row["article_id"] == other["article_id"]:
+                continue
+            mine, theirs = (
+                _title_tokens(row.get("title", "")),
+                _title_tokens(other.get("title", "")),
+            )
+            if not mine or not theirs:
+                continue
+            if len(mine & theirs) / min(len(mine), len(theirs)) < _DIVERGENCE_SIMILARITY:
+                continue
+            for name in names:
+                if name not in row or name not in other:
+                    continue
+                gap = abs(float(row[name]) - float(other[name]))
+                if gap < _DIVERGENCE_GAP:
+                    continue
+                for side, against in ((row, other), (other, row)):
+                    add(
+                        side,
+                        name,
+                        f"같은 사건으로 보이는데 {name}가 {float(side[name]):.1f} vs "
+                        f"{float(against[name]):.1f} 입니다: '{against.get('title', '')[:34]}'",
+                    )
 
     return conflicts
 

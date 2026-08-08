@@ -499,6 +499,45 @@ def test_a_business_event_reported_through_its_price_move_is_not_flagged():
     )
 
 
+def test_one_event_scored_two_ways_is_flagged_on_both_sides():
+    """SK실트론's 신용등급 하향검토, written up twice on 2026-08-08 and scored
+    uncertainty 0.0 and 0.7. The pair sits at 0.38 title overlap — under
+    `SAME_EVENT_SIMILARITY`, so selection rightly kept both, and the score
+    check has to look wider than selection does."""
+    rows = [
+        {
+            **_scored("irrelevant", "나신평, '두산 매각' SK실트론 신용등급 하향검토 등재"),
+            "uncertainty": 0.0,
+        },
+        {
+            **_scored("ambiguous", "신평 3사, '매각' SK실트론 신용등급 전망 하향 검토"),
+            "uncertainty": 0.7,
+        },
+    ]
+    rows[1]["article_id"] = "a2"
+    flagged = [c for c in score_conflicts(rows) if c["dimension"] == "uncertainty"]
+    assert {c["article_id"] for c in flagged} == {"a1", "a2"}
+
+
+def test_two_write_ups_scored_alike_are_left_alone():
+    rows = [
+        {**_scored("ambiguous", "SK실트론 신용등급 하향검토 등재"), "uncertainty": 0.7},
+        {**_scored("ambiguous", "SK실트론 신용등급 전망 하향 검토"), "uncertainty": 0.6},
+    ]
+    rows[1]["article_id"] = "a2"
+    assert score_conflicts(rows) == []
+
+
+def test_two_different_stories_about_one_ticker_are_not_compared():
+    """Without the similarity floor every 삼성전자 pair in the set would flag."""
+    rows = [
+        {**_scored("positive", "삼성전자 2분기 영업익 12조"), "uncertainty": 0.0},
+        {**_scored("ambiguous", "삼성전자, 사내 어린이집 확대 계획 발표"), "uncertainty": 0.7},
+    ]
+    rows[1]["article_id"] = "a2"
+    assert score_conflicts(rows) == []
+
+
 def test_an_unscored_dimension_raises_nothing():
     """`score_conflicts` runs mid-labelling, where most dimensions are absent."""
     assert score_conflicts([_scored("positive", "삼성전자 2분기 최대 실적")]) == []
