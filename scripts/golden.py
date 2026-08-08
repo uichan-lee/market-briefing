@@ -1148,6 +1148,33 @@ def review_influence(labelled: Sequence[dict], reviewed: Sequence[dict]) -> list
     return []
 
 
+def redo_influence(labelled: Sequence[dict], scored: Sequence[dict]) -> tuple[int, float]:
+    """Finished examples holding at least one score that a rule sent back.
+
+    The companion to :func:`review_influence`, and the larger of the two.
+    `review.jsonl` records bucket changes; this counts the *scores* rewritten
+    after `score_conflicts` flagged them, which `review_influence` never saw.
+
+    Both undercount the same thing. The dimension definitions themselves were
+    revised while the labelling was under way — `relevance` moved onto 손익 on
+    2026-08-07, and the `intensity` procedure was pinned down on 08-08 — and a
+    definition applies to all 100 rows, not to the handful a rule catches. That
+    influence cannot be counted here at all, only recorded, which is what
+    PREREGISTRATION §R is for.
+    """
+    if not labelled:
+        return 0, 0.0
+    seen: dict[tuple[str, str, str], float] = {}
+    revised: set[tuple[str, str]] = set()
+    for record in scored:
+        key = (record["article_id"], record["ticker"], record["dimension"])
+        if key in seen and seen[key] != record["value"]:
+            revised.add((record["article_id"], record["ticker"]))
+        seen[key] = record["value"]
+    revised &= {key_of(row) for row in labelled}
+    return len(revised), len(revised) / len(labelled)
+
+
 def verify() -> tuple[bool, list[str]]:
     """Check the finished set, and report Ricky's agreement with himself."""
     problems: list[str] = []
@@ -1184,6 +1211,11 @@ def verify() -> tuple[bool, list[str]]:
         problems.append(f"|polarity| ≥ 0.5 인 항목이 {strong}건뿐 — 쉬운 사례만 모였을 수 있습니다")
 
     problems.extend(review_influence(labelled, read_jsonl(REVIEW)))
+
+    scores_path = LABELS.with_name(LABELS.stem + "-scores.jsonl")
+    count, share = redo_influence(labelled, read_jsonl(scores_path))
+    if count:
+        print(f"규칙이 되돌려 다시 매긴 점수를 가진 항목: {count}/{len(labelled)}건 ({share:.0%})")
 
     # Reported, never failed. See the note above `score_conflicts`: a conflict
     # says two of Ricky's decisions disagree, and choosing which one gives way

@@ -24,6 +24,7 @@ from scripts.golden import (
     find_flags,
     latest_triage,
     parse_score,
+    redo_influence,
     review_influence,
     score_conflicts,
     scored_rows,
@@ -536,6 +537,38 @@ def test_two_different_stories_about_one_ticker_are_not_compared():
     ]
     rows[1]["article_id"] = "a2"
     assert score_conflicts(rows) == []
+
+
+def test_a_rewritten_score_counts_toward_influence():
+    """`review_influence` only sees bucket changes recorded in review.jsonl.
+    Scores sent back by `--redo` never touch that file, and there were 15 of
+    them against 9 bucket changes — the larger half was going uncounted."""
+    labelled = [{"article_id": "a1", "ticker": "005930"}, {"article_id": "a2", "ticker": "005930"}]
+    scored = _score_rows("a1", relevance=0.9) + _score_rows("a1", relevance=0.1)
+    count, share = redo_influence(labelled, scored)
+    assert (count, share) == (1, 0.5)
+
+
+def test_an_unrevised_score_is_not_counted():
+    labelled = [{"article_id": "a1", "ticker": "005930"}]
+    assert redo_influence(labelled, _score_rows("a1", relevance=0.9))[0] == 0
+
+
+def test_a_score_reaffirmed_at_the_same_value_is_not_a_revision():
+    """`--redo` records an answer even when Ricky keeps the number, the same way
+    `review` records a keep. Only a changed value is influence."""
+    labelled = [{"article_id": "a1", "ticker": "005930"}]
+    scored = _score_rows("a1", relevance=0.9) + _score_rows("a1", relevance=0.9)
+    assert redo_influence(labelled, scored)[0] == 0
+
+
+def test_a_revision_outside_the_finished_set_does_not_count():
+    assert (
+        redo_influence(
+            [{"article_id": "a2", "ticker": "005930"}], _score_rows("a1", relevance=0.9)
+        )[0]
+        == 0
+    )
 
 
 def test_an_unscored_dimension_raises_nothing():
