@@ -59,6 +59,42 @@ STATUS = ROOT / "data" / "status"
 # nightly re-fetch stays one request per ticker per endpoint for KRX.
 WINDOW_DAYS = 8
 
+# Macro looks back further than everything else, because two of its six series
+# publish on their own slower cadence. Measured 2026-08-09: `us_10y` had reached
+# 2026-08-07 while `usdkrw` and `dollar_index` — the Federal Reserve FX series
+# DEXKOUS and DTWEXBGS — both stopped at 2026-07-31, roughly a week behind.
+#
+# Against WINDOW_DAYS that produced a failure with no data problem behind it.
+# The morning run fires at 22:07–23:23 UTC, so its `end` is the *previous* UTC
+# day relative to the KST date it is read on: 2026-08-09 (Sun) gave the window
+# 08-01..08-09, and 07-31 fell one day outside it. `check_coverage` cannot tell
+# "published before my window" from "dead", so it reported `usdkrw has no rows
+# at all` and the briefing header carried a 07-31 rate. Not a one-off — every
+# Monday morning run lands the same way, since its `end` is always Sunday and
+# the last FX observation is always the Friday before the window opens.
+#
+# The false alarm was the cheap half. The expensive half is that a window this
+# short also *loses* data: `wti` is an EIA series FRED redistributes days
+# behind, and 2026-07-28 published after 08-05, by which point the 8-day window
+# had moved past it. Nothing re-fetched it, so the stored history carried a hole
+# on a day FRED serves a value for (80.91, confirmed live 2026-08-10). It is the
+# only genuine gap in three years of stored macro — every other one is Columbus
+# Day or Veterans Day, when the bond market is shut and NYSE is not.
+#
+# So the window has to outlast the slowest publisher, not the fastest. A check
+# that fires is recoverable; a window that closes before the data arrives is not.
+#
+# 30 covers a weekly cadence with room to spare, and the number does not depend
+# on knowing the exact one — the FRED H.10 release schedule was NOT read in the
+# session that set this, only the observed lag above. Widening WINDOW_DAYS
+# globally instead would be the wrong fix: kr_flow spends 124 KRX requests
+# against a block observed near 250.
+#
+# Verified live on 2026-08-10 against end=2026-08-09, the failing run's window:
+# 8 days gave `dollar_index has no rows at all; usdkrw has no rows at all`,
+# 30 gave all six series at 100% with stale tails of 1–5 trading days.
+MACRO_WINDOW_DAYS = 30
+
 PATHS = {
     "kr_price": RAW / "kr" / "price",
     "kr_flow": RAW / "kr" / "investor_flow",
@@ -241,7 +277,9 @@ def collect_us_preview(start: dt.date, end: dt.date) -> tuple[str, ValidationRep
 
 
 def collect_macro(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
-    df, report = macro.fetch(start, end)
+    # The driver's window is too short for the FX series; see MACRO_WINDOW_DAYS.
+    del start
+    df, report = macro.fetch(end - dt.timedelta(days=MACRO_WINDOW_DAYS), end)
     new, revised = write_daily("macro", df)
     return f"{len(df)} rows, {new} new / {revised} revised", report
 

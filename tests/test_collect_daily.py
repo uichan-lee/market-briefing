@@ -9,11 +9,13 @@ late-publishing value out of the dataset.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 import pandas as pd
 
 from scripts.collect_daily import RUNS, _differs, write_daily, write_status
+from src.collectors.validate import ValidationReport
 
 
 def frame(**overrides) -> pd.DataFrame:
@@ -27,6 +29,31 @@ def frame(**overrides) -> pd.DataFrame:
 
 
 # --- the run definitions ---------------------------------------------------
+
+
+def test_macro_looks_back_further_than_the_driver_window(monkeypatch):
+    """Regression for 2026-08-10. The FX series publish about a week behind, so
+    the 8-day driver window can open *after* their last observation — which
+    `check_coverage` can only read as `no rows at all`. The morning run's `end`
+    is the previous UTC day, so every Monday landed exactly there."""
+    import scripts.collect_daily as mod
+
+    seen = {}
+
+    def spy(start, end, **kwargs):
+        seen["start"], seen["end"] = start, end
+        return pd.DataFrame(), ValidationReport("macro")
+
+    monkeypatch.setattr(mod.macro, "fetch", spy)
+    monkeypatch.setattr(mod, "write_daily", lambda name, df: (0, 0))
+
+    end = dt.date(2026, 8, 9)
+    mod.collect_macro(end - dt.timedelta(days=mod.WINDOW_DAYS), end)
+
+    assert seen["end"] == end
+    assert seen["start"] == end - dt.timedelta(days=mod.MACRO_WINDOW_DAYS)
+    # The observation the 8-day window missed has to be inside this one.
+    assert seen["start"] <= dt.date(2026, 7, 31)
 
 
 def test_the_morning_run_contains_no_krx_source():
