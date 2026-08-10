@@ -427,5 +427,6 @@ Criteria were frozen in [PREREGISTRATION.md](PREREGISTRATION.md) on 2026-08-02, 
 | [SPEC.md](SPEC.md) | Full design spec. The authoritative document. |
 | [PREREGISTRATION.md](PREREGISTRATION.md) | Evaluation criteria, frozen before collection. |
 | [MANUAL-TASKS.md](MANUAL-TASKS.md) | Work only Ricky can do, ordered by what it blocks. |
+| [RESEARCH.md](RESEARCH.md) | Survey of published LLM trading agents — what they claim, what survives scrutiny, what applies here. |
 | [API-KEYS.md](API-KEYS.md) | Signup walkthrough for every credential, with the per-provider traps. |
 | [CLAUDE.md](CLAUDE.md) | Operating rules for the AI agent working in this repo. |

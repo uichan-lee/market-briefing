@@ -438,5 +438,6 @@ H2(유령 가중치)는 2026-08-08에 수정됐다. M1(뉴스 실패 보고)은 
 | [SPEC.md](SPEC.md) | 전체 설계 스펙. 최종 기준 문서. |
 | [PREREGISTRATION.md](PREREGISTRATION.md) | 평가 기준, 수집 전 고정. |
 | [MANUAL-TASKS.md](MANUAL-TASKS.md) | Ricky만 할 수 있는 작업, 막고 있는 순서대로 정렬. |
+| [RESEARCH.md](RESEARCH.md) | 공개된 LLM 트레이딩 에이전트 조사 — 무엇을 주장하고, 무엇이 검증을 통과하며, 이 프로젝트에 무엇이 적용되는가. |
 | [API-KEYS.md](API-KEYS.md) | 인증 정보별 가입 절차와 제공처마다의 함정. |
 | [CLAUDE.md](CLAUDE.md) | 이 저장소에서 작업하는 AI 에이전트용 운영 규칙. |
