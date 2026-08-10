@@ -118,6 +118,12 @@ Silent failure is the worst outcome in this project.
 
 **News is the one source where a missed run is unrecoverable.** Prices and macro can be re-fetched years later; RSS holds a rolling buffer with no history, so an hour not collected is permanently absent from the backtest dataset. That is why `kr_news` collects twice an hour through the KRX session and hourly otherwise, why `data/raw/kr/news/` is committed rather than gitignored, and why a long gap between collection runs is a validation *failure* rather than an idle period.
 
+**An empty run file under `data/raw/kr/news/` is data, not litter.** A run that polled and found nothing new writes a zero-row `.jsonl.gz` anyway, because "the feeds were polled and held nothing" is a different fact from "the collector did not run" — and the file's existence is the only place that difference is recorded. `last_run_at` reads the run clock off the filename, so deleting these as cleanup silently restores the 2026-08-08 defect where `check_collection_gap` measured time since the last *article* and failed five consecutive runs that had lost nothing.
+
+**The exit code of a collector reports validation, never volume.** `kr_news.main()` returns non-zero when a check fails and zero otherwise, whether or not any article arrived. A quiet hour is not a failure; a run that stored articles while a feed timed out is one, because that feed's loss is unmeasured and unrecoverable. This is what makes a workflow's `Commit` step `if: always()` load-bearing rather than tidy — without it the alarm skips the commit and destroys the articles it is warning about. Any new collector wired into a workflow inherits both halves of this.
+
+**A collector's fetch window must outlast its slowest publisher, not its fastest.** A check that fires is recoverable; a window that closes before the data arrives is not. `MACRO_WINDOW_DAYS` in `scripts/collect_daily.py` is 30 against the driver's 8 for exactly this reason, and the 8-day window had already cost one WTI observation permanently before anyone noticed. When adding a source, ask what its publication lag is and size the window off that — not off how often the pipeline runs.
+
 ---
 
 ## Delivery
