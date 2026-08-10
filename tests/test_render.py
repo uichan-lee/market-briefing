@@ -135,6 +135,36 @@ def test_a_weight_for_a_feature_with_no_producer_is_still_flagged():
     assert "⚠ 등급 근거 충족도: 0.75/0.95 (79%) — news_polarity 부재" in header
 
 
+def test_the_data_basis_line_dates_macro_separately_from_prices():
+    """Macro runs on its own clock: the FRED FX series publish about a week
+    behind, so the USDKRW level on the market line is routinely older than the
+    prices beside it. On 2026-08-10 the header showed a 07-31 rate next to
+    08-07 prices with nothing to say so."""
+    macro = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2026-07-30"), pd.Timestamp("2026-07-31")],
+            "series": ["usdkrw", "usdkrw"],
+            "value": [1424.05, 1436.81],
+        }
+    )
+    prices = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2026-08-03")],
+            "ticker": ["005930"],
+            "close": [79600.0],
+        }
+    )
+    header = render_header(inputs(macro=macro, kr_prices=prices))
+
+    assert "KR 2026-08-03" in header
+    assert "MACRO 2026-07-31" in header
+
+
+def test_the_data_basis_line_omits_macro_when_there_is_none():
+    header = render_header(inputs())
+    assert "MACRO" not in header
+
+
 def test_a_run_with_no_data_at_all_still_renders():
     """CLAUDE.md requires a partial report over no report, so empty inputs must
     produce a page rather than an exception."""

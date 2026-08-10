@@ -207,6 +207,13 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
         us_max = pd.to_datetime(inputs.us_prices["date"]).max()
         preview = " (Tiingo 프리뷰)" if us_max.date() in set(inputs.us_preview_dates) else ""
         coverage_parts.append(f"US {us_max:%Y-%m-%d}{preview}")
+    # Macro earns its own entry because it runs on a different clock from the
+    # price frames. The FX series publish about a week behind, so the USDKRW
+    # level on the market line above is routinely older than the KR and US dates
+    # beside it — on 2026-08-10 it was 07-31 data shown next to 08-07 prices,
+    # with nothing in the header to say so.
+    if not inputs.macro.empty:
+        coverage_parts.append(f"MACRO {pd.to_datetime(inputs.macro['date']).max():%Y-%m-%d}")
     if coverage_parts:
         warnings.append(f"ℹ 데이터 기준: {' · '.join(coverage_parts)}")
 
