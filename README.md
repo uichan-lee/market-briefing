@@ -41,7 +41,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Component | Status | Notes |
 |---|---|---|
 | Design docs (SPEC, PREREGISTRATION, MANUAL-TASKS) | ✅ Done | Evaluation criteria frozen 2026-08-02 |
-| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 535 offline tests passing, 9 network |
+| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 536 offline tests passing, 9 network |
 | Time & market sessions (`src/util/session.py`) | ✅ Done | Trading days, DST, look-ahead boundary |
 | Collector validation framework (`src/collectors/validate.py`) | ✅ Done | The four checks every collector must pass |
 | Config loading & safeguards (`src/util/config.py`) | ✅ Done | Rejects alias collisions, unquoted tickers |
@@ -290,17 +290,17 @@ be checked against the repository rather than taken on trust.
 |---|---|---|
 | 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
-| 3 | Collectors + validation tests | ✅ 6 collectors, 510 offline tests, 9 live |
-| 4 | **3-year backfill into `data/raw/`** | ✅ macro (776), us_price (752), kr_price (728), kr_flow (728) |
-| 5 | Entity resolution + ambiguous ratio | ✅ **ambiguous 8.1%** of 972 articles (threshold 30%) |
+| 3 | Collectors + validation tests | ✅ 6 collectors, 536 offline tests, 9 network |
+| 4 | **3-year backfill into `data/raw/`** | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
+| 5 | Entity resolution + ambiguous ratio | ✅ **ambiguous 7.8%** of 1,040 articles, 2026-08-10 (threshold 30%) |
 | 6 | Embedding pipeline (dedup + relevance) | ⬜ needs a local embedding dependency — not blocked by the golden set |
 | 7 | Golden set — 100 hand-labeled articles | ✅ **done 2026-08-10** — labelling, recheck and verification |
 | 8 | Model adapter + bake-off | ⬜ nothing blocking — step 7 cleared |
 | 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |
-| 10 | Report renderer + delivery | ✅ vault + email live; 5 briefings rendered, 2026-08-03..07 |
+| 10 | Report renderer + delivery | ✅ vault + email live; 6 briefings rendered, 2026-08-03..2026-08-10 |
 | 11 | Daily collection + report workflow | ✅ **full cloud round trip 2026-08-06** — 5 collectors, render, email, commit |
-| 12 | Schedule burn-in | 🟡 **in progress** — cron fires unattended; delivery is ~1/3 of declared runs |
-| 13 | Two-week gate | ⬜ archive fixed 2026-08-08; start date still to be pinned |
+| 12 | Schedule burn-in | 🟡 **in progress** — cron fires unattended; delivery 42.6% of declared runs (2026-08-03..07) |
+| 13 | Two-week gate | ⬜ **clock starts 2026-08-11, read 2026-08-25** — pinned in PREREGISTRATION §8.5 |
 
 **The whole deterministic path now exists and runs unattended — collect,
 resolve, compute, rate, render, deliver.** What is missing is the LLM stages
@@ -403,11 +403,13 @@ Criteria were frozen in [PREREGISTRATION.md](PREREGISTRATION.md) on 2026-08-02, 
 
 | Gate | Criteria | If not met |
 |---|---|---|
-| 2 weeks | Pipeline uninterrupted, zero data-consistency errors, `ambiguous` < 30%, inter-model polarity correlation > 0.5 | Halt signal work, repair the measurement layer |
+| 2 weeks<br>2026-08-11 → 2026-08-25 | Pipeline uninterrupted, zero data-consistency errors, `ambiguous` < 30%, inter-model polarity correlation > 0.5 | Halt signal work, repair the measurement layer |
 | 3 months | ICIR > 0.3, shadow portfolio beats KODEX 200 buy-and-hold | Discard the signal logic, redesign |
 | 6 months | Above holds after fees, transaction tax, and slippage | End the project, switch to indexing |
 
 **Two weeks cannot measure whether the signal works.** Separating a 55% hit rate from 50% needs roughly 800 independent observations; two weeks of 30 tickers yields an effective 60–100 once market beta eats the cross-sectional independence. So the early gate measures *measurement stability* — whether three different models scoring the same articles agree with each other — rather than predictive accuracy. If they disagree, the scores are model-specific noise and there is nothing worth validating yet.
+
+**"Uninterrupted" means something specific, and it is written down.** Every run that fires records a run file, no unexplained `check_feed_continuity` failure, no two consecutive runs failing validation for the same cause — [§8.5](PREREGISTRATION.md) defines it in full and calibrates it against two known incidents. Delivered-run coverage is reported alongside the decision but is not a criterion: GitHub's scheduler drops the runs, not this pipeline. The inter-model criterion needs the step-8 bake-off, so the gate is read in two parts and passes only when both do.
 
 ---
 
