@@ -315,7 +315,8 @@ foreign + institutional + retail + other-corporate net buying summing to zero,
 which is true by construction and is the cheapest detector of a mis-mapped
 investor column — holds on **every one of the 22,528 rows**.
 
-With the history in place the features stopped being `NaN`:
+With the history in place the features stopped being `NaN` — counts measured the
+same day, and they grow by one session per ticker per KRX day since:
 
 | feature | raw | z-scored |
 |---|---:|---:|
@@ -325,10 +326,11 @@ With the history in place the features stopped being `NaN`:
 | `rel_strength_20d` | 18,368 | 11,816 |
 | `valuation_band` | 0 | 0 |
 
-`valuation_band` is empty because it needs 756 sessions and the window holds 728
-— see the parked decisions below. 454910 carries 688 rows rather than 728
-because it listed in October 2023, which is history that does not exist rather
-than history that is missing.
+`valuation_band` is empty because it needs 756 sessions and the window is still
+short of that — see the parked decisions below. 454910 is exactly **40 sessions**
+behind every other ticker because it listed on 2023-10-05, 40 sessions after the
+window opens, which is history that does not exist rather than history that is
+missing. The session totals move every KRX day; the 40 does not.
 
 `scripts/backfill.py` stays resumable. KRX throttles by address — roughly 250
 requests earns an HTML error page for a few hours — and `kr_flow` costs 124
@@ -342,9 +344,12 @@ substituting it would produce a number that looks like the feature and is not.
 Doing it properly needs an estimates vendor (FnGuide, QuantiWise). Weight 0.15;
 absent, and `rate()` renormalizes.
 
-**`valuation_band` needs a four-year backfill.** It is a 756-session PBR
-percentile and the window holds 728 — 28 short. Extending the backfill by a year
-turns it on. Weight 0.05.
+**`valuation_band` will turn itself on, and the four-year backfill only buys
+time.** It is a 756-session PBR percentile; the stored window held 732 sessions
+as of 2026-08-07 and grows by one per KRX session, so it crosses 756 on
+**2026-09-11** for 30 tickers and **2026-11-12** for 454910 with no backfill at
+all. Extending the backfill by a year turns it on about four weeks earlier, for
+124 KRX requests. Weight 0.05 — which is what makes waiting the obvious default.
 
 ### Why step 9 came before steps 6–8, and step 10 before them too
 

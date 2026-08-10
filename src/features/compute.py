@@ -22,15 +22,18 @@ records the gap in ``weight_coverage`` rather than hiding it.
 **``valuation_band`` is not z-scored, deliberately.** SPEC §5 says every feature
 is a 252-day rolling z-score, but ``valuation_band`` is defined as a 3-year PBR
 percentile. Applying both needs 756 + 252 = 1,008 sessions before the first
-value; the backfill holds 728, so the feature would be permanently ``NaN`` and
-would read as a bug. A percentile is *already* ticker-relative and bounded,
+value, which the stored window will not reach for years, so the feature would be
+permanently ``NaN`` and would read as a bug. A percentile is *already*
+ticker-relative and bounded,
 which is the one thing §5's z-score exists to achieve — so the second
 normalization buys nothing here while costing a year of history. It is scaled to
 ``(0.5 − pct) × 2`` so that cheap is positive, matching its ``+0.05`` weight.
 
-Even so it needs 756 sessions against the 728 available. **Extending the
-backfill to four years turns this feature on**; until then it is absent and the
-other four carry 0.70 of 1.10.
+Even so it needs 756 sessions and the stored window is still short — 732 as of
+2026-08-07. **The shortfall closes on its own**, one session per KRX day, on
+2026-09-11 for 30 tickers and 2026-11-12 for 454910, which listed 40 sessions
+late. Extending the backfill to four years only brings that forward. Until then
+the feature is absent and the other four carry 0.70 of the 0.75 in ``weights``.
 
 **Nothing here has been verified against real data by its author.** The tests
 are offline and use synthetic frames.
