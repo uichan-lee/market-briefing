@@ -15,6 +15,7 @@ import json
 import pandas as pd
 
 from scripts.collect_daily import RUNS, _differs, write_daily, write_status
+from src.collectors import kr_news
 from src.collectors.validate import ValidationReport
 
 
@@ -78,6 +79,31 @@ def test_both_runs_collect_news():
     check the report header needs."""
     assert "kr_news" in RUNS["morning"]
     assert "kr_news" in RUNS["evening"]
+
+
+def test_a_quiet_driver_run_still_records_that_it_ran(tmp_path, monkeypatch):
+    """The 2026-08-08 defect, in the second caller. `kr_news.main()` was fixed
+    to write a zero-row file when nothing new arrived — see its sibling
+    `test_a_quiet_run_that_passed_its_checks_exits_zero` in test_kr_news.py —
+    but the driver kept returning early, so a morning or evening run that found
+    nothing left `last_run_at` pointing at the last run that happened to carry
+    an article. The two callers write on the same terms or neither does."""
+    import scripts.collect_daily as mod
+
+    now = pd.Timestamp("2026-08-10 09:00", tz="UTC")
+    empty = pd.DataFrame(columns=list(kr_news.SCHEMA))
+
+    monkeypatch.setattr(mod, "RAW", tmp_path)
+    monkeypatch.setattr(mod, "now_utc", lambda: now)
+    monkeypatch.setattr(mod, "load_news_feeds", lambda: [])
+    monkeypatch.setattr(
+        mod.kr_news, "fetch", lambda feeds, *, root, now: (empty, ValidationReport("kr_news"))
+    )
+
+    detail, _ = mod.collect_news(dt.date(2026, 8, 10), dt.date(2026, 8, 10))
+
+    assert kr_news.last_run_at(tmp_path, now.date()) == now
+    assert "0 articles" in detail
 
 
 # --- revise-if-different ---------------------------------------------------

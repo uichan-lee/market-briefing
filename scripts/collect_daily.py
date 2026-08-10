@@ -288,8 +288,9 @@ def collect_news(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
     del start, end  # news has no date range; the buffer is whatever it is now
     now = now_utc()
     df, report = kr_news.fetch(load_news_feeds(), root=RAW, now=now)
-    if df.empty:
-        return "no new articles", report
+    # Writes even when the frame is empty, for the reason kr_news.main()'s
+    # docstring gives: the file's existence is the only record that the run
+    # happened, and last_run_at reads the run clock off its filename.
     path = kr_news.write_run(df, RAW, now)
     return f"{len(df)} articles -> {path.name}", report
 
