@@ -510,7 +510,13 @@ def last_run_at(root: Path, day: dt.date) -> pd.Timestamp | None:
 
 
 def write_run(df: pd.DataFrame, root: Path, at: pd.Timestamp) -> Path:
-    """Write one run's new articles, never overwriting an existing file."""
+    """Write one run's new articles, never overwriting an existing file.
+
+    An empty ``df`` writes an empty file rather than none. That file is the
+    record that the run happened, which :func:`last_run_at` reads off the
+    filename; readers skip it because :func:`_read_stored` yields per non-blank
+    line and there are none.
+    """
     path = run_path(root, at)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -640,10 +646,24 @@ def fetch(
 def main() -> int:
     """Entry point for the hourly collection workflow.
 
-    Prints the validation report and always exits 0 on a partial success: a
-    failing feed must not abort the run, because the other fourteen outlets'
-    articles cannot be re-fetched later either. A non-zero exit is reserved for
-    the case where nothing at all was collected.
+    Two rules, kept separate because conflating them is what made this function
+    wrong on 2026-08-08.
+
+    **The run always writes what it collected, even when that is nothing.** A
+    zero-row file records that the feeds were polled and held nothing new, which
+    is a different fact from not having polled — and the only place that
+    difference is recorded is the file's existence, since :func:`last_run_at`
+    reads the run clock off the filename. Skipping the write froze
+    ``previous_run`` through the quiet Korean night, and
+    :func:`check_collection_gap` then reported a growing gap for a collector
+    that was running on schedule and losing nothing.
+
+    **The exit code reports validation, and nothing else.** Not whether articles
+    arrived: a quiet hour is not a failure, and a run that stored articles while
+    a feed timed out *is* one, because that feed's loss is unmeasured and
+    unrecoverable. The workflow's commit step is ``if: always()`` so that a
+    non-zero exit here still commits — a failing check must raise the alarm
+    without costing the articles the run did collect.
     """
 
     feeds = load_news_feeds()
@@ -654,13 +674,9 @@ def main() -> int:
     for result in report.results:
         print(f"  {result}")
 
-    if df.empty:
-        print("no new articles; nothing written")
-        return 0 if report.ok else 1
-
     path = write_run(df, Path("data/raw"), now)
     print(f"wrote {len(df)} articles to {path}")
-    return 0
+    return 0 if report.ok else 1
 
 
 if __name__ == "__main__":

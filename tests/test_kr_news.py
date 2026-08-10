@@ -15,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from src.collectors import kr_news
 from src.collectors.kr_news import (
     MAX_COLLECTION_GAP,
     SCHEMA,
@@ -33,6 +34,7 @@ from src.collectors.kr_news import (
     validate_frame,
     write_run,
 )
+from src.collectors.validate import CheckResult, ValidationReport
 from src.util.config import NewsFeed, load_news_feeds
 from src.util.session import next_tradeable_open
 
@@ -420,6 +422,52 @@ def test_a_rerun_suffix_does_not_break_the_run_timestamp(tmp_path, frame):
     assert last_run_at(tmp_path, NOW.date()) == NOW
 
 
+# A run that polled and found nothing is not a run that did not happen, and the
+# file's existence is the only place that difference is recorded. Skipping the
+# write froze `last_run_at`, so `check_collection_gap` measured time since the
+# last *article* instead of time since the last *poll* — and reported a growing
+# gap through the quiet Korean night of 2026-08-08 for a collector that was
+# running on schedule and losing nothing.
+
+
+def test_a_run_with_nothing_new_still_records_that_it_ran(tmp_path):
+    empty = pd.DataFrame(columns=list(SCHEMA))
+    path = write_run(empty, tmp_path, NOW)
+
+    assert path.exists()
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        assert handle.read() == ""
+    assert last_run_at(tmp_path, NOW.date()) == NOW
+    assert seen_ids(tmp_path, NOW.date()) == set()
+    assert newest_stored_per_feed(tmp_path, NOW.date()) == {}
+
+
+def test_an_empty_run_does_not_hide_the_articles_around_it(tmp_path, frame):
+    write_run(frame, tmp_path, NOW - dt.timedelta(hours=1))
+    write_run(pd.DataFrame(columns=list(SCHEMA)), tmp_path, NOW)
+
+    assert seen_ids(tmp_path, NOW.date()) == set(frame["article_id"])
+    assert newest_stored_per_feed(tmp_path, NOW.date()) == {
+        "newsis_economy": frame["published_at"].max()
+    }
+
+
+def test_quiet_hours_do_not_accumulate_a_gap(tmp_path, frame):
+    """Regression for 2026-08-08: five scheduled runs failed in a row because
+    the feeds had nothing new, not because anything was missed."""
+    write_run(frame, tmp_path, NOW)
+    quiet = NOW
+    for _ in range(5):
+        quiet += dt.timedelta(hours=1)
+        write_run(pd.DataFrame(columns=list(SCHEMA)), tmp_path, quiet)
+        result = check_collection_gap(
+            pd.DataFrame(columns=list(SCHEMA)),
+            last_run_at(tmp_path, quiet.date()),
+            now=quiet + dt.timedelta(hours=1),
+        )
+        assert result.passed, result.detail
+
+
 def test_newest_stored_is_tracked_per_feed(tmp_path, frame):
     other = frame.copy()
     other["feed"] = "mk_stock"
@@ -455,6 +503,40 @@ def test_the_lookback_stops_at_one_day(tmp_path, frame):
     further back costs time every run and buys nothing."""
     write_run(frame, tmp_path, NOW - dt.timedelta(days=2))
     assert seen_ids(tmp_path, NOW.date()) == set()
+
+
+# --- exit code ------------------------------------------------------------
+#
+# The exit code answers "did validation pass", not "did articles arrive". Those
+# two were conflated until 2026-08-08, which inverted the alarm: quiet hours
+# that lost nothing mailed a failure, while runs that stored articles with a
+# feed timed out — unmeasured, unrecoverable loss — went green and silent.
+
+
+def _run_main(monkeypatch, tmp_path, df, results):
+    report = ValidationReport("kr_news")
+    for name, passed in results:
+        report.add(CheckResult(name, passed, "test"))
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(kr_news, "load_news_feeds", lambda: list(FEEDS.values()))
+    monkeypatch.setattr(kr_news, "now_utc", lambda: NOW)
+    monkeypatch.setattr(kr_news, "fetch", lambda feeds, now: (df, report))
+    return kr_news.main()
+
+
+def test_a_quiet_run_that_passed_its_checks_exits_zero(monkeypatch, tmp_path):
+    empty = pd.DataFrame(columns=list(SCHEMA))
+    assert _run_main(monkeypatch, tmp_path, empty, [("fetch", True)]) == 0
+    assert last_run_at(tmp_path / "data" / "raw", NOW.date()) == NOW
+
+
+def test_a_failed_check_exits_nonzero_even_though_articles_arrived(monkeypatch, tmp_path, frame):
+    """The 2026-08-08 20:50Z case: 6 articles stored, etnews_main timed out, run
+    reported green. The articles must still be written — the workflow's commit
+    step is ``if: always()`` so the alarm never costs them."""
+    assert _run_main(monkeypatch, tmp_path, frame, [("fetch", False)]) == 1
+    assert seen_ids(tmp_path / "data" / "raw", NOW.date()) == set(frame["article_id"])
 
 
 # --- config ---------------------------------------------------------------

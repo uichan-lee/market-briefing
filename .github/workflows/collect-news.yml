@@ -61,7 +61,13 @@ jobs:
       - name: Collect
         run: uv run python -m src.collectors.kr_news
 
+      # `always()`, matching report.yml, and here it is load-bearing rather than
+      # tidy. The collector exits non-zero on a failed check even when it stored
+      # articles — a timed-out feed means unmeasured, unrecoverable loss and has
+      # to raise the alarm. Without this line that alarm would skip the commit
+      # and destroy the very articles it is warning about.
       - name: Commit
+        if: always()
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
