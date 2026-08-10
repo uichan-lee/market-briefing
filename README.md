@@ -36,12 +36,12 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 
 ## Current status
 
-**Running stage.** The deterministic pipeline collects, resolves, computes, rates, renders and delivers twice a day without supervision, and has done so since 2026-08-03. `data/raw/` holds a 3-year backfill plus six days of live news. The one thing still missing is the news half of the score — and as of 2026-08-08 the hand-labelling that gates it is done, pending its reproducibility check.
+**Running stage.** The deterministic pipeline collects, resolves, computes, rates, renders and delivers twice a day without supervision, and has done so since 2026-08-03. `data/raw/` holds a 3-year backfill plus eight days of live news. The one thing still missing is the news half of the score — and as of 2026-08-10 the golden set that gates it is finished, reproducibility check included. Nothing blocks the bake-off.
 
 | Component | Status | Notes |
 |---|---|---|
 | Design docs (SPEC, PREREGISTRATION, MANUAL-TASKS) | ✅ Done | Evaluation criteria frozen 2026-08-02 |
-| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 510 offline tests passing, 9 network |
+| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 535 offline tests passing, 9 network |
 | Time & market sessions (`src/util/session.py`) | ✅ Done | Trading days, DST, look-ahead boundary |
 | Collector validation framework (`src/collectors/validate.py`) | ✅ Done | The four checks every collector must pass |
 | Config loading & safeguards (`src/util/config.py`) | ✅ Done | Rejects alias collisions, unquoted tickers |
@@ -55,12 +55,12 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | `us_price` collector (Tiingo) | ✅ Done | Four checks + committed fixture; known value cross-checked against Yahoo Finance |
 | `us_price` over Alpaca | ✅ Done | The US source in use. SIP confirmed on the free plan; **48 symbols in 2 requests** where Tiingo needed 48 |
 | `kr_flow` collector (pykrx) | ✅ Done | Investor flows, short interest, cap, fundamentals — **the 55% of rating weight KRX was gating**. Six checks incl. an accounting identity and a cross-collector price check |
-| Entity resolution (`src/entity/resolve.py`) | ✅ Done | Alias-driven, ambiguous bucket reported in the header — running at 8.1% of 972 articles |
+| Entity resolution (`src/entity/resolve.py`) | ✅ Done | Alias-driven, ambiguous bucket reported in the header — running at 7.8% of 1,040 articles |
 | Feature computation (`src/features/compute.py`) | ✅ Done | 5 of the 7 weighted features; 252-day rolling z-score per ticker |
 | Report renderer + delivery (`src/report/`, `src/notify/`) | ✅ Done | SPEC §2 sections, `vault` + `email`, HTML mail with a `text/plain` alternative |
 | GitHub Actions workflow | ✅ Done | `collect-news.yml` hourly, `report.yml` morning ×3 + evening; live since 2026-08-03 |
-| Golden set (100 hand-labeled articles) | 🟡 Labelled | 100 examples × 5 dimensions scored by Ricky on 2026-08-07/08; `verify` passes with 0 rule conflicts. One check outstanding — the next-day re-label (SPEC §7.3) |
-| Embedding pipeline (dedup + relevance) | ⬜ Not started | SPEC §12 step 6, blocked behind the golden set |
+| Golden set (100 hand-labeled articles) | ✅ Done | 100 examples × 5 dimensions scored by Ricky on 2026-08-07/08; next-day re-label passed 2026-08-10 (mean gap 0.16 against a 0.25 threshold). `forwardness`'s ±0.13 floor is recorded in [PREREGISTRATION §8.3](PREREGISTRATION.md) |
+| Embedding pipeline (dedup + relevance) | ⬜ Not started | SPEC §12 step 6; needs a local embedding dependency, not blocked by the golden set |
 | LLM adapter + scoring + bake-off | ⬜ Not started | `src/llm/adapter.py` does not exist yet; only the v1 synthesis prompt is written |
 | `news_polarity`, `rev_4w` features | ⬜ Not started | Both carry live weight in `config/rating.yaml` — see the caveat below |
 | `us_filings`, `kr_filings` | ⬜ Not started | SEC EDGAR and DART |
@@ -72,6 +72,10 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 > [!note]
 > **The outer buckets are now harder to reach, and that is unresolved.** The composite's scale tracks total weight, so `강한 매수`/`강한 매도` begin at a uniform z of **2.67** where they began at 1.82. Rescaling the cut points is permitted by §8.4 for distributional reasons, but doing it inside the same change that moved the scale would have made the two indistinguishable afterwards. Left as measured, and pinned by `test_the_outer_bucket_needs_a_z_of_two_point_seven`. It belongs with the calibration in [MANUAL-TASKS §6](MANUAL-TASKS.md).
 
+**The news collector's alarm was pointing the wrong way, and is fixed (2026-08-10).** Five consecutive `collect-news` runs mailed a failure on the night of 2026-08-08 and none of them had lost anything. `last_run_at` reads the run clock off the last written filename, but a run with no new articles wrote no file — so through the quiet Korean night `check_collection_gap` measured time since the last *article* and reported 2.9h, 3.8h, 5.0h, 5.8h for a collector firing on schedule, while `check_feed_continuity` passed on every one. The same conflation ran the other way in the exit code, which consulted the report only when the frame was empty: a run that stored articles with a feed timed out — unmeasured, unrecoverable loss — exited 0 and stayed silent. **Runs now always write what they collected, empty or not, and the exit code reports validation and nothing else.** The commit step became `if: always()`, without which the new alarm would have skipped the commit and destroyed the articles it was warning about.
+
+**Macro's window now outlasts its slowest publisher (2026-08-10).** The FRED FX series `DEXKOUS` and `DTWEXBGS` run about a week behind the daily ones, and the morning run's `end` is the *previous* UTC day relative to the KST date it is read on — so the 8-day window opened after their last observation and the 2026-08-10 briefing shipped with `usdkrw has no rows at all`. Every Monday would have landed identically. Widening to 30 days for macro only (`kr_flow`'s 124 KRX requests keep the global window at 8) also surfaced the expensive half: **`wti` 2026-07-28 was missing from three years of stored history while FRED serves 80.91 for it** — an EIA value published after the short window had moved past the date, with nothing left to re-fetch it. It is the only genuine gap in the stored macro; every other one is Columbus Day or Veterans Day, when the bond market is shut and NYSE is not. The briefing header now dates macro separately, because the USDKRW level on the market line is routinely older than the prices printed beside it.
+
 **The rating archive stopped double-counting sessions (2026-08-08).** `load_rating_history()` was concatenating every parquet under `data/ratings/` — **217 rows for 3 real sessions**, with 2026-08-06 stored four times and `2026-08-07.parquet` holding 31 tickers at 0% coverage from a run that fired before KRX opened. It now selects the newest version per session (93 rows), and `write_ratings()` refuses a frame the report already refuses to publish. Nothing was deleted: the superseded files stay on disk as the record that the bug reached publication.
 
 **Korean news collection is live and unblocked** — `kr_news` reads 14 outlet RSS feeds via GitHub Actions — twice an hour through the KRX session, hourly otherwise — needing no credential at all. Because RSS cannot be backfilled, that clock only starts once `collect-news.yml` is on the default branch.
@@ -80,7 +84,9 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 
 **The golden set is labelled.** All 100 examples carry all five dimensions, the four buckets are 25 each, and `verify` reports no rule conflicts. The labelling was Ricky's alone — no model supplied or corrected a value, which is the property the whole bake-off rests on. What automation did contribute is measured rather than assumed: **8% of the finished set had its bucket changed after a rule flagged it, and 14% holds at least one score a rule sent back to be re-scored** (`review_influence` and `redo_influence` in `scripts/golden.py`). Both numbers undercount, because two dimension *definitions* were sharpened mid-run with Claude's input — recorded in [PREREGISTRATION §R](PREREGISTRATION.md).
 
-One check remains before the set is usable: `golden recheck` re-labels 10 examples a day later without showing the first answers. A mean gap above 0.25 means the schema is underdefined and the bake-off would be measuring noise rather than model quality (SPEC §7.3). See [MANUAL-TASKS.md §4](MANUAL-TASKS.md).
+**The golden set is finished and the bake-off is unblocked (2026-08-10).** `golden recheck` re-labelled 10 examples a day later without showing the first answers, and `verify` passes at a mean gap of 0.16 against its 0.25 threshold. The set also separates well: `|polarity| ≥ 0.5` on 50 of 100 examples, double the floor `verify` enforces, with a mean polarity of +0.04 and no positivity skew.
+
+What the recheck also showed is that the disagreement is not spread evenly. **`forwardness` carries almost all of it** — mean gap 0.13 against 0.03–0.07 for the other four dimensions, every ±0.25 deviation, and a direction rather than scatter (5 of 6 moves went down). The three largest were 확정됐지만 처음 알려진 사실, which is exactly the case the dimension's own written hint sends the other way. The schema was deliberately not rewritten: editing a definition while its finished labels are visible is the contamination [PREREGISTRATION §R](PREREGISTRATION.md) already had to declare once. Instead the floor is recorded there in advance — a `forwardness` difference between two models below 0.13 is not evidence, and a v2 set fixes the anchors before any label is written.
 
 **The schedule is best-effort, and that is measured, not assumed.** GitHub fires roughly a third of the declared runs: over 2026-08-03..07 the news workflow declared 31 runs a day and delivered 6–10, for **42.6% hourly coverage** (40 of 94 hours). Both scheduled report runs on record were hours late. Everything downstream is built to survive it — `last_closed_session()` resolves a run from the clock rather than the date, the morning report is declared three times behind a published-check, and `check_feed_continuity` measures what a gap actually cost instead of guessing. With `etnews_economy` removed, **1 of 45 observed gaps (2.2%)** exceeded the fastest remaining feed buffer, so the coverage number is alarming but the realised loss is not.
 
@@ -288,8 +294,8 @@ be checked against the repository rather than taken on trust.
 | 4 | **3-year backfill into `data/raw/`** | ✅ macro (776), us_price (752), kr_price (728), kr_flow (728) |
 | 5 | Entity resolution + ambiguous ratio | ✅ **ambiguous 8.1%** of 972 articles (threshold 30%) |
 | 6 | Embedding pipeline (dedup + relevance) | ⬜ needs a local embedding dependency — not blocked by the golden set |
-| 7 | Golden set — 100 hand-labeled articles | 🟡 **labelled 2026-08-08**; `recheck` outstanding |
-| 8 | Model adapter + bake-off | ⬜ blocked behind step 7's `recheck` |
+| 7 | Golden set — 100 hand-labeled articles | ✅ **done 2026-08-10** — labelling, recheck and verification |
+| 8 | Model adapter + bake-off | ⬜ nothing blocking — step 7 cleared |
 | 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |
 | 10 | Report renderer + delivery | ✅ vault + email live; 5 briefings rendered, 2026-08-03..07 |
 | 11 | Daily collection + report workflow | ✅ **full cloud round trip 2026-08-06** — 5 collectors, render, email, commit |
@@ -368,24 +374,26 @@ These are Ricky's, in the order they will be needed. Full detail in
 
 | # | Task | Est. time | Blocks |
 |---|---|---|---|
-| 1 | `golden recheck` — re-label 10 examples a day later | 5 min | Model selection (step 8) |
-| 2 | Bake-off decision | 30 min | Scoring model choice |
-| 3 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
-| 4 | KIS application | 15 min | Real-time quotes only; blocks nothing today |
+| 1 | Bake-off decision | 30 min | Scoring model choice |
+| 2 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
+| 3 | KIS application | 15 min | Real-time quotes only; blocks nothing today |
 
 Credentials, the `.env` fixes, the watchlist, the Alpaca switch, the alias
-dictionary and the golden-set labelling itself are all done.
+dictionary and the golden set — labelling, recheck and verification — are all
+done. Nothing blocks the bake-off any more.
 
-Task 1 is the one that will feel skippable — the labelling is finished and the
-numbers already look usable. It is not optional. Without it, a disagreement
-between two models cannot be told apart from a schema that means different
-things on different days, and the bake-off would rank models on that noise.
+The recheck that used to sit at the top of this list is finished, and it earned
+its place: it is what found that `forwardness` disagrees with itself twice as
+much as the other four dimensions. Read the floor in
+[PREREGISTRATION §8.3](PREREGISTRATION.md) before ranking models on it.
 
-**Claude is not idle while task 1 waits.** Of the defects found in the
-[2026-08-07 review](notes/review-2026-08-07.md), H1 (rating archive) and H2
-(phantom weights) are fixed as of 2026-08-08. M1 (news-failure reporting) and
-L1 remain, neither costing anything today, and the dedup half of step 6 needs no
-golden set either — only a decision on a local embedding dependency.
+**On the defects found in the [2026-08-07 review](notes/review-2026-08-07.md).**
+H1 (rating archive) and H2 (phantom weights) were fixed on 2026-08-08. M1
+(news-failure reporting) is now partly closed: a failed check in the standalone
+news run exits non-zero, so GitHub mails the failure instead of leaving it in a
+log nobody reads — the detail still requires opening the run. L1 remains and
+costs nothing. The dedup half of step 6 needs no golden set either, only a
+decision on a local embedding dependency.
 
 ---
 
