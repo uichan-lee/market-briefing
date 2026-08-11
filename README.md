@@ -300,7 +300,7 @@ be checked against the repository rather than taken on trust.
 | 10 | Report renderer + delivery | ✅ vault + email live; 6 briefings rendered, 2026-08-03..2026-08-10 |
 | 11 | Daily collection + report workflow | ✅ **full cloud round trip 2026-08-06** — 5 collectors, render, email, commit |
 | 12 | Schedule burn-in | 🟡 **in progress** — cron fires unattended; delivery 42.6% of declared runs (2026-08-03..07) |
-| 13 | Two-week gate | ⬜ **clock starts 2026-08-11, read 2026-08-25** — pinned in PREREGISTRATION §8.5 |
+| 13 | Two-week gate | ⬜ **clock starts 2026-08-12, read 2026-08-26** — pinned in PREREGISTRATION §8.5 |
 
 **The whole deterministic path now exists and runs unattended — collect,
 resolve, compute, rate, render, deliver.** What is missing is the LLM stages
@@ -408,13 +408,13 @@ Criteria were frozen in [PREREGISTRATION.md](PREREGISTRATION.md) on 2026-08-02, 
 
 | Gate | Criteria | If not met |
 |---|---|---|
-| 2 weeks<br>2026-08-11 → 2026-08-25 | Pipeline uninterrupted, zero data-consistency errors, `ambiguous` < 30%, inter-model polarity correlation > 0.5 | Halt signal work, repair the measurement layer |
+| 2 weeks<br>2026-08-12 → 2026-08-26 | Pipeline uninterrupted, zero data-consistency errors, `ambiguous` < 30%, inter-model polarity correlation > 0.5 | Halt signal work, repair the measurement layer |
 | 3 months | ICIR > 0.3, shadow portfolio beats KODEX 200 buy-and-hold | Discard the signal logic, redesign |
 | 6 months | Above holds after fees, transaction tax, and slippage | End the project, switch to indexing |
 
 **Two weeks cannot measure whether the signal works.** Separating a 55% hit rate from 50% needs roughly 800 independent observations; two weeks of 30 tickers yields an effective 60–100 once market beta eats the cross-sectional independence. So the early gate measures *measurement stability* — whether three different models scoring the same articles agree with each other — rather than predictive accuracy. If they disagree, the scores are model-specific noise and there is nothing worth validating yet.
 
-**"Uninterrupted" means something specific, and it is written down.** Every run that fires records a run file, no unexplained `check_feed_continuity` failure, no two consecutive runs failing validation for the same cause — [§8.5](PREREGISTRATION.md) defines it in full and calibrates it against two known incidents. Delivered-run coverage is reported alongside the decision but is not a criterion: GitHub's scheduler drops the runs, not this pipeline. The inter-model criterion needs the step-8 bake-off, so the gate is read in two parts and passes only when both do.
+**"Uninterrupted" means something specific, and it is written down.** Every run that fires records a run file, no unexplained `check_feed_continuity` failure, no two consecutive runs failing validation for the same cause — [§8.5](PREREGISTRATION.md) defines it in full and calibrates it against known incidents. The middle condition became measurable on 2026-08-11: a feed that does not answer is now judged by the next run that does, so the criterion counts causes the pipeline can fix rather than the weather it runs in. Delivered-run coverage is reported alongside the decision but is not a criterion: GitHub's scheduler drops the runs, not this pipeline. The inter-model criterion needs the step-8 bake-off, so the gate is read in two parts and passes only when both do.
 
 **"Zero data-consistency errors" means contradiction, not absence.** Four checks count — `schema`, `structural_invariants`, `flow_identity`, and the Alpaca-vs-Tiingo close comparison — read off the committed report headers. `missing_ratio` and `trading_day_continuity` are excluded with reasons given in [§8.5](PREREGISTRATION.md), the second because 25 of them once fired from a single Tiingo rate-limit. The list was written before the count was known; over the record to date it stands at zero.
 
