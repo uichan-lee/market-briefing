@@ -491,6 +491,16 @@ Run 3 candidate models against the same golden set + same prompt, and measure th
 
 **Decision rule**: among models that pass golden-set correlation and self-consistency first, adopt the one with the lowest cost per valid signal. If performance is comparable, pick the cheaper one.
 
+> [!important] Every article this bake-off scores post-dates every candidate's training cutoff
+> Recorded here **before the first run**, on 2026-08-11, so that it reads as a designed property rather than as something noticed afterwards.
+>
+> `data/raw/kr/news/` begins 2026-08-03, and the golden set was sampled from it. RESEARCH.md finds that contamination by training-data memorisation is the dominant methodological failure in published LLM trading work — frontier models reproduce index closes inside their training window with under 1% error, and a model "predicting" what it has memorised is not predicting. The only mitigation that fully works is evaluating strictly after the cutoff, and this project has it structurally rather than by design cleverness, because it had no news archive to be tempted by.
+>
+> The property is preserved by CLAUDE.md rule 3, which confines LLM output to three places, none of which sees a price series. The scoring stage receives article text and a ticker — never a date-and-outcome pair it could recall. **Relaxing that rule would forfeit this, and the forfeit would be invisible in the results.**
+
+> [!note] What a narrow spread means
+> Candidates clustering is the expected outcome, not a failed run: live multi-model benchmarks find agent architecture dominates model choice (RESEARCH.md §3.4). The decision rule above already covers it — take the cheaper one. Re-running until something separates is the defect PREREGISTRATION exists to prevent, and PREREGISTRATION §8.3's per-dimension noise floor bounds how fine a difference may be read at all.
+
 ---
 
 ## 8. Evaluation pre-registration

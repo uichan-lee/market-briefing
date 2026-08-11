@@ -474,9 +474,31 @@ The recipient address is **not** a secret and does not belong in `.env`. It goes
 
 ## 8. LLM provider keys
 
-Not yet in `.env.example`. `config/models.yaml` specifies `provider: anthropic`, and the SPEC §7.4 bake-off compares providers, so at least one and probably several will be needed.
+**Now in `.env.example`.** The adapter was written on 2026-08-11, so the names below are what it actually reads rather than a guess — that is why this section was deferred until it existed.
 
-Deferred until `src/llm/adapter.py` is written, so the variable names match what the adapter reads rather than being guessed in advance.
+Three keys, one per SPEC §7.4 bake-off candidate in `config/models.yaml`. **All three are needed to run the comparison; only the winner is needed afterwards.**
+
+| Variable | Provider | Where |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic | [console.anthropic.com](https://console.anthropic.com) → Settings → API keys |
+| `OPENAI_API_KEY` | OpenAI | [platform.openai.com](https://platform.openai.com) → API keys |
+| `GEMINI_API_KEY` | Google AI Studio | [aistudio.google.com](https://aistudio.google.com) → Get API key |
+
+These are litellm's own variable names, not this project's invention. `src/llm/adapter.py` lists them in `CREDENTIALS` so that a missing key fails **before** any call is made — the bake-off is 1,500 calls, and discovering a missing key on call 1,499 wastes the other 1,498. The adapter reports presence only and never reads a value, per the handling rules below.
+
+**Cost.** SPEC §9.1 prices the whole bake-off at **under $1** (100 examples × 3 models × 5 repeats). Each provider requires a payment method; prepaid credit is enough and none of them needs a subscription. Running the pipeline afterwards is ~$5–20/month on one model.
+
+**What to do once the keys are in `.env`:**
+
+```bash
+uv run python -m src.eval.bakeoff run --limit 5 --repeats 1   # ~15 calls, cents
+uv run python -m src.eval.bakeoff run                          # the real thing
+uv run python -m src.eval.bakeoff report
+```
+
+The first command is a dry run against five articles — it proves the keys work and the schema is accepted before spending the rest. Then MANUAL-TASKS §5: **Ricky reads the table and decides**, and records the choice with its date in `config/models.yaml`.
+
+GitHub secrets are only needed once scoring runs in Actions, which is after the model is chosen.
 
 ---
 

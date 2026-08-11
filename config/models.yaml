@@ -18,6 +18,39 @@ scoring:
   # §5 makes the call Ricky's, not Claude's. Record the decision and its date
   # here as a comment once the bake-off has run.
 
+# The models the SPEC §7.4 bake-off compares. Read only by src/eval/bakeoff.py,
+# never by the pipeline — these are alternatives under test, not the configured
+# choice, which is why the runner overrides `scoring` rather than editing it.
+#
+# Three frontier models first, because §7.4 measures structured-output maturity
+# and these are the ones where it is reliable enough that the comparison
+# reflects the models rather than three different JSON failure modes. SPEC §7.2
+# says not to exclude the Korean models — HyperCLOVA X's tokenizer is cheaper on
+# Korean text — and they are the intended fourth candidate, added once this
+# harness has been shown to work end to end against a real vendor.
+#
+# `uv run python -m src.eval.bakeoff run` needs a key per provider. See
+# API-KEYS.md §8.
+# ⚠ Measured 2026-08-11 by a dry run: **gpt-5 rejects temperature=0** and accepts
+# only 1. SPEC §6.3 requires 0 for scoring, so as listed this candidate cannot
+# satisfy the spec, and the bake-off will record it as a failed call rather than
+# quietly scoring it at a different temperature. litellm's own message points at
+# the fix — "for gpt-5.1, temperature is supported when reasoning_effort='none'"
+# — so the OpenAI entry likely wants to change before the run. Left visible
+# rather than silently swapped: which model represents OpenAI is a bake-off
+# input, and MANUAL-TASKS §5 makes those Ricky's.
+#
+# Do NOT reach for `litellm.drop_params = True`. It would drop the temperature
+# and let the run look successful while the determinism SPEC §6.3 asks for was
+# never applied.
+candidates:
+  - provider: anthropic
+    model: claude-sonnet-5
+  - provider: openai
+    model: gpt-5
+  - provider: gemini
+    model: gemini-3-pro
+
 synthesis:
   provider: anthropic
   model: claude-sonnet-5

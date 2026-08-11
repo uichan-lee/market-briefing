@@ -169,6 +169,13 @@ def run(
                     attempt.failure = f"schema: {exc}"
                 except AdapterError as exc:
                     attempt.failure = f"adapter: {exc}"
+                except Exception as exc:  # noqa: BLE001
+                    # A vendor's own exception — rejected parameter, rate limit,
+                    # outage. Recorded rather than raised for the same reason
+                    # the schema failures are: a run is 1,500 calls, and one
+                    # candidate refusing a parameter must not destroy the two
+                    # that answered. The failure is in the table, not swallowed.
+                    attempt.failure = f"{type(exc).__name__}: {exc}"
                 else:
                     bad = out_of_range(result.parsed)
                     if bad:

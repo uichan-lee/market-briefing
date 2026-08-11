@@ -25,6 +25,17 @@ data/*
 !data/raw/
 !data/ratings/
 
+# Every bake-off call, raw (SPEC §7.4). Committed for the same reason
+# data/ratings/ is: this is what a decision was made on, and MANUAL-TASKS §5
+# asks Ricky to record the choice with its date so the reasoning survives three
+# months. The table is regenerable from these; these are not regenerable
+# without paying for 1,500 calls again, and a re-run would land on different
+# numbers anyway since a model version can move under a fixed name.
+#
+# Small: one JSON line per call, so a full three-model bake-off is a few
+# hundred KB.
+!data/bakeoff/
+
 # The hand-labelled golden set (SPEC §7.3). Committed because it is the one
 # artefact in this repository that cannot be regenerated at any price: it is
 # Ricky's judgment on 100 articles, and the §7.4 bake-off measures every model
