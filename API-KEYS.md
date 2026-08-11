@@ -486,13 +486,26 @@ Three keys, one per SPEC §7.4 bake-off candidate in `config/models.yaml`. **All
 
 These are litellm's own variable names, not this project's invention. `src/llm/adapter.py` lists them in `CREDENTIALS` so that a missing key fails **before** any call is made — the bake-off is 1,500 calls, and discovering a missing key on call 1,499 wastes the other 1,498. The adapter reports presence only and never reads a value, per the handling rules below.
 
-**Cost.** SPEC §9.1 prices the whole bake-off at **under $1** (100 examples × 3 models × 5 repeats). Each provider requires a payment method; prepaid credit is enough and none of them needs a subscription. Running the pipeline afterwards is ~$5–20/month on one model.
+**Cost — measured 2026-08-11, and higher than SPEC §9.1's estimate.** §9.1 prices the bake-off at "under $1"; that was written before the scoring prompt existed. Rendered against the 100 golden examples the prompt averages **1,532 input tokens per call**, so one candidate's 500 calls (100 × 5 repeats) costs ≈ $2.3 on `claude-sonnet-5`, $1.7 on `gpt-5.1`, $1.8 on `gemini-3.5-flash` — **≈ $6 for the three together.** Running the pipeline afterwards is ~$5–20/month on one model.
+
+**Funding, per vendor — they are not alike.** Verified 2026-08-11 by one live call each:
+
+| Provider | State on a fresh account | What it needs |
+|---|---|---|
+| Anthropic | Requires prepaid credit before the key works at all | $5 covers its ≈ $2.3 share |
+| OpenAI | Key authenticates but every call answers `RateLimitError: You have no credits remaining` | Prepaid credit; $5 covers its ≈ $1.7 share |
+| Google AI Studio | Free tier works with no billing — but throttles at roughly **8 calls/min** on `gemini-3.5-flash`, and the `*-pro` models answer 429 without billing | Either enable billing (Tier 1) or throttle the runner |
+
+The Gemini throttle is the one that bites quietly: an unthrottled 500-call run mostly 429s, and those calls land in the bake-off's `never reached` column rather than in the comparison. They no longer count against schema compliance — that separation was added on 2026-08-11 for exactly this reason — but a model measured on a fraction of the corpus is being compared on a different sample from its rivals, which the report says out loud.
 
 **What to do once the keys are in `.env`:**
 
+The repository has no dotenv loader — `src/llm/adapter.py` reads `os.environ`, like every other collector here. Source the file into the shell first:
+
 ```bash
+set -a; source .env; set +a
 uv run python -m src.eval.bakeoff run --limit 5 --repeats 1   # ~15 calls, cents
-uv run python -m src.eval.bakeoff run                          # the real thing
+uv run python -m src.eval.bakeoff run                          # the real thing, ≈ $6
 uv run python -m src.eval.bakeoff report
 ```
 
