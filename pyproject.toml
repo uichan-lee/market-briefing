@@ -36,6 +36,15 @@ dependencies = [
     # documents first and the one that reads the nullable Int64 columns kr_flow
     # produces without silently widening them to float.
     "pyarrow>=16",
+    # SPEC §7.1's vendor-neutral layer, imported only by src/llm/adapter.py per
+    # CLAUDE.md rule 4. One dependency instead of three vendor SDKs, chosen for
+    # the part that actually differs between them: the §7.4 bake-off needs the
+    # same JSON schema enforced on Anthropic, OpenAI and Gemini, and each
+    # expresses structured output differently. litellm transforms one
+    # `response_format` into each vendor's own form, so the schema is written
+    # once and the comparison measures the models rather than three hand-rolled
+    # request builders. SPEC §7.1 names it as one of the two acceptable shapes.
+    "litellm>=1.55",
     "pykrx>=1.2.8",
     "pyyaml>=6.0",
     # Not a new dependency — kr_news and us_price already import it. It was
