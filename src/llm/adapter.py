@@ -20,8 +20,14 @@ handling rules; it only reports whether one is present, so a missing key
 produces an actionable message rather than a vendor stack trace.
 
 **Determinism is the caller's, not this layer's.** ``temperature`` comes from
-``config/models.yaml`` — 0 for scoring (SPEC §6.3), 0.3 for synthesis, which is
-prose and deliberately outside the evaluation path (PREREGISTRATION §8.4).
+``config/models.yaml``, and this module sends it only when the stage declares
+one — 0.3 for synthesis, which is prose and deliberately outside the evaluation
+path (PREREGISTRATION §8.4), and for scoring whatever the chosen model actually
+accepts. SPEC §6.3 asked for 0 outright until 2026-08-11, when the vendors
+stopped agreeing that the parameter exists; it now asks for the most
+deterministic setting each one still offers, with the value recorded per call.
+Omitting a rejected parameter is the caller's decision to state, never this
+layer's to make silently.
 """
 
 from __future__ import annotations

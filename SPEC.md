@@ -423,10 +423,34 @@ All three are computable from the day the 3-year backfill lands (§12 step 4), s
 
 ### 6.3 Prompt discipline
 
-- `temperature=0`, the schema is enforced via tool/structured output
+- The schema is enforced via tool/structured output
+- **Sampling is pinned to the most deterministic setting the vendor still offers**, and where the parameter has been removed, none is sent. Never drop it silently — `litellm.drop_params` would let a run look successful while the setting was never applied.
+- **The value actually sent is recorded on every score**, beside the `model_id` and `prompt_version` the §6.2 schema already carries.
+- **Stability is measured, not assumed.** §7.4's self-consistency σ is the instrument and `polarity σ < 0.1` is the bar.
 - The system prompt and scoring criteria are kept separate as **prompt caching** targets
 - Changing the prompt wording makes prior scores non-comparable. Tag the prompt with a version and record it alongside the score.
 - Prompts are managed as files under `src/llm/prompts/`, not hardcoded in the code.
+
+> [!warning] This bullet said `temperature=0` until 2026-08-11. The frontier removed the knob.
+> Asked directly, on that date, with live calls:
+>
+> | Model | `temperature=0` |
+> |---|---|
+> | `claude-sonnet-5` | **HTTP 400, `temperature is deprecated for this model`.** Omitted or 1 are the only options |
+> | `gpt-5` | Refused; only 1. This is why `gpt-5.1`, which accepts 0, is the candidate |
+> | `gpt-5.1` | Accepted |
+> | `gemini-3.5-flash` | Accepted, but litellm warns Gemini 3+ has it slated for removal, with sampling guidance moving into the system prompt |
+>
+> So this is a direction the vendors are moving in, not one model's quirk, and no choice of candidate avoids it.
+>
+> **Less is lost than it appears, because `temperature=0` was never the guarantee.** §6.1 already says so, in the argument for moving relevance filtering to embeddings: *"Even at `temperature=0`, the LLM isn't perfectly identical run to run."* It was variance reduction. What is gone is a knob, not a promise.
+>
+> **Where the guarantee actually lives.** Reproducibility here comes from keeping what the model said, not from asking it to say the same thing twice — the pattern already used everywhere else in this project (`data/raw/` is never overwritten, ratings archive with a `-v2` suffix, the golden set is committed because it cannot be regenerated). Two mechanisms carry it:
+>
+> 1. **The archive.** §3's `data/scores/{date}__{model_id}__{prompt_version}.jsonl` is the record a re-run reads instead of re-scoring. ⚠ **Not yet implemented, and `.gitignore` does not except `data/scores/` yet** — both land with the production scoring wiring. Until then a re-score is not guaranteed to reproduce a published rating.
+> 2. **The measurement.** §7.4's self-consistency σ, which this bullet list now makes load-bearing.
+>
+> PREREGISTRATION §8.3 defines what "LLM output reproducibility" means operationally, and records that it is **not** a §8.5 gate criterion — the four gate criteria are unchanged by this.
 
 ---
 
@@ -452,6 +476,13 @@ synthesis:
   provider: anthropic
   model: claude-sonnet-5
   temperature: 0.3
+
+# The §7.4 candidates. `temperature` overrides the stage per candidate, and an
+# explicit `null` means send none at all — see §6.3 for why they differ.
+candidates:
+  - {provider: anthropic, model: claude-sonnet-5, temperature: null}
+  - {provider: openai,    model: gpt-5.1,         temperature: 0}
+  - {provider: gemini,    model: gemini-3.5-flash, temperature: 0}
 ```
 
 Implement either via a unified `litellm` layer, or a thin custom wrapper combined with per-vendor SDKs. Either way, the requirement is that **swapping happens via a single provider string.**
@@ -484,12 +515,20 @@ Run 3 candidate models against the same golden set + same prompt, and measure th
 |---|---|---|
 | Golden-set correlation | Spearman correlation of model score vs. my label (per dimension) | relevance > 0.7, polarity > 0.6 |
 | Schema compliance rate | Fraction of calls returning valid JSON without a parse failure | > 99% |
-| Self-consistency | Stdev of scores across 5 repeated runs on the same article | polarity σ < 0.1 |
+| Self-consistency | Stdev of scores across 5 repeated runs on the same article | polarity σ < 0.1 |*
 | Inter-model agreement | Spearman correlation between candidate models | See PREREGISTRATION §8.3 |
 | Cost per valid signal | Total cost ÷ count of articles with relevance>0.5 | Relative comparison |
 | Latency | Time to complete a batch | Within the briefing's time budget |
 
 **Decision rule**: among models that pass golden-set correlation and self-consistency first, adopt the one with the lowest cost per valid signal. If performance is comparable, pick the cheaper one.
+
+> [!important] \* Self-consistency became load-bearing on 2026-08-11
+> It was one metric of six. Now that §6.3 can no longer pin `temperature` across vendors, **it is the only measurement of scoring stability this project has.** Two consequences:
+>
+> - **Do not reduce the 5 repeats.** They are the most obvious place to cut the bake-off's cost, and cutting them removes the instrument rather than an expense. The whole run is ≈ $6.
+> - **The decision rule already handles a model that cannot be pinned.** A candidate running at its vendor default either clears σ — in which case the missing knob costs nothing real — or fails it, and fails for exactly the right reason. No exception is needed for such a model, which is why `claude-sonnet-5` stays a candidate.
+>
+> Candidates sent different temperatures were not run under identical conditions. `src/eval/bakeoff.py` records the value per call and prints it as a column, so a table whose `temp` column varies says so on its face rather than reading as a clean comparison.
 
 > [!important] Every article this bake-off scores post-dates every candidate's training cutoff
 > Recorded here **before the first run**, on 2026-08-11, so that it reads as a designed property rather than as something noticed afterwards.
