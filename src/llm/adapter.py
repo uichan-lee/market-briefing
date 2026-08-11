@@ -117,6 +117,18 @@ def _call(**kwargs: Any) -> Any:
     return completion(**kwargs)
 
 
+def is_rate_limit(exc: BaseException) -> bool:
+    """True when a vendor refused for quota reasons rather than content.
+
+    Lives here because it is a question about a vendor exception class, and
+    CLAUDE.md rule 4 keeps those inside this module. Callers that pace or retry
+    ask this rather than matching on the exception's name.
+    """
+    from litellm.exceptions import RateLimitError
+
+    return isinstance(exc, RateLimitError)
+
+
 def _cost(response: Any) -> float | None:
     """USD for one call, or ``None`` when litellm has no price for the model.
 

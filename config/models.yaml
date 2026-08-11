@@ -31,25 +31,81 @@ scoring:
 #
 # `uv run python -m src.eval.bakeoff run` needs a key per provider. See
 # API-KEYS.md §8.
-# ⚠ Measured 2026-08-11 by a dry run: **gpt-5 rejects temperature=0** and accepts
-# only 1. SPEC §6.3 requires 0 for scoring, so as listed this candidate cannot
-# satisfy the spec, and the bake-off will record it as a failed call rather than
-# quietly scoring it at a different temperature. litellm's own message points at
-# the fix — "for gpt-5.1, temperature is supported when reasoning_effort='none'"
-# — so the OpenAI entry likely wants to change before the run. Left visible
-# rather than silently swapped: which model represents OpenAI is a bake-off
-# input, and MANUAL-TASKS §5 makes those Ricky's.
+#
+# ── Candidates chosen 2026-08-11 by Ricky, after probing all three live APIs ──
+# The first list — `gpt-5` and `gemini-3-pro` — was replaced because neither
+# could run, for two unrelated reasons. Both are recorded here so the next
+# person does not rediscover them by spending money.
+#
+#   gpt-5 rejects temperature=0 and accepts only 1. litellm blocks this
+#   client-side, before the network. gpt-5.1 passes the same check and takes 0,
+#   so the substitution is what unblocks the run rather than a preference.
+#
+#   gemini-3-pro does not exist as a text model. The key's own ListModels
+#   returns 36 models supporting generateContent and none is `gemini-3-pro`;
+#   the near-match, `gemini-3-pro-image`, is an image model. `gemini-2.5-pro`
+#   answers 404, "no longer available to new users", and `gemini-3.1-pro-preview`
+#   answers 429 — the pro tier needs billing enabled. `gemini-3.5-flash` works
+#   at temperature 0 on the free tier and is what is listed.
+#
+# Verified 2026-08-11 with live structured calls, all three answering:
+#   claude-sonnet-5   OK — but only with **no** temperature. See below.
+#   gpt-5.1           OK at temperature 0, once credit was added.
+#   gemini-3.5-flash  OK at temperature 0.
+#
+# ⚠ **The frontier is removing the temperature knob.** SPEC §6.3 asked for 0
+# outright until 2026-08-11; it now asks for the most deterministic setting each
+# vendor still offers, and for the value sent to be recorded, because a single
+# number cannot be sent to all three. Asked directly, each vendor says:
+#   claude-sonnet-5   `400: `temperature` is deprecated for this model`. Omitted
+#                     or 1 are the only options; 0 and 0.0 are both refused.
+#   gpt-5             only 1. gpt-5.1 accepts 0, which is why 5.1 is listed.
+#   gemini-3.5-flash  accepts 0, but litellm warns Gemini 3+ has `temperature`
+#                     slated for removal, with sampling guidance moving into the
+#                     system prompt.
+# So the candidates cannot share one temperature. The bake-off refuses to hide
+# that: each call records the temperature it was sent, the report prints the
+# column, and it says plainly that rows differing there were not run under the
+# same conditions. Where temperature can no longer be pinned, §7.4's
+# self-consistency σ across the 5 repeats becomes the *only* measurement of
+# determinism — which is an argument for keeping the repeats, not dropping them,
+# and is what PREREGISTRATION §8.3 now names as the instrument for "LLM output
+# reproducibility".
+#
+# ⚠ Gemini's free tier throttles at roughly 9 calls/min (measured: a fresh
+# minute served 9 and 429'd on the 10th; a 65s wait restored full capacity, so
+# the quota is per-minute, not per-day). `src/eval/bakeoff.py` paces Google at 8
+# calls/min and retries a 429 with backoff, so a 500-call run takes about an
+# hour instead of failing. Enabling billing removes the wait. If a 429 ever
+# survives every backoff the runner abandons that candidate and says so, because
+# that is the signature of a per-day cap, which pacing cannot fix.
 #
 # Do NOT reach for `litellm.drop_params = True`. It would drop the temperature
 # and let the run look successful while the determinism SPEC §6.3 asks for was
 # never applied.
+#
+# Cost, measured not guessed: the rendered scoring prompt averages 1,532 input
+# tokens over the 100 golden examples, so one candidate's 500 calls (100 × 5
+# repeats) is ≈ $2.3 on sonnet-5, $1.7 on gpt-5.1, $1.8 on gemini-3.5-flash. A
+# full three-model bake-off is ≈ $6, not the "under $1" written before it was
+# measured.
+#
+# `temperature` below overrides the `scoring` stage per candidate, and an
+# explicit `null` means "send no temperature at all" rather than "send zero".
+# It exists because temperature 0 is no longer a setting every frontier model
+# has — see the ⚠ block above. The bake-off writes whatever was
+# actually sent onto every call and prints it as a column, so a comparison
+# across differing temperatures cannot be read without noticing.
 candidates:
   - provider: anthropic
     model: claude-sonnet-5
+    temperature: null       # Anthropic: 400, "`temperature` is deprecated for this model"
   - provider: openai
-    model: gpt-5
+    model: gpt-5.1
+    temperature: 0          # verified live 2026-08-11
   - provider: gemini
-    model: gemini-3-pro
+    model: gemini-3.5-flash
+    temperature: 0          # verified live 2026-08-11; deprecation warned
 
 synthesis:
   provider: anthropic

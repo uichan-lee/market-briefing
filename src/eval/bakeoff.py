@@ -33,6 +33,7 @@ import argparse
 import datetime as dt
 import json
 import statistics
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -48,8 +49,9 @@ from scripts.golden import (
     read_jsonl,
     select_for_labelling,
 )
-from src.llm.adapter import AdapterError, SchemaError
+from src.llm.adapter import AdapterError, SchemaError, is_rate_limit
 from src.llm.score import load_prompt, out_of_range, score_article
+from src.util.config import load_models
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "data" / "bakeoff"
@@ -78,6 +80,68 @@ NOISE_FLOOR = {
 # relevant, not articles it was handed.
 VALID_SIGNAL_RELEVANCE = 0.5
 
+# Calls per minute to hold each provider to. Only providers that need pacing
+# appear; anything absent runs unthrottled.
+#
+# Measured 2026-08-11 against the live APIs: Google AI Studio's **free** tier
+# serves 9 calls in a fresh minute on `gemini-3.5-flash` and 429s on the 10th,
+# and the quota is per-minute — a 65-second wait restored full capacity. So 8 is
+# one below the observed ceiling, which makes a 500-call candidate run take
+# about an hour rather than fail. Enabling billing raises the real limit and
+# this number can go with it; it is not a property of the model.
+RATE_LIMITS = {"gemini": 8}
+
+# A 429 is retried with exponential backoff. Past this many attempts the run
+# stops asking that candidate at all.
+#
+# The point is to tell a per-minute limit from a per-day one without the
+# operator watching. A per-minute quota is gone after one backoff; a daily cap
+# survives every backoff, and continuing would spend an hour to collect 500
+# identical failures. Hitting the ceiling is therefore reported as the daily-cap
+# diagnosis it almost certainly is.
+MAX_RATE_LIMIT_RETRIES = 4
+BACKOFF_SECONDS = 15.0
+
+
+class Pacer:
+    """Holds calls to a provider's rate, sleeping only when one is due.
+
+    ``sleep`` and ``clock`` are injected so the tests can drive this without
+    spending a real minute per assertion.
+    """
+
+    def __init__(
+        self,
+        limits: dict[str, int] | None = None,
+        *,
+        sleep=time.sleep,
+        clock=time.monotonic,
+    ) -> None:
+        self.limits = RATE_LIMITS if limits is None else limits
+        self._sleep = sleep
+        self._clock = clock
+        self._last: dict[str, float] = {}
+
+    def wait(self, provider: str) -> None:
+        """Block until another call to ``provider`` is within its rate."""
+        rate = self.limits.get(provider)
+        if not rate:
+            return
+        interval = 60.0 / rate
+        previous = self._last.get(provider)
+        now = self._clock()
+        if previous is not None:
+            due = previous + interval - now
+            if due > 0:
+                self._sleep(due)
+                now = self._clock()
+        self._last[provider] = now
+
+    def backoff(self, provider: str, attempt: int) -> None:
+        """Wait out a 429, longer each time, then let the caller retry."""
+        self._sleep(BACKOFF_SECONDS * (2**attempt))
+        self._last.pop(provider, None)
+
 
 @dataclass
 class Attempt:
@@ -92,6 +156,22 @@ class Attempt:
     scores: dict[str, float] = field(default_factory=dict)
     rationale: str = ""
     failure: str = ""
+    # True when the call failed *before the model answered* — quota, credit,
+    # outage, a rejected parameter. Kept apart from a schema failure because
+    # SPEC §7.4's compliance rate is a measure of the model's structured-output
+    # maturity, and a 429 says nothing about that. Measured 2026-08-11: Gemini's
+    # free tier stops at ~8 calls/min, so a 500-call run against it would report
+    # the model at ~2% compliance when the model never spoke.
+    transport: bool = False
+    # The temperature actually sent, or None when the candidate was called
+    # without one. Recorded per call rather than assumed from SPEC §6.3,
+    # because as of 2026-08-11 the frontier models disagree about whether the
+    # parameter exists at all — see `candidate_settings`.
+    temperature: float | None = None
+    # Which invocation of `run` produced this call, stamped by `store`. Carried
+    # on the record because `attempts.jsonl` is append-only and a `--limit 3`
+    # dry run would otherwise be averaged into the real table forever.
+    run_at: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float | None = None
@@ -100,6 +180,11 @@ class Attempt:
     @property
     def ok(self) -> bool:
         return not self.failure
+
+    @property
+    def answered(self) -> bool:
+        """The model returned something — well-formed or not."""
+        return not self.transport
 
 
 def examples() -> list[dict[str, Any]]:
@@ -129,25 +214,101 @@ def flagged_keys() -> set[tuple[str, str]]:
     return {key_of(row) for row in read_jsonl(REVIEW) if row.get("changed")}
 
 
+class _RateLimitExhausted(Exception):
+    """Backoff ran out on a 429. Carries the vendor's last words."""
+
+    def __init__(self, last: str) -> None:
+        super().__init__(last)
+        self.last = last
+
+
+def _call_with_backoff(scorer, article, *, prompt, candidate, models, pacer: Pacer):
+    """One scored call, paced, retrying a 429 until the budget is spent."""
+    provider = candidate["provider"]
+    for attempt_no in range(MAX_RATE_LIMIT_RETRIES + 1):
+        pacer.wait(provider)
+        try:
+            return scorer(
+                article,
+                prompt=prompt,
+                model=candidate["model"],
+                provider=provider,
+                models=models,
+            )
+        except Exception as exc:  # noqa: BLE001 — re-raised unless it is a 429
+            if not is_rate_limit(exc):
+                raise
+            if attempt_no == MAX_RATE_LIMIT_RETRIES:
+                raise _RateLimitExhausted(f"{type(exc).__name__}: {exc}") from exc
+            pacer.backoff(provider, attempt_no)
+    raise AssertionError("unreachable")
+
+
+def candidate_settings(candidate: dict[str, Any], stage: dict[str, Any]) -> dict[str, Any]:
+    """The ``scoring`` stage settings as this candidate needs them sent.
+
+    `config/models.yaml` says temperature 0 for the scoring stage, which is what
+    SPEC §6.3 asked for outright until 2026-08-11. It is no longer something
+    every model accepts. Measured that day against the live APIs:
+
+    * ``gpt-5.1`` takes 0.
+    * ``claude-sonnet-5`` refuses it — Anthropic answers HTTP 400 with
+      ``temperature is deprecated for this model``. Omitted or 1 are the options.
+    * ``gemini-3.5-flash`` takes 0, but litellm warns Gemini 3+ has the
+      parameter slated for removal.
+
+    So a candidate may carry its own ``temperature``, and ``temperature: null``
+    means send none at all. Whatever results is written onto every Attempt, so
+    the report states the temperature each model was actually scored at instead
+    of implying they shared one. Dropping the parameter silently — which
+    ``litellm.drop_params`` would do — is the thing this exists to prevent.
+
+    SPEC §6.3 was amended the same day to ask for the most deterministic setting
+    each vendor still offers, rather than for a number none of them share, and
+    PREREGISTRATION §8.3 makes §7.4's self-consistency σ the instrument that
+    replaces the lost guarantee.
+    """
+    settings = {**stage, **{k: v for k, v in candidate.items() if k not in ("provider", "model")}}
+    if settings.get("temperature") is None:
+        settings.pop("temperature", None)
+    return settings
+
+
 def run(
-    candidates: list[dict[str, str]],
+    candidates: list[dict[str, Any]],
     *,
     repeats: int = REPEATS,
     limit: int | None = None,
     prompt_version: str = "v1",
     scorer=score_article,
+    pacer: Pacer | None = None,
+    stage: dict[str, Any] | None = None,
 ) -> list[Attempt]:
     """Score every example with every candidate, ``repeats`` times each.
 
     Failures are recorded rather than raised: SPEC §7.4 measures the share of
     calls that comply, so a model that returns garbage on 3% of articles has to
     reach the table as 97% rather than as a crash.
+
+    Calls are paced per provider and a 429 is retried with backoff, because
+    Google's free tier serves 9 calls a minute and an unpaced run would collect
+    490 quota errors instead of a comparison. When the backoffs are exhausted
+    the candidate is abandoned rather than retried for an hour — see
+    ``MAX_RATE_LIMIT_RETRIES``.
     """
     prompt = load_prompt(prompt_version)
     rows = examples()[:limit]
     attempts: list[Attempt] = []
+    pacer = pacer if pacer is not None else Pacer()
+    stage = stage if stage is not None else load_models()["scoring"]
 
     for candidate in candidates:
+        settings = candidate_settings(candidate, stage)
+        models = {
+            "scoring": {**settings, "provider": candidate["provider"], "model": candidate["model"]}
+        }
+        temperature = settings.get("temperature")
+        exhausted = ""
         for article in rows:
             for repeat in range(repeats):
                 attempt = Attempt(
@@ -157,18 +318,42 @@ def run(
                     provider=candidate["provider"],
                     repeat=repeat,
                     prompt_version=prompt_version,
+                    temperature=temperature,
                 )
+                if exhausted:
+                    attempt.failure = exhausted
+                    attempt.transport = True
+                    attempts.append(attempt)
+                    continue
                 try:
-                    result = scorer(
+                    result = _call_with_backoff(
+                        scorer,
                         article,
                         prompt=prompt,
-                        model=candidate["model"],
-                        provider=candidate["provider"],
+                        candidate=candidate,
+                        models=models,
+                        pacer=pacer,
                     )
+                except _RateLimitExhausted as exc:
+                    # Backoff could not clear it, so this is not the per-minute
+                    # quota pacing was built for. Stop asking: 500 more calls
+                    # would take an hour to reproduce the same answer.
+                    exhausted = (
+                        f"rate limit survived {MAX_RATE_LIMIT_RETRIES} backoffs, so pacing "
+                        f"cannot clear it — a per-day cap or an unfunded account, not the "
+                        f"per-minute limit. Remaining calls skipped. Last: {exc.last}"
+                    )
+                    attempt.failure = exhausted
+                    attempt.transport = True
+                    attempts.append(attempt)
+                    continue
                 except SchemaError as exc:
                     attempt.failure = f"schema: {exc}"
                 except AdapterError as exc:
+                    # A missing key or an unknown provider. The model was never
+                    # asked, so this is transport, not non-compliance.
                     attempt.failure = f"adapter: {exc}"
+                    attempt.transport = True
                 except Exception as exc:  # noqa: BLE001
                     # A vendor's own exception — rejected parameter, rate limit,
                     # outage. Recorded rather than raised for the same reason
@@ -176,6 +361,7 @@ def run(
                     # candidate refusing a parameter must not destroy the two
                     # that answered. The failure is in the table, not swallowed.
                     attempt.failure = f"{type(exc).__name__}: {exc}"
+                    attempt.transport = True
                 else:
                     bad = out_of_range(result.parsed)
                     if bad:
@@ -208,6 +394,26 @@ def load(path: Path = ATTEMPTS) -> list[Attempt]:
     rows = read_jsonl(path)
     fields = set(Attempt.__dataclass_fields__)
     return [Attempt(**{k: v for k, v in row.items() if k in fields}) for row in rows]
+
+
+def latest_run(attempts: list[Attempt]) -> list[Attempt]:
+    """Only the most recent invocation's calls, per model.
+
+    ``attempts.jsonl`` is append-only, so it accumulates dry runs and re-runs
+    alongside the real one. Averaging them together would let a `--limit 3`
+    smoke test move a decision that cost $6 to make.
+
+    Selection is per model rather than one global timestamp on purpose: pacing
+    Google at 8 calls/min makes its 500 calls an hour long, so running that
+    candidate in its own invocation is the expected workflow, not an accident.
+    Taking the newest run *of each model* keeps that workflow working while
+    still dropping superseded attempts.
+    """
+    newest: dict[str, str] = {}
+    for attempt in attempts:
+        if attempt.run_at > newest.get(attempt.model, ""):
+            newest[attempt.model] = attempt.run_at
+    return [a for a in attempts if a.run_at == newest[a.model]]
 
 
 def spearman(left: list[float], right: list[float]) -> float | None:
@@ -281,8 +487,22 @@ def self_consistency(attempts: list[Attempt], model: str) -> dict[str, float | N
 
 
 def schema_compliance(attempts: list[Attempt], model: str) -> float | None:
-    calls = [a for a in attempts if a.model == model]
+    """Share of calls the model answered that parsed and stayed in range.
+
+    Transport failures are excluded from *both* halves, not just the numerator.
+    SPEC §7.4 uses this number to judge structured-output maturity, and a model
+    throttled by a free-tier quota has demonstrated nothing about that. When
+    every call was transport the answer is ``None`` — unmeasured — rather than
+    0.0, so `passes` reports it as unmeasured instead of failing a model that
+    was never heard from.
+    """
+    calls = [a for a in attempts if a.model == model and a.answered]
     return len([a for a in calls if a.ok]) / len(calls) if calls else None
+
+
+def transport_failures(attempts: list[Attempt], model: str) -> int:
+    """Calls that never reached the model. Reported, never silently dropped."""
+    return len([a for a in attempts if a.model == model and not a.answered])
 
 
 def cost_per_valid_signal(attempts: list[Attempt], model: str) -> float | None:
@@ -325,9 +545,10 @@ def passes(
     sigma = consistency.get("polarity")
     if sigma is None or sigma >= MAX_POLARITY_SIGMA:
         reasons.append(f"polarity σ {_cell(sigma, 3)} ≥ {MAX_POLARITY_SIGMA}")
-    if compliance is None or compliance <= MIN_SCHEMA_COMPLIANCE:
-        shown = "—" if compliance is None else f"{compliance:.1%}"
-        reasons.append(f"schema compliance {shown} ≤ {MIN_SCHEMA_COMPLIANCE:.0%}")
+    if compliance is None:
+        reasons.append("schema compliance unmeasured — no call reached the model")
+    elif compliance <= MIN_SCHEMA_COMPLIANCE:
+        reasons.append(f"schema compliance {compliance:.1%} ≤ {MIN_SCHEMA_COMPLIANCE:.0%}")
     return not reasons, reasons
 
 
@@ -400,21 +621,49 @@ def report(attempts: list[Attempt]) -> str:
         "",
         "## Compliance, cost and latency",
         "",
-        "| model | schema compliance | cost per valid signal | mean latency | verdict |",
-        "|---|---:|---:|---:|---|",
+        "| model | temp | schema compliance | never reached | cost per valid signal | "
+        "mean latency | verdict |",
+        "|---|---:|---:|---:|---:|---:|---|",
     ]
 
     for model in models:
         calls = [a for a in attempts if a.model == model]
+        answered = [a for a in calls if a.answered]
         compliance = schema_compliance(attempts, model)
+        unreached = transport_failures(attempts, model)
         cost = cost_per_valid_signal(attempts, model)
-        latency = statistics.fmean([a.latency_s for a in calls]) if calls else None
+        latency = statistics.fmean([a.latency_s for a in answered]) if answered else None
+        temps = {a.temperature for a in calls}
+        temp = "none" if temps == {None} else "/".join(_cell(t, 1) for t in sorted(temps, key=str))
         ok, reasons = passes(correlations[model], consistencies[model], compliance)
         verdict = "passes §7.4" if ok else "; ".join(reasons)
         lines.append(
-            f"| `{model}` | {'—' if compliance is None else f'{compliance:.1%}'} | "
+            f"| `{model}` | {temp} | {'—' if compliance is None else f'{compliance:.1%}'} | "
+            f"{unreached}/{len(calls)} | "
             f"{'—' if cost is None else f'${cost:.4f}'} | {_cell(latency, 2)}s | {verdict} |"
         )
+
+    lines += [
+        "",
+        "**`temp`** is the temperature each model was actually sent, and `none` means the "
+        "parameter was omitted. SPEC §6.3 asks for the most deterministic setting each vendor "
+        "still offers, which as of 2026-08-11 is not the same value for all three: Anthropic "
+        "answers HTTP 400 with `temperature is deprecated for this model` for "
+        "`claude-sonnet-5`, `gpt-5` accepts only 1, and litellm warns Gemini 3+ has the "
+        "parameter slated for removal. **When this column is not identical across rows, the "
+        "models were not run under the same conditions**, and the self-consistency table above "
+        "is the only remaining evidence about determinism — which is why PREREGISTRATION §8.3 "
+        "makes that σ the instrument for `LLM output reproducibility`, and why the 5 repeats "
+        "are not the place to save money.",
+        "",
+        "**`never reached`** counts calls that failed before the model answered — quota, "
+        "credit, outage, a rejected parameter. They are excluded from compliance and from "
+        "mean latency, because SPEC §7.4 measures the model there and a 429 says nothing "
+        "about it. A non-zero count is still a warning about the *run*: a model measured on "
+        "a fraction of the corpus is being compared on a different sample from its rivals. "
+        "Measured 2026-08-11 — Gemini's free tier caps at roughly 8 calls/min, so an "
+        "unthrottled 500-call run against it lands almost entirely in this column.",
+    ]
 
     if len(models) > 1:
         lines += [
@@ -475,7 +724,12 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--repeats", type=int, default=REPEATS)
     p_run.add_argument("--limit", type=int, default=None, help="fewer examples, for a dry run")
 
-    sub.add_parser("report", help="render the comparison table from stored attempts")
+    p_report = sub.add_parser("report", help="render the comparison table from stored attempts")
+    p_report.add_argument(
+        "--all",
+        action="store_true",
+        help="include superseded runs; by default each model's newest run is used",
+    )
 
     args = parser.parse_args(argv)
 
@@ -494,6 +748,14 @@ def main(argv: list[str] | None = None) -> int:
     attempts = load()
     if not attempts:
         raise SystemExit(f"no attempts stored at {ATTEMPTS}; run the bake-off first")
+    if not args.all:
+        kept = latest_run(attempts)
+        if len(kept) != len(attempts):
+            print(
+                f"# {len(attempts) - len(kept)} call(s) from superseded runs excluded; "
+                f"pass --all to include them.\n"
+            )
+        attempts = kept
     print(report(attempts))
     return 0
 
