@@ -40,6 +40,8 @@
 > **The cadence follows a measurement, not a round number.** A buffer is a fixed item count, so it holds less *time* the faster the outlet publishes. Measured 2026-08-03 at 22:30 KST: 한국경제 경제 held 4.0 hours of history, 전자신문 4.5, 연합뉴스 10.3, 뉴시스 17.9, 인포스탁 101.6. The fast feeds hold materially less during the KRX session, which is why the session is polled twice an hour and the rest of the day once.
 >
 > **Loss is detected, not assumed.** `check_feed_continuity` compares where each feed's buffer now begins against the newest article already stored from it. If the first has passed the second, articles were lost and the check names the feed and the hours. This is the signal to raise the schedule — before that, extra runs are spent on a guess.
+>
+> **A feed that did not answer is judged by the next run that does.** Its outage is named in the report header every run, but it fails the check only on a measured loss or past `MAX_FEED_SILENCE`, because the comparison above is exactly what settles the question once the feed comes back. Failing at the moment the evidence is missing rather than the moment it arrives cost four alarms on 2026-08-11 for a feed that had published nothing and lost nothing; over the sixty preceding runs every failure of this check was that branch and none measured a loss.
 
 > [!warning] Daylight saving time
 > US market close is 05:00 KST during DST and 06:00 KST outside it. Fix the schedule in UTC and determine the session with a market calendar. Use `pandas_market_calendars`.
