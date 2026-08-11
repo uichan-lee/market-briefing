@@ -58,6 +58,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -121,6 +122,21 @@ MISSING_THRESHOLDS = {"title": 0.0, "link": 0.0, "published_at": 0.0}
 # `collection_gap` passed at 1.5h while `feed_continuity` failed with
 # `etnews_economy lost 0.4h`.
 MAX_COLLECTION_GAP = dt.timedelta(hours=2)
+
+# How long a feed may go unanswered before :func:`check_feed_continuity` stops
+# waiting for evidence and fails.
+#
+# It is deliberately far above any observed single outage. The purpose is not to
+# catch a timeout — the next run that answers measures what that cost — but to
+# catch a feed that will never answer again, where no later run can settle the
+# question and silence in the exit code would be the wrong report.
+#
+# Measured 2026-08-11 over the sixty preceding runs: every unanswered-feed event
+# was a single run, the longest implied silence was 7.6h (전자신문, which had
+# published nothing for 7.5h of it), and every recovering run passed the overlap
+# comparison. A day is roughly three times the worst of those and still inside
+# the two-day lookback that `_stored_files` gives this check to work with.
+MAX_FEED_SILENCE = dt.timedelta(hours=24)
 
 # A published_at outside this window means the date parse produced garbage.
 # Feeds occasionally carry a corrected or scheduled item, so the past bound is
@@ -191,6 +207,8 @@ def check_feed_continuity(
     buffer_oldest: Mapping[str, pd.Timestamp],
     newest_stored: Mapping[str, pd.Timestamp],
     unfetched: Iterable[str] = (),
+    *,
+    now: pd.Timestamp | None = None,
 ) -> CheckResult:
     """Detect articles that were actually lost, rather than inferring it.
 
@@ -217,11 +235,32 @@ def check_feed_continuity(
     briefing header in between said only ``kr_news/fetch``, which reads as a
     transient blip rather than as articles being gone.
 
-    Unverifiable is reported as a failure, not a pass. Whether those feeds lost
-    anything is unknown, and for a 30-item buffer the answer is usually yes —
-    but the check refuses to estimate, because the honest statement is that the
-    evidence needed to decide was never fetched.
+    **Unverifiable is reported, but the verdict waits for the evidence.** A feed
+    that did not answer is named in the detail every time. It fails the check
+    only once its silence passes :data:`MAX_FEED_SILENCE`, because until then the
+    question it raises is answerable: the next run where the feed *does* answer
+    compares its buffer against the same ``newest_stored`` and settles whether
+    the outage cost anything. Failing at the moment the evidence is missing,
+    rather than at the moment it arrives, is what produced four alarms on
+    2026-08-11 for a feed that lost nothing — 전자신문 published nothing at all
+    between 13:30Z and 21:00Z, and the 22:00Z run recovered every article. Over
+    the sixty runs to 2026-08-11 **every** failure of this check was this branch
+    and not one measured a loss, while each recovering run passed.
+
+    The bound exists so a feed that never comes back cannot stay silent in the
+    exit code: at that point no future run can settle the question either, and
+    the honest report is failure. ``config/news_feeds.yaml`` disabled 머니투데이
+    on exactly that reasoning — a check that fails every hour stops being read.
+
+    Silence is measured from ``newest_stored``, the last article *published*
+    rather than the last successful poll, because the poll history is not stored.
+    A quiet feed therefore looks darker than it is, so the proxy errs early
+    rather than late, which is the safe direction. One consequence to know:
+    :func:`_stored_files` looks back two days, so a feed dark for longer drops
+    out of ``newest_stored`` and stops being reported at all. The usable
+    detection window is 24–48 hours.
     """
+    now = to_utc(now or now_utc())
     losses: list[str] = []
     compared = 0
 
@@ -242,6 +281,7 @@ def check_feed_continuity(
         f"{(pd.Timestamp(newest_stored[name]).tz_convert('UTC')):%Y-%m-%d %H:%M}Z"
         for name in blind
     ]
+    stale = [name for name in blind if now - to_utc(newest_stored[name]) > MAX_FEED_SILENCE]
 
     if losses or unknown:
         parts = []
@@ -255,7 +295,15 @@ def check_feed_continuity(
                 f"{len(unknown)} feeds did not answer, so their loss is unmeasured — "
                 + "; ".join(unknown)
             )
-        return CheckResult("feed_continuity", False, ". ".join(parts))
+        if stale:
+            parts.append(
+                f"{len(stale)} silent past the "
+                f"{MAX_FEED_SILENCE.total_seconds() / 3600:.0f}h limit, so no later run can "
+                f"settle it — " + "; ".join(sorted(stale))
+            )
+        elif not losses:
+            parts.append("the next run that answers will settle it")
+        return CheckResult("feed_continuity", not (losses or stale), ". ".join(parts))
     if not compared:
         return CheckResult("feed_continuity", True, "no feed has prior articles to compare against")
     return CheckResult("feed_continuity", True, f"{compared} feeds overlap the stored history")
@@ -330,7 +378,7 @@ def validate_frame(
             if len(df)
             else CheckResult("missing_ratio", True, "no rows"),
             check_collection_gap(df, previous_run, now=now),
-            check_feed_continuity(buffer_oldest or {}, newest_stored or {}, unfetched),
+            check_feed_continuity(buffer_oldest or {}, newest_stored or {}, unfetched, now=now),
             check_structural_invariants(df, feeds, now=now),
         ],
     )
@@ -538,13 +586,29 @@ def write_run(df: pd.DataFrame, root: Path, at: pd.Timestamp) -> Path:
 # --- fetching ------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class FeedFailure:
+    """One feed that did not produce articles this run, and why it matters.
+
+    ``transient`` separates the two kinds, because they deserve different
+    verdicts. A network failure is an absence of evidence that a later run can
+    resolve, so :func:`check_feed_continuity` decides what it cost. A parse
+    failure is evidence of a defect — malformed XML is malformed for everyone,
+    every run — and always fails the ``fetch`` check on its own.
+    """
+
+    name: str
+    reason: str
+    transient: bool
+
+
 def _fetch_one(
     feed: NewsFeed,
     collected_at: pd.Timestamp,
     *,
     timeout: int,
     attempts: int,
-) -> tuple[pd.DataFrame | None, str | None]:
+) -> tuple[pd.DataFrame | None, FeedFailure | None]:
     """Poll one feed, retrying transient network failures.
 
     Retrying is worth the seconds here in a way it would not be for prices. A
@@ -574,9 +638,9 @@ def _fetch_one(
         try:
             return parse_feed(response.content, feed, collected_at), None
         except FeedError as exc:
-            return None, f"{feed.name}: {exc}"
+            return None, FeedFailure(feed.name, f"{feed.name}: {exc}", transient=False)
 
-    return None, f"{last} after {attempts} attempts"
+    return None, FeedFailure(feed.name, f"{last} after {attempts} attempts", transient=True)
 
 
 def fetch(
@@ -598,7 +662,7 @@ def fetch(
     root = root or Path("data/raw")
 
     frames: list[pd.DataFrame] = []
-    failures: list[str] = []
+    failures: list[FeedFailure] = []
     unfetched: list[str] = []
 
     for feed in feeds:
@@ -633,11 +697,18 @@ def fetch(
         newest_stored=newest_stored_per_feed(root, collected_at.date()),
         unfetched=unfetched,
     )
+    # A malformed feed always fails here. A feed that merely did not answer
+    # defers to `feed_continuity`, which is the check holding the evidence about
+    # what the silence cost — otherwise one outage fails two checks and mails an
+    # alarm twice for a loss that has not been shown to exist.
+    malformed = [failure for failure in failures if not failure.transient]
+    continuity = next(r for r in report.results if r.name == "feed_continuity")
     report.add(
         CheckResult(
             "fetch",
-            not failures,
-            "; ".join(failures) or f"{len(feeds)} feeds, {fetched} items seen, {len(df)} new",
+            not malformed and continuity.passed,
+            "; ".join(failure.reason for failure in failures)
+            or f"{len(feeds)} feeds, {fetched} items seen, {len(df)} new",
         )
     )
     return df, report

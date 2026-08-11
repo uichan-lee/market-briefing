@@ -280,15 +280,20 @@ def test_a_feed_that_did_not_answer_is_reported_not_skipped():
     buffer, so the comparison loop never sees it and every run in the outage
     read "1 feeds overlap the stored history" — a pass, while the fastest feed
     in the set was unaccounted for. Live 2026-08-06/07: 전자신문 failed to
-    connect in ten of thirty runs and no header ever said so."""
+    connect in ten of thirty runs and no header ever said so.
+
+    Reporting is what this test guards, and it is unchanged. The *verdict*
+    moved on 2026-08-11: a silence this short no longer fails, because the next
+    run that answers measures what it cost. See the tests below for the bound
+    at which waiting stops being honest."""
     oldest = {"hankyung_finance": NOW - dt.timedelta(hours=6)}
     stored = {
         "hankyung_finance": NOW - dt.timedelta(hours=4),
         "etnews_economy": NOW - dt.timedelta(hours=4),
     }
-    result = check_feed_continuity(oldest, stored, unfetched=["etnews_economy"])
+    result = check_feed_continuity(oldest, stored, unfetched=["etnews_economy"], now=NOW)
 
-    assert not result.passed
+    assert result.passed
     assert "etnews_economy unverified" in result.detail
     assert "did not answer" in result.detail
 
@@ -301,15 +306,17 @@ def test_an_unanswered_feed_with_no_stored_history_is_not_reported():
 
 
 def test_loss_and_silence_are_reported_together():
-    """The two failure modes are independent and one must not hide the other:
-    a measured loss on one feed says nothing about the feed that never
-    answered."""
+    """The two are independent and one must not hide the other: a measured loss
+    on one feed says nothing about the feed that never answered.
+
+    The failure here comes from the measured loss alone — the silence is inside
+    the waiting bound and contributes reporting, not a verdict."""
     oldest = {"hankyung_finance": NOW - dt.timedelta(hours=1)}
     stored = {
         "hankyung_finance": NOW - dt.timedelta(hours=4),
         "etnews_economy": NOW - dt.timedelta(hours=4),
     }
-    result = check_feed_continuity(oldest, stored, unfetched=["etnews_economy"])
+    result = check_feed_continuity(oldest, stored, unfetched=["etnews_economy"], now=NOW)
 
     assert not result.passed
     assert "hankyung_finance lost 3.0h" in result.detail
@@ -320,8 +327,78 @@ def test_a_clean_run_still_passes():
     """The guard must not turn every healthy run into a failure."""
     oldest = {"hankyung_finance": NOW - dt.timedelta(hours=6)}
     stored = {"hankyung_finance": NOW - dt.timedelta(hours=4)}
-    result = check_feed_continuity(oldest, stored, unfetched=[])
+    result = check_feed_continuity(oldest, stored, unfetched=[], now=NOW)
     assert result.passed
+
+
+# --- when the silence stops being answerable -------------------------------
+#
+# A feed that did not answer raises a question the next run can settle, by
+# comparing that run's buffer against the same stored history. Failing while the
+# evidence is merely absent mailed four alarms on 2026-08-11 for a feed that had
+# published nothing for 7.5 hours and lost none of it. Failing once the evidence
+# can no longer arrive is a different statement, and this is where it starts.
+
+
+def test_a_short_silence_waits_for_the_next_run():
+    stored = {"etnews_main": NOW - kr_news.MAX_FEED_SILENCE + dt.timedelta(hours=1)}
+    result = check_feed_continuity({}, stored, unfetched=["etnews_main"], now=NOW)
+
+    assert result.passed
+    assert "etnews_main unverified" in result.detail
+    assert "settle it" in result.detail
+
+
+def test_a_silence_past_the_limit_fails():
+    """No later run can answer for this one, so the honest report is failure —
+    the reasoning config/news_feeds.yaml used to disable 머니투데이 rather than
+    leave it failing every hour."""
+    stored = {"etnews_main": NOW - kr_news.MAX_FEED_SILENCE - dt.timedelta(minutes=1)}
+    result = check_feed_continuity({}, stored, unfetched=["etnews_main"], now=NOW)
+
+    assert not result.passed
+    assert "24h limit" in result.detail
+
+
+def test_the_2026_08_11_alarms_would_not_fire_now():
+    """Regression, replayed from the four runs that mailed that morning plus the
+    2026-08-10 19:37 KST one. Every value below is from the Actions log: the
+    feeds that did not answer, and the `last stored article` each failure
+    printed. Not one of them lost an article — 전자신문 published nothing
+    between 13:30Z and 21:00Z, and the 22:00Z run recovered the rest."""
+    observed = [
+        (
+            "2026-08-10 10:37",
+            {"etnews_main": "2026-08-10 08:06", "asiae_stock": "2026-08-10 08:39"},
+        ),
+        ("2026-08-10 18:05", {"etnews_main": "2026-08-10 13:30"}),
+        (
+            "2026-08-10 19:18",
+            {"etnews_main": "2026-08-10 13:30", "asiae_stock": "2026-08-10 10:18"},
+        ),
+        ("2026-08-10 21:03", {"etnews_main": "2026-08-10 13:30"}),
+        ("2026-08-10 22:58", {"etnews_main": "2026-08-10 21:00"}),
+    ]
+    for ran_at, silent in observed:
+        stored = {feed: pd.Timestamp(when, tz="UTC") for feed, when in silent.items()}
+        result = check_feed_continuity(
+            {}, stored, unfetched=list(silent), now=pd.Timestamp(ran_at, tz="UTC")
+        )
+        assert result.passed, f"{ran_at} still fails: {result.detail}"
+        for feed in silent:
+            assert f"{feed} unverified" in result.detail
+
+
+def test_a_measured_loss_still_fails_even_though_silence_no_longer_does():
+    """This branch has never fired in production — sixty runs to 2026-08-11 and
+    every continuity failure was the silence branch — so the regression test is
+    the only thing holding it."""
+    oldest = {"etnews_main": NOW - dt.timedelta(hours=1)}
+    stored = {"etnews_main": NOW - dt.timedelta(hours=5)}
+    result = check_feed_continuity(oldest, stored, unfetched=[], now=NOW)
+
+    assert not result.passed
+    assert "etnews_main lost 4.0h" in result.detail
 
 
 # --- check four's substitute ----------------------------------------------
@@ -557,6 +634,60 @@ def test_committed_feed_names_are_unique():
     assert len(names) == len(set(names))
 
 
+# --- what a feed outage does to the run's verdict ---------------------------
+#
+# One outage used to fail two checks — `fetch` on the connection and
+# `feed_continuity` on the silence — so a single unreachable feed mailed an
+# alarm and printed two header lines for a loss never shown to exist.
+
+
+GOOD_FEED = NewsFeed("mk_stock", "매일경제", "증권", "https://good/", "mk.co.kr")
+BROKEN_FEED = NewsFeed("hankyung_finance", "한국경제", "증권", "https://broken/", "hankyung.com")
+
+
+def _fetch_with(monkeypatch, tmp_path, *, content: bytes | None):
+    """Poll two feeds where one of them fails. ``content`` None means it never
+    answered; bytes mean it answered with something unparseable."""
+    import requests as real_requests
+
+    from src.collectors import kr_news
+
+    good = (FIXTURES / "rss_mk_stock.xml").read_bytes()
+
+    class Response:
+        def __init__(self, body):
+            self.status_code = 200
+            self.content = body
+
+    def dispatch(url, **kwargs):
+        if url != BROKEN_FEED.url:
+            return Response(good)
+        if content is None:
+            raise real_requests.ConnectTimeout("boom")
+        return Response(content)
+
+    monkeypatch.setattr(kr_news.requests, "get", dispatch)
+    monkeypatch.setattr(kr_news.time, "sleep", lambda _: None)
+    return kr_news.fetch([GOOD_FEED, BROKEN_FEED], root=tmp_path, now=NOW, timeout=1, attempts=2)
+
+
+def test_a_feed_that_did_not_answer_no_longer_fails_the_run(monkeypatch, tmp_path):
+    _, report = _fetch_with(monkeypatch, tmp_path, content=None)
+
+    assert report.ok, report.summary()
+    fetch_result = next(r for r in report.results if r.name == "fetch")
+    assert "hankyung_finance" in fetch_result.detail, "the outage must still be named"
+
+
+def test_a_feed_that_answered_with_garbage_still_fails_the_run(monkeypatch, tmp_path):
+    """Malformed XML is a defect, not an absence of evidence. No later run
+    resolves it, so it fails now."""
+    _, report = _fetch_with(monkeypatch, tmp_path, content=b"<rss><channel></channel></rss>")
+
+    assert not report.ok
+    assert [r.name for r in report.failures] == ["fetch"]
+
+
 # --- live -----------------------------------------------------------------
 
 
@@ -640,7 +771,10 @@ def test_a_persistent_failure_reports_the_attempt_count(monkeypatch):
 
     parsed, failure = kr_news._fetch_one(FEEDS["mk_stock"], NOW, timeout=1, attempts=3)
     assert parsed is None
-    assert "3 attempts" in failure
+    assert "3 attempts" in failure.reason
+    # Transient: a later run can still measure what this outage cost, so the
+    # verdict belongs to check_feed_continuity rather than to the fetch check.
+    assert failure.transient
 
 
 def test_a_parse_failure_is_not_retried(monkeypatch):
@@ -663,4 +797,7 @@ def test_a_parse_failure_is_not_retried(monkeypatch):
     parsed, failure = kr_news._fetch_one(FEEDS["mk_stock"], NOW, timeout=1, attempts=3)
     assert parsed is None
     assert calls["n"] == 1
-    assert "none parseable" in failure
+    assert "none parseable" in failure.reason
+    # Not transient: no later run resolves malformed XML, so this one fails the
+    # fetch check on its own.
+    assert not failure.transient
