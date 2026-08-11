@@ -147,8 +147,14 @@ def test_the_schema_is_sent_as_a_strict_json_schema(monkeypatch, keyed):
     )
     sent = captured["response_format"]
     assert sent["type"] == "json_schema"
-    assert sent["strict"] is True
     assert sent["json_schema"]["schema"]["additionalProperties"] is False
+    # `strict` belongs *inside* `json_schema`, beside `name` and `schema`. It
+    # was a sibling of `json_schema` until 2026-08-11; Anthropic and Gemini
+    # tolerated that because litellm rewrites the block for them, and OpenAI
+    # answered `Unknown parameter: 'response_format.strict'`. Pinned here
+    # because only one of three vendors ever complains.
+    assert sent["json_schema"]["strict"] is True
+    assert "strict" not in {k for k in sent if k != "json_schema"}
 
 
 def test_a_candidate_model_overrides_config_without_editing_it(monkeypatch, keyed):

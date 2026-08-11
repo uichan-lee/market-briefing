@@ -175,7 +175,15 @@ def complete(
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "response_format": {"type": "json_schema", "json_schema": schema, "strict": True},
+        # `strict` sits *inside* `json_schema`, beside `name` and `schema` —
+        # not as a sibling of `json_schema`. Anthropic and Gemini tolerated the
+        # wrong shape because litellm rewrites the block for them; OpenAI reads
+        # it as sent and answered `Unknown parameter: 'response_format.strict'`
+        # (2026-08-11). Verified against a live gpt-5.1 call, not from memory.
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {**schema, "strict": True},
+        },
     }
     if "temperature" in settings:
         request["temperature"] = settings["temperature"]
