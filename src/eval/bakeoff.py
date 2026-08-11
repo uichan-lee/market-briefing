@@ -32,8 +32,10 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import statistics
 import time
+from collections.abc import Collection
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -283,6 +285,8 @@ def run(
     scorer=score_article,
     pacer: Pacer | None = None,
     stage: dict[str, Any] | None = None,
+    sink=None,
+    done: Collection[tuple[str, str, str, int, str]] = (),
 ) -> list[Attempt]:
     """Score every example with every candidate, ``repeats`` times each.
 
@@ -295,12 +299,32 @@ def run(
     490 quota errors instead of a comparison. When the backoffs are exhausted
     the candidate is abandoned rather than retried for an hour — see
     ``MAX_RATE_LIMIT_RETRIES``.
+
+    ``sink`` is called with each Attempt the moment it is finished, and is how
+    a run survives its own interruption. Pacing Google at 8 calls/min makes a
+    full run over an hour long, and the money is spent per call rather than at
+    the end: writing only after the last one means a laptop sleeping at call
+    1,400 of 1,500 discards every one of them. The module docstring's promise
+    that the analysis can be redone "without paying again" is only true if the
+    calls reach disk as they happen.
+
+    ``done`` holds :func:`answered_keys` from an interrupted run, which are
+    skipped. Only calls that *reached the model* belong in it — a transport
+    failure is retried, because that is what an abandoned candidate leaves
+    behind, while a schema failure is kept, because re-rolling it would quietly
+    improve the compliance rate SPEC §7.4 measures.
     """
     prompt = load_prompt(prompt_version)
     rows = examples()[:limit]
     attempts: list[Attempt] = []
     pacer = pacer if pacer is not None else Pacer()
     stage = stage if stage is not None else load_models()["scoring"]
+    done = set(done)
+
+    def record(attempt: Attempt) -> None:
+        attempts.append(attempt)
+        if sink is not None:
+            sink(attempt)
 
     for candidate in candidates:
         settings = candidate_settings(candidate, stage)
@@ -320,10 +344,12 @@ def run(
                     prompt_version=prompt_version,
                     temperature=temperature,
                 )
+                if key_of_attempt(attempt) in done:
+                    continue
                 if exhausted:
                     attempt.failure = exhausted
                     attempt.transport = True
-                    attempts.append(attempt)
+                    record(attempt)
                     continue
                 try:
                     result = _call_with_backoff(
@@ -345,7 +371,7 @@ def run(
                     )
                     attempt.failure = exhausted
                     attempt.transport = True
-                    attempts.append(attempt)
+                    record(attempt)
                     continue
                 except SchemaError as exc:
                     attempt.failure = f"schema: {exc}"
@@ -375,18 +401,52 @@ def run(
                     attempt.output_tokens = result.output_tokens
                     attempt.cost_usd = result.cost_usd
                     attempt.latency_s = result.latency_s
-                attempts.append(attempt)
+                record(attempt)
     return attempts
 
 
-def store(attempts: list[Attempt], path: Path = ATTEMPTS) -> Path:
-    """Append every call to disk so the analysis never needs the money twice."""
+def key_of_attempt(attempt: Attempt) -> tuple[str, str, str, int, str]:
+    """What identifies one call, for resuming an interrupted run.
+
+    ``prompt_version`` is part of it because SPEC §6.3 makes scores from
+    different prompts non-comparable — resuming across a prompt change must
+    re-score, not inherit.
+    """
+    return (
+        attempt.model,
+        attempt.article_id,
+        attempt.ticker,
+        attempt.repeat,
+        attempt.prompt_version,
+    )
+
+
+def answered_keys(attempts: list[Attempt]) -> set[tuple[str, str, str, int, str]]:
+    """Calls a resumed run should not pay for again.
+
+    Only the ones that reached the model. A transport failure is deliberately
+    absent, so an abandoned candidate — the whole tail a quota cap leaves behind
+    — is retried on resume rather than inherited as 500 permanent failures.
+    """
+    return {key_of_attempt(a) for a in attempts if a.answered}
+
+
+def store(attempts: list[Attempt], path: Path = ATTEMPTS, *, run_at: str | None = None) -> Path:
+    """Append every call to disk so the analysis never needs the money twice.
+
+    ``run_at`` lets a caller stamp several writes as one run, which is what
+    incremental persistence and ``--resume`` both need: a resumed run continues
+    into the run it is resuming, so :func:`latest_run` still sees one run per
+    model rather than two halves it would have to choose between.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    stamped = dt.datetime.now(dt.UTC).isoformat()
+    stamped = run_at or dt.datetime.now(dt.UTC).isoformat()
     with path.open("a", encoding="utf-8") as handle:
         for attempt in attempts:
             row = {**asdict(attempt), "run_at": stamped}
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
     return path
 
 
@@ -723,6 +783,12 @@ def main(argv: list[str] | None = None) -> int:
     p_run = sub.add_parser("run", help="call every candidate over the golden set")
     p_run.add_argument("--repeats", type=int, default=REPEATS)
     p_run.add_argument("--limit", type=int, default=None, help="fewer examples, for a dry run")
+    p_run.add_argument(
+        "--resume",
+        action="store_true",
+        help="continue the newest stored run instead of starting one, skipping calls it "
+        "already paid for",
+    )
 
     p_report = sub.add_parser("report", help="render the comparison table from stored attempts")
     p_report.add_argument(
@@ -739,10 +805,41 @@ def main(argv: list[str] | None = None) -> int:
         candidates = load_models().get("candidates")
         if not candidates:
             raise SystemExit("config/models.yaml has no `candidates:` list to bake off")
-        attempts = run(candidates, repeats=args.repeats, limit=args.limit)
-        path = store(attempts)
+
+        stored = load() if ATTEMPTS.exists() else []
+        if args.resume:
+            if not stored:
+                raise SystemExit(f"nothing to resume: {ATTEMPTS} does not exist")
+            resuming = latest_run(stored)
+            run_at = max(a.run_at for a in resuming)
+            done = answered_keys(resuming)
+            print(f"resuming run {run_at} — {len(done)} calls already paid for")
+        else:
+            run_at = dt.datetime.now(dt.UTC).isoformat()
+            done = set()
+
+        # Written per call rather than once at the end. Pacing Google at 8
+        # calls/min makes a full run over an hour long, and a machine that
+        # sleeps at call 1,400 must not discard 1,400 paid-for calls.
+        def flush(attempt: Attempt) -> None:
+            store([attempt], run_at=run_at)
+
+        try:
+            attempts = run(
+                candidates,
+                repeats=args.repeats,
+                limit=args.limit,
+                sink=flush,
+                done=done,
+            )
+        except KeyboardInterrupt:
+            print(
+                f"\ninterrupted — every completed call is in {ATTEMPTS}. "
+                f"Continue with:  bakeoff run --resume"
+            )
+            return 130
         failed = len([a for a in attempts if not a.ok])
-        print(f"{len(attempts)} calls, {failed} failed → {path}")
+        print(f"{len(attempts)} calls, {failed} failed → {ATTEMPTS}")
         return 0
 
     attempts = load()

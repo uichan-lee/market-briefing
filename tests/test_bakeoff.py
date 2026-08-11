@@ -496,3 +496,85 @@ def test_each_model_keeps_its_own_newest_run(tmp_path):
 
     kept = bakeoff.latest_run(bakeoff.load(path))
     assert sorted(a.model for a in kept) == ["fast", "slow"]
+
+
+def test_every_call_reaches_disk_before_the_run_finishes(labels, tmp_path):
+    """Pacing Google at 8 calls/min makes a run over an hour long. Writing only
+    at the end means a machine that sleeps at call 1,400 discards 1,400 calls
+    that were already paid for."""
+    path = tmp_path / "attempts.jsonl"
+    seen = []
+
+    def scorer(article, *, prompt, model, provider, **_):
+        # On the third call, assert the first two are already durable.
+        if len(seen) == 2:
+            assert len(bakeoff.load(path)) == 2
+        seen.append(article["article_id"])
+        truth = labels[(article["article_id"], article["ticker"])]
+        return completion({n: float(truth[n]) for n in NAMES}, model=model)
+
+    bakeoff.run(
+        CANDIDATE,
+        repeats=1,
+        limit=4,
+        scorer=scorer,
+        stage={},
+        sink=lambda a: bakeoff.store([a], path, run_at="R"),
+    )
+    assert len(bakeoff.load(path)) == 4
+
+
+def test_a_resumed_run_does_not_pay_for_answered_calls_again(labels, tmp_path):
+    """The point of --resume: an interrupted run must not re-spend on calls
+    already stored."""
+    path = tmp_path / "attempts.jsonl"
+    calls = {"n": 0}
+
+    def scorer(article, *, prompt, model, provider, **_):
+        calls["n"] += 1
+        truth = labels[(article["article_id"], article["ticker"])]
+        return completion({n: float(truth[n]) for n in NAMES}, model=model)
+
+    first = bakeoff.run(
+        CANDIDATE,
+        repeats=1,
+        limit=3,
+        scorer=scorer,
+        stage={},
+        sink=lambda a: bakeoff.store([a], path, run_at="R"),
+    )
+    assert calls["n"] == 3
+
+    second = bakeoff.run(
+        CANDIDATE,
+        repeats=1,
+        limit=5,
+        scorer=scorer,
+        stage={},
+        done=bakeoff.answered_keys(first),
+    )
+    # Only the two examples the first run never got to.
+    assert calls["n"] == 5
+    assert len(second) == 2
+
+
+def test_resume_retries_transport_failures_but_keeps_schema_failures(labels):
+    """A quota-abandoned candidate leaves a tail of calls the model never saw;
+    those are the ones a resume exists to retry. A schema failure is a
+    measurement — re-rolling it would quietly lift the compliance rate."""
+    common = dict(ticker="005930", provider="x", repeat=0, prompt_version="v1")
+    answered = Attempt(article_id="a", model="m", failure="schema: prose", **common)
+    never = Attempt(article_id="b", model="m", failure="429", transport=True, **common)
+
+    keys = bakeoff.answered_keys([answered, never])
+    assert bakeoff.key_of_attempt(answered) in keys
+    assert bakeoff.key_of_attempt(never) not in keys
+
+
+def test_a_prompt_change_is_not_inherited_by_a_resume():
+    """SPEC §6.3: changing the prompt makes prior scores non-comparable. A
+    resume across that boundary must re-score rather than keep the old answer."""
+    common = dict(article_id="a", ticker="005930", model="m", provider="x", repeat=0)
+    v1 = Attempt(prompt_version="v1", **common)
+    v2 = Attempt(prompt_version="v2", **common)
+    assert bakeoff.key_of_attempt(v1) != bakeoff.key_of_attempt(v2)
