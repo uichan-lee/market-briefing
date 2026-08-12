@@ -791,6 +791,15 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--repeats", type=int, default=REPEATS)
     p_run.add_argument("--limit", type=int, default=None, help="fewer examples, for a dry run")
     p_run.add_argument(
+        "--model",
+        action="append",
+        default=None,
+        metavar="NAME",
+        help="restrict the run to these candidates (repeatable). Re-running one model "
+        "after a fix is the normal case, and `report` keeps each model's newest run "
+        "separately so the others are not disturbed.",
+    )
+    p_run.add_argument(
         "--resume",
         action="store_true",
         help="continue the newest stored run instead of starting one, skipping calls it "
@@ -812,6 +821,12 @@ def main(argv: list[str] | None = None) -> int:
         candidates = load_models().get("candidates")
         if not candidates:
             raise SystemExit("config/models.yaml has no `candidates:` list to bake off")
+        if args.model:
+            wanted = set(args.model)
+            candidates = [c for c in candidates if c["model"] in wanted]
+            unknown = wanted - {c["model"] for c in candidates}
+            if unknown:
+                raise SystemExit(f"no such candidate(s) in config/models.yaml: {sorted(unknown)}")
 
         stored = load() if ATTEMPTS.exists() else []
         if args.resume:
