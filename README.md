@@ -36,12 +36,12 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 
 ## Current status
 
-**Running stage.** The deterministic pipeline collects, resolves, computes, rates, renders and delivers twice a day without supervision, and has done so since 2026-08-03. `data/raw/` holds a 3-year backfill plus a live news record that began 2026-08-03. The one thing still missing is the news half of the score — and as of 2026-08-10 the golden set that gates it is finished, reproducibility check included. Nothing blocks the bake-off.
+**Running stage.** The deterministic pipeline collects, resolves, computes, rates, renders and delivers twice a day without supervision, and has done so since 2026-08-03. `data/raw/` holds a 3-year backfill plus a live news record that began 2026-08-03. The golden set and the model bake-off (SPEC §12 steps 7–8) are both finished — `gpt-5.1` was selected for scoring on 2026-08-12. What's still missing is the embedding pipeline (step 6), without which `news_polarity` has nothing to score.
 
 | Component | Status | Notes |
 |---|---|---|
 | Design docs (SPEC, PREREGISTRATION, MANUAL-TASKS) | ✅ Done | Evaluation criteria frozen 2026-08-02 |
-| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 542 offline tests passing, 9 network |
+| Python project, testing, linting | ✅ Done | `uv` + `pytest` + `ruff`, 602 offline tests passing, 9 network |
 | Time & market sessions (`src/util/session.py`) | ✅ Done | Trading days, DST, look-ahead boundary |
 | Collector validation framework (`src/collectors/validate.py`) | ✅ Done | The four checks every collector must pass |
 | Config loading & safeguards (`src/util/config.py`) | ✅ Done | Rejects alias collisions, unquoted tickers |
@@ -59,10 +59,11 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | Feature computation (`src/features/compute.py`) | ✅ Done | 5 of the 7 weighted features; 252-day rolling z-score per ticker |
 | Report renderer + delivery (`src/report/`, `src/notify/`) | ✅ Done | SPEC §2 sections, `vault` + `email`, HTML mail with a `text/plain` alternative |
 | GitHub Actions workflow | ✅ Done | `collect-news.yml` hourly, `report.yml` morning ×3 + evening; live since 2026-08-03 |
-| Golden set (100 hand-labeled articles) | ✅ Done | 100 examples × 5 dimensions scored by Ricky on 2026-08-07/08; next-day re-label passed 2026-08-10 (mean gap 0.16 against a 0.25 threshold). `forwardness`'s ±0.13 floor is recorded in [PREREGISTRATION §8.3](PREREGISTRATION.md) |
-| Embedding pipeline (dedup + relevance) | ⬜ Not started | SPEC §12 step 6; needs a local embedding dependency, not blocked by the golden set |
-| LLM adapter + scoring + bake-off | ⬜ Not started | `src/llm/adapter.py` does not exist yet; only the v1 synthesis prompt is written |
+| Golden set (100 hand-labeled articles) | ✅ Done | 100 examples × 5 dimensions, `relevance` fully re-labelled 2026-08-12 after a mid-run definition change; `verify` reports zero conflicts. `forwardness`'s ±0.13 floor ([PREREGISTRATION §8.3](PREREGISTRATION.md)) predates the redo and needs re-measuring |
+| LLM adapter + scoring bake-off | ✅ Done | `src/llm/adapter.py` + `src/eval/bakeoff.py`, 2,132 calls logged in `data/bakeoff/attempts.jsonl`. **`gpt-5.1` selected 2026-08-12** — see below |
+| Embedding pipeline (dedup + relevance) | ⬜ Not started | SPEC §12 step 6; needs a local embedding dependency. Now the only thing blocking `news_polarity` |
 | `news_polarity`, `rev_4w` features | ⬜ Not started | Both carry live weight in `config/rating.yaml` — see the caveat below |
+| `src/eval/ic.py`, `shadow_portfolio.py` | ⬜ Not started | Needed for the 3-month gate (§8.5). Start well before the gate — see [MANUAL-TASKS §10](MANUAL-TASKS.md) |
 | `us_filings`, `kr_filings` | ⬜ Not started | SEC EDGAR and DART |
 
 **The pipeline runs end to end today.** Collectors → features → computed rating → rendered briefing → email, twice a day, unattended. What is missing is the *news* half of the score: the LLM stage (SPEC §12 steps 6–8) is not built, so `news_polarity` produces nothing.
@@ -89,6 +90,10 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 **The golden set is finished and the bake-off is unblocked (2026-08-10).** `golden recheck` re-labelled 10 examples a day later without showing the first answers, and `verify` passes at a mean gap of 0.16 against its 0.25 threshold. The set also separates well: `|polarity| ≥ 0.5` on 50 of 100 examples, double the floor `verify` enforces, with a mean polarity of +0.04 and no positivity skew.
 
 What the recheck also showed is that the disagreement is not spread evenly. **`forwardness` carries almost all of it** — mean gap 0.13 against 0.03–0.07 for the other four dimensions, every ±0.25 deviation, and a direction rather than scatter (5 of 6 moves went down). The three largest were 확정됐지만 처음 알려진 사실, which is exactly the case the dimension's own written hint sends the other way. The schema was deliberately not rewritten: editing a definition while its finished labels are visible is the contamination [PREREGISTRATION §R](PREREGISTRATION.md) already had to declare once. Instead the floor is recorded there in advance — a `forwardness` difference between two models below 0.13 is not evidence, and a v2 set fixes the anchors before any label is written.
+
+**The bake-off ran and `gpt-5.1` won on cost (2026-08-12).** `claude-sonnet-5` and `gpt-5.1` both passed every §7.4 bar; `gemini-3.5-flash` did not — not on price, but because its free tier's 20-calls/day cap forced `--repeats 1`, leaving its self-consistency unmeasured rather than failed. Between the two that passed, `gpt-5.1` costs 8.3× less per valid signal ($0.0101 vs $0.0837), and MANUAL-TASKS §5's pre-registered rule takes the cheaper of any two that pass. sonnet-5's 0.07 relevance lead (0.83 vs 0.76) is real and is not the basis for excluding it — the rule selects on cost among passing candidates, not on which one scores highest — but the comparison's noise floor (±0.07, from a `golden recheck` run 2026-08-10) predates a mid-run redefinition of `relevance` and is not currently valid for judging that gap. It needs re-measuring, not reused or dropped; [PREREGISTRATION §R](PREREGISTRATION.md) records the gap as open rather than closing it either way.
+
+Getting there required a full re-labelling of the golden set's `relevance` dimension: all three models failed the correlation bar simultaneously (0.70/0.67/0.58 against a >0.7 threshold), which pointed at the ruler rather than the models — `relevance`'s definition had moved mid-labelling on 2026-08-07 and old labels hadn't all followed. All 100 examples were re-scored blind (not just the ones a rule flagged, to avoid letting model disagreement pick which labels get revisited — the circularity [PREREGISTRATION §R](PREREGISTRATION.md) already named once). 66 of 100 changed, mostly downward. Two triage errors also surfaced this way — 두산 (000150) and 현대차 (005380) were bucketed `irrelevant` when their own scores said otherwise — and were corrected, which is why `redo_influence()`'s 68% no longer means what its docstring says: most of that is the deliberate full redo, not a rule sending a score back. `review_influence()`'s 11% (bucket changes recorded in `review.jsonl`) still measures what it always did.
 
 **The schedule is best-effort, and that is measured, not assumed.** GitHub fires roughly a third of the declared runs: over 2026-08-03..07 the news workflow declared 31 runs a day and delivered 6–10, for **42.6% hourly coverage** (40 of 94 hours). Both scheduled report runs on record were hours late. Everything downstream is built to survive it — `last_closed_session()` resolves a run from the clock rather than the date, the morning report is declared three times behind a published-check, and `check_feed_continuity` measures what a gap actually cost instead of guessing. With `etnews_economy` removed, **1 of 45 observed gaps (2.2%)** exceeded the fastest remaining feed buffer, so the coverage number is alarming but the realised loss is not.
 
@@ -225,29 +230,41 @@ market-briefing/
 │   │   ├── session.py         ✅ UTC/KST, trading days, look-ahead boundary
 │   │   └── config.py          ✅ config loading + hand-editing safeguards
 │   ├── collectors/
-│   │   │   ├── validate.py    ✅ the four checks every collector must pass
+│   │   ├── validate.py    ✅ the four checks every collector must pass
 │   │   ├── kr_price.py    ✅ pykrx daily OHLCV
+│   │   ├── kr_flow.py     ✅ investor flows, short interest, cap, fundamentals
 │   │   ├── kr_news.py     ✅ outlet RSS, collected on a measured cadence
-│   │   ├── us_price.py    ✅ Tiingo daily OHLCV
+│   │   ├── us_price.py    ✅ Tiingo daily OHLCV (morning preview)
+│   │   ├── us_price_alpaca.py ✅ Alpaca SIP, the evening source of record
 │   │   └── macro.py       ✅ FRED regime series
-│   ├── entity/                ⬜ ticker matching
-│   ├── embed/                 ⬜ dedup + relevance
-│   ├── features/              ⬜ computation + normalization
+│   ├── entity/
+│   │   └── resolve.py         ✅ alias-driven ticker matching + ambiguous bucket
+│   ├── embed/                 ⬜ dedup + relevance — SPEC §12 step 6, not started
+│   ├── features/
+│   │   ├── compute.py         ✅ 5 of 7 weighted features
+│   │   └── normalize.py       ✅ 252-trading-day rolling z-score
 │   ├── llm/
 │   │   ├── prompts/
 │   │   │   └── v1_synthesis.md ✅ the AI 총평 prompt
-│   │   └── adapter.py         ⬜ vendor-neutral layer, scoring, synthesis
+│   │   ├── adapter.py         ✅ vendor-neutral layer (litellm), scoring
+│   │   └── score.py           ✅ Stage-2 scorer — used by the bake-off only; not wired into the daily run yet
 │   ├── report/
 │   │   ├── rating.py          ✅ the 7-point directional rating
-│   │   ├── consistency.py     ✅ commentary checked against the rating
-│   │   └── render.py          ⬜ markdown rendering
-│   ├── notify/                ⬜ vault, email, webhook adapters
-│   └── eval/                  ⬜ golden set, bake-off, IC, shadow portfolio
+│   │   ├── consistency.py     ✅ commentary checked against the rating — not yet called from render.py
+│   │   └── render.py          ✅ markdown rendering, sections ④⑤⑧ still absent
+│   ├── notify/                ✅ vault, email adapters
+│   └── eval/
+│       └── bakeoff.py         ✅ SPEC §7.4 bake-off harness
+│       # ic.py, shadow_portfolio.py ⬜ — needed for the 3-month gate, not started
 │
 ├── scripts/
-│   └── config_helper.py       ✅ find / scaffold / audit for the hand-written config
-├── tests/                     272 tests, all offline
-└── data/                      gitignored except data/raw/kr/news/ — RSS has no backfill
+│   ├── config_helper.py       ✅ find / scaffold / audit for the hand-written config
+│   ├── backfill.py            ✅ 3-year initial load
+│   ├── collect_daily.py       ✅ morning/evening run driver
+│   └── golden.py              ✅ golden-set sampling, triage, labelling, verification
+├── .github/workflows/         ✅ collect-news.yml, report.yml
+├── tests/                     602 offline tests, 9 network
+└── data/                      gitignored except data/raw/, data/ratings/, data/bakeoff/, data/golden/ — see .gitignore for why each is committed
 ```
 
 ### What the built modules actually do
@@ -292,12 +309,12 @@ be checked against the repository rather than taken on trust.
 |---|---|---|
 | 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
-| 3 | Collectors + validation tests | ✅ 6 collectors, 542 offline tests, 9 network |
+| 3 | Collectors + validation tests | ✅ 6 collectors, 602 offline tests, 9 network |
 | 4 | **3-year backfill into `data/raw/`** | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
 | 5 | Entity resolution + ambiguous ratio | ✅ **ambiguous 7.9%** of 1,013 articles, 2026-08-11 (threshold 30%) |
-| 6 | Embedding pipeline (dedup + relevance) | ⬜ needs a local embedding dependency — not blocked by the golden set |
-| 7 | Golden set — 100 hand-labeled articles | ✅ **done 2026-08-10** — labelling, recheck and verification |
-| 8 | Model adapter + bake-off | ⬜ nothing blocking — step 7 cleared |
+| 6 | Embedding pipeline (dedup + relevance) | ⬜ needs a local embedding dependency — see [notes/step6-plan.md](notes/step6-plan.md). Now the only thing blocking `news_polarity` |
+| 7 | Golden set — 100 hand-labeled articles | ✅ **done**, `relevance` fully re-labelled 2026-08-12 after a mid-run definition change |
+| 8 | Model adapter + bake-off | ✅ **done 2026-08-12** — `gpt-5.1` selected, see [Current status](#current-status) above |
 | 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |
 | 10 | Report renderer + delivery | ✅ vault + email live; 8 briefings rendered, 2026-08-03..2026-08-11 |
 | 11 | Daily collection + report workflow | ✅ **full cloud round trip 2026-08-06** — 5 collectors, render, email, commit |
@@ -305,9 +322,10 @@ be checked against the repository rather than taken on trust.
 | 13 | Two-week gate | ⬜ **clock starts 2026-08-12, read 2026-08-26** — pinned in PREREGISTRATION §8.5 |
 
 **The whole deterministic path now exists and runs unattended — collect,
-resolve, compute, rate, render, deliver.** What is missing is the LLM stages
-(6–8), which the rating does not need to produce a number, and which step 7 has
-now stopped blocking.
+resolve, compute, rate, render, deliver.** What is missing is step 6, the
+embedding pipeline — steps 7 and 8 (golden set, bake-off) finished 2026-08-12,
+which the rating does not need to produce a number, but which `news_polarity`
+does.
 
 ### The backfill is in and the z-scores are real
 
@@ -381,18 +399,24 @@ These are Ricky's, in the order they will be needed. Full detail in
 
 | # | Task | Est. time | Blocks |
 |---|---|---|---|
-| 1 | Bake-off decision | 30 min | Scoring model choice |
-| 2 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* 1–2 weeks of real data) |
-| 3 | KIS application | 15 min | Real-time quotes only; blocks nothing today |
+| 1 | Embedding dependency decision (`sentence-transformers`) | judgment | Step 6, and therefore `news_polarity` |
+| 2 | `rev_4w` data source decision | judgment | The one rating feature besides `news_polarity` with no source |
+| 3 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* the 2-week gate) |
+| 4 | KIS application | 15 min | Real-time quotes only; blocks nothing today |
 
 Credentials, the `.env` fixes, the watchlist, the Alpaca switch, the alias
-dictionary and the golden set — labelling, recheck and verification — are all
-done. Nothing blocks the bake-off any more.
+dictionary, the golden set, and the model bake-off are all done — `gpt-5.1`
+was selected 2026-08-12. Nothing blocks step 6 except the dependency decision
+above.
 
-The recheck that used to sit at the top of this list is finished, and it earned
-its place: it is what found that `forwardness` disagrees with itself twice as
-much as the other four dimensions. Read the floor in
-[PREREGISTRATION §8.3](PREREGISTRATION.md) before ranking models on it.
+The `relevance` re-labelling that used to be the open item here is finished
+too, and it earned its place: three models failing the same correlation bar
+simultaneously is what surfaced that the golden set's own definition had gone
+stale, not the models. `forwardness` still disagrees with itself twice as much
+as the other four dimensions — read the floor in
+[PREREGISTRATION §8.3](PREREGISTRATION.md) before ranking models on it, and
+note it predates the `relevance` redo and needs re-measuring via
+`golden recheck` (earliest 2026-08-13 09:00 KST).
 
 **On the defects found in the [2026-08-07 review](notes/review-2026-08-07.md).**
 H1 (rating archive) and H2 (phantom weights) were fixed on 2026-08-08. M1
