@@ -841,22 +841,31 @@ def main(argv: list[str] | None = None) -> int:
                 raise SystemExit(f"no such candidate(s) in config/models.yaml: {sorted(unknown)}")
 
         stored = load() if ATTEMPTS.exists() else []
+        targets = {c["model"] for c in candidates}
+        fresh = dt.datetime.now(dt.UTC).isoformat()
+        # One `run_at` per model, not one for the invocation. `latest_run`
+        # groups by model, and each candidate may be resuming a different run —
+        # `--model` exists precisely so they can be run separately. A single
+        # timestamp taken across all of them would stamp one model's resumed
+        # calls with another model's run and split the first in two.
+        run_ats = dict.fromkeys(targets, fresh)
+        done: set[tuple[str, str, str, int, str]] = set()
         if args.resume:
-            if not stored:
-                raise SystemExit(f"nothing to resume: {ATTEMPTS} does not exist")
-            resuming = latest_run(stored)
-            run_at = max(a.run_at for a in resuming)
-            done = answered_keys(resuming)
-            print(f"resuming run {run_at} — {len(done)} calls already paid for")
-        else:
-            run_at = dt.datetime.now(dt.UTC).isoformat()
-            done = set()
+            mine = [a for a in latest_run(stored) if a.model in targets] if stored else []
+            if not mine:
+                raise SystemExit(f"nothing to resume for {sorted(targets)} in {ATTEMPTS}")
+            for model in targets:
+                previous = [a.run_at for a in mine if a.model == model]
+                if previous:
+                    run_ats[model] = max(previous)
+            done = answered_keys(mine)
+            print(f"resuming {len(run_ats)} model(s) — {len(done)} calls already paid for")
 
         # Written per call rather than once at the end. Pacing Google at 8
         # calls/min makes a full run over an hour long, and a machine that
         # sleeps at call 1,400 must not discard 1,400 paid-for calls.
         def flush(attempt: Attempt) -> None:
-            store([attempt], run_at=run_at)
+            store([attempt], run_at=run_ats[attempt.model])
 
         try:
             attempts = run(

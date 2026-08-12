@@ -578,3 +578,42 @@ def test_a_prompt_change_is_not_inherited_by_a_resume():
     v1 = Attempt(prompt_version="v1", **common)
     v2 = Attempt(prompt_version="v2", **common)
     assert bakeoff.key_of_attempt(v1) != bakeoff.key_of_attempt(v2)
+
+
+def test_resume_keeps_each_model_in_its_own_run(tmp_path, monkeypatch, labels):
+    """`--model` exists so candidates can be run separately, which means two
+    candidates may be resuming runs stamped at different times. A single
+    timestamp across the invocation would stamp one model's resumed calls with
+    the other's run and split the first in two — invisible until `latest_run`
+    silently dropped half a run at report time."""
+    path = tmp_path / "attempts.jsonl"
+    monkeypatch.setattr(bakeoff, "ATTEMPTS", path)
+
+    def one(model, article_id, run_at):
+        bakeoff.store(
+            [
+                Attempt(
+                    article_id=article_id,
+                    ticker="005930",
+                    model=model,
+                    provider="anthropic",
+                    repeat=0,
+                    prompt_version="v1",
+                    scores={n: 0.5 for n in NAMES},
+                )
+            ],
+            path,
+            run_at=run_at,
+        )
+
+    # `slow` was interrupted long ago; `fast` ran again since.
+    one("slow", "a", "2026-01-01T00:00:00+00:00")
+    one("fast", "a", "2026-06-01T00:00:00+00:00")
+
+    stored = bakeoff.load(path)
+    mine = [a for a in bakeoff.latest_run(stored) if a.model in {"slow", "fast"}]
+    run_ats = {m: max(a.run_at for a in mine if a.model == m) for m in ("slow", "fast")}
+    assert run_ats["slow"] == "2026-01-01T00:00:00+00:00"
+    assert run_ats["fast"] == "2026-06-01T00:00:00+00:00"
+    # The global max would have given `slow` June, merging it into `fast`'s run.
+    assert max(a.run_at for a in mine) != run_ats["slow"]
