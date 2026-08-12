@@ -8,15 +8,48 @@ embedding:
   model: BAAI/bge-m3          # KR/EN in one model, MIT, runs locally → zero cost
 
 scoring:
-  provider: anthropic         # anthropic | openai | google | naver | local
-  model: claude-sonnet-5
+  provider: openai            # anthropic | openai | google | naver | local
+  model: gpt-5.1
   temperature: 0
   batch: true
-  # NOT YET DECIDED BY BAKE-OFF. This is a placeholder so the pipeline runs, not
-  # a choice. SPEC §7.4 requires the decision come from measured golden-set
-  # correlation, self-consistency, and cost per valid signal — and MANUAL-TASKS.md
-  # §5 makes the call Ricky's, not Claude's. Record the decision and its date
-  # here as a comment once the bake-off has run.
+  # ── DECIDED 2026-08-12 by Ricky, on the SPEC §7.4 bake-off. ──
+  #
+  # MANUAL-TASKS §5's rule: among candidates passing golden-set correlation and
+  # self-consistency, take the lowest cost per valid signal. Two passed and
+  # gpt-5.1 is 8.3× cheaper.
+  #
+  #   model              relevance  polarity  σ(pol)  compliance  $/signal
+  #   claude-sonnet-5        0.83     0.87    0.036     99.4%     $0.0837
+  #   gpt-5.1                0.76     0.82    0.033    100.0%     $0.0101
+  #   gemini-3.5-flash       0.83     0.85      —      100.0%     $0.0116
+  #   bar                   > 0.7    > 0.6   < 0.1      > 99%        —
+  #
+  # Both passing candidates clear every bar, so MANUAL-TASKS §5's rule selects on
+  # cost alone, and there gpt-5.1 wins by 8.3× — at ~140 (article, ticker) pairs
+  # a day, ~$5/month against ~$28 for sonnet-5 and ~$27 for gemini-3.5-flash.
+  #
+  # **sonnet-5's 0.07 relevance lead is not dismissible as noise, and is not
+  # claimed to be.** An earlier version of this note called it 0.03 and "inside
+  # the ±0.07 floor"; both halves are stale. The numbers above are from after the
+  # golden set's final corrections that same day, which widened the gap to
+  # exactly the floor, and the floor itself is no longer validly measured — it
+  # came from a `golden recheck` answered 2026-08-10, before `relevance` was
+  # re-labelled, so the two passes no longer measure the same thing. Re-measuring
+  # it needs a fresh recheck against the corrected labels. What the decision rests
+  # on is unaffected: both candidates pass, and the rule says take the cheaper.
+  # What it does *not* rest on is a claim that the two score alike on relevance.
+  #
+  # gemini-3.5-flash was **not eligible**, on σ rather than on price: it was run
+  # at `--repeats 1` to fit the free tier's 20-a-day cap, so its self-consistency
+  # is unmeasured, not passed. Its per-call cost is 5× gpt-5.1's despite the
+  # similar total spend on the two — the totals look alike only because gpt-5.1
+  # bought 505 calls with them and gemini 105. Its input is *shorter* than
+  # gpt-5.1's (1,014 vs 1,310 tokens); it emits 502 output tokens against 78 for
+  # the same five-number schema, which is reasoning billed as output at $9/1M.
+  #
+  # The scores behind these numbers are in `data/bakeoff/attempts.jsonl` and the
+  # table is regenerated with `uv run python -m src.eval.bakeoff report` — no API
+  # calls, so re-reading the decision costs nothing.
 
 # The models the SPEC §7.4 bake-off compares. Read only by src/eval/bakeoff.py,
 # never by the pipeline — these are alternatives under test, not the configured
@@ -72,13 +105,23 @@ scoring:
 # and is what PREREGISTRATION §8.3 now names as the instrument for "LLM output
 # reproducibility".
 #
-# ⚠ Gemini's free tier throttles at roughly 9 calls/min (measured: a fresh
-# minute served 9 and 429'd on the 10th; a 65s wait restored full capacity, so
-# the quota is per-minute, not per-day). `src/eval/bakeoff.py` paces Google at 8
-# calls/min and retries a 429 with backoff, so a 500-call run takes about an
-# hour instead of failing. Enabling billing removes the wait. If a 429 ever
-# survives every backoff the runner abandons that candidate and says so, because
-# that is the signature of a per-day cap, which pacing cannot fix.
+# ⚠ Gemini's free tier is **5 RPM and 20 RPD** on `gemini-3.5-flash` — read off
+# Google AI Studio's own dashboard (aistudio.google.com/rate-limit) 2026-08-12,
+# and confirmed by the 429 body, which names `quotaValue: 20` for
+# `GenerateRequestsPerDayPerProjectPerModel-FreeTier`.
+#
+# The earlier note here said "roughly 9 calls/min … per-minute, not per-day",
+# inferred by probing the API rather than by reading the quota. Both halves were
+# wrong, and the second was the expensive one: it is the daily cap that stopped
+# the 500-call run, and no amount of pacing or backoff clears it. RPD resets at
+# **midnight Pacific**, not on a rolling 24h window — a batch run late in the KST
+# afternoon is already spending the next Pacific day's budget, which is what made
+# an apparently-fresh run fail on its 4th call.
+#
+# `src/eval/bakeoff.py` paces Google at 5 calls/min. If a 429 survives every
+# backoff the runner abandons that candidate and says so, because that is the
+# signature of the per-day cap. Enabling billing removes both limits: with it on,
+# 97 calls ran back to back with zero failures.
 #
 # Do NOT reach for `litellm.drop_params = True`. It would drop the temperature
 # and let the run look successful while the determinism SPEC §6.3 asks for was
