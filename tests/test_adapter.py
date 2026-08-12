@@ -314,3 +314,37 @@ def test_out_of_range_values_are_detectable(monkeypatch, keyed):
     assert score.out_of_range({**GOOD, "polarity": -1.4}) == ["polarity"]
     assert score.out_of_range({**GOOD, "relevance": "높음"}) == ["relevance"]
     assert set(score.out_of_range({})) == {name for name, *_ in DIMENSIONS}
+
+
+def test_a_single_key_envelope_is_stripped(monkeypatch, keyed):
+    """Measured 2026-08-11: 13 of 500 `claude-sonnet-5` calls arrived as
+    `{"parameter": {...}}` — litellm's Anthropic tool-calling transform letting
+    the argument wrapper through. The scores inside were valid every time, but
+    they read as five out-of-range dimensions and took schema compliance to
+    97.4%, under SPEC §7.4's 99% bar."""
+    _answer(monkeypatch, json.dumps({"parameter": GOOD}))
+    result = complete(
+        "scoring", system="s", user="u", schema=score.schema(), prompt_version="v1", models=MODELS
+    )
+    assert result.parsed == GOOD
+    assert score.out_of_range(result.parsed) == []
+
+
+def test_unwrapping_cannot_hide_a_real_schema_failure(monkeypatch, keyed):
+    """The envelope strip is narrow on purpose: an answer that is genuinely
+    missing fields must still fail, or the compliance rate stops measuring."""
+    for payload in (
+        {"parameter": {"relevance": 0.5}},  # envelope, but incomplete inside
+        {"relevance": 0.5},  # no envelope, incomplete
+        {"a": GOOD, "b": GOOD},  # two keys is not an envelope
+    ):
+        _answer(monkeypatch, json.dumps(payload))
+        result = complete(
+            "scoring",
+            system="s",
+            user="u",
+            schema=score.schema(),
+            prompt_version="v1",
+            models=MODELS,
+        )
+        assert score.out_of_range(result.parsed), f"{payload} should not have been accepted"

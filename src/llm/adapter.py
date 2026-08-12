@@ -150,6 +150,36 @@ def _cost(response: Any) -> float | None:
         return None
 
 
+def _unwrap(parsed: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+    """Strip a single-key envelope some vendors wrap the answer in.
+
+    Anthropic's structured output is tool-calling underneath, and litellm's
+    transform sometimes lets the tool's argument wrapper through, so the answer
+    arrives as ``{"parameter": {"relevance": 0.7, ...}}`` instead of the object
+    itself. Measured 2026-08-11 on the first full bake-off: 13 of 500
+    `claude-sonnet-5` calls, which read as five out-of-range dimensions each and
+    dropped its schema compliance to 97.4% — under SPEC §7.4's 99% bar. The
+    scores inside were valid every time. The bake-off came within one number of
+    rejecting a vendor for a defect on this side of the wire.
+
+    Deliberately narrow, so it cannot mask a real schema failure. It fires only
+    when the top level is missing required keys, has exactly one key, and that
+    key's value is an object carrying all of them. Driven off the schema rather
+    than the name ``parameter``, which is litellm's and may change.
+    """
+    required = schema.get("schema", {}).get("required")
+    if not required or not isinstance(parsed, dict):
+        return parsed
+    if set(required) <= parsed.keys():
+        return parsed
+    if len(parsed) != 1:
+        return parsed
+    inner = next(iter(parsed.values()))
+    if isinstance(inner, dict) and set(required) <= inner.keys():
+        return inner
+    return parsed
+
+
 def complete(
     stage: str,
     *,
@@ -217,6 +247,7 @@ def complete(
         raise SchemaError(f"{model} returned unparseable content: {exc}") from exc
     if not isinstance(parsed, dict):
         raise SchemaError(f"{model} returned {type(parsed).__name__}, expected an object")
+    parsed = _unwrap(parsed, schema)
 
     usage = response.usage
     return Completion(
