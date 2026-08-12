@@ -75,6 +75,19 @@ jobs:
         with:
           enable-cache: true
 
+      # setup-uv's cache above is the Python *package* cache — it does not
+      # touch model weights. SPEC §6.1's embedding stage (step 6, not yet
+      # wired into this run as of 2026-08-12) downloads `BAAI/bge-m3` on first
+      # use, 2.27GB, into huggingface_hub's default cache dir. A fresh runner
+      # checks out clean every time, so without this the model would be
+      # re-downloaded on every single report run rather than once. Keyed on
+      # the model name so a future model change (a new SPEC §6.1 choice) gets
+      # its own cache entry instead of silently reusing a stale one.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: huggingface-bge-m3
+
       # Matching the evening cron rather than the morning ones: morning has
       # three lines and will grow more, and every added line would otherwise
       # need a matching branch here to avoid silently running as evening.
