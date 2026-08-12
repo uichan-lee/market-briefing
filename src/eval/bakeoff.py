@@ -85,13 +85,22 @@ VALID_SIGNAL_RELEVANCE = 0.5
 # Calls per minute to hold each provider to. Only providers that need pacing
 # appear; anything absent runs unthrottled.
 #
-# Measured 2026-08-11 against the live APIs: Google AI Studio's **free** tier
-# serves 9 calls in a fresh minute on `gemini-3.5-flash` and 429s on the 10th,
-# and the quota is per-minute — a 65-second wait restored full capacity. So 8 is
-# one below the observed ceiling, which makes a 500-call candidate run take
-# about an hour rather than fail. Enabling billing raises the real limit and
-# this number can go with it; it is not a property of the model.
-RATE_LIMITS = {"gemini": 8}
+# 2026-08-11's 8 was a trial-and-error guess from hitting the API directly —
+# it was wrong. Google AI Studio's dashboard (aistudio.google.com/rate-limit,
+# Market Briefing project) states the free tier's actual quota for
+# `gemini-3.5-flash` outright: **5 RPM, 20 RPD**. Its own 28-day peak-usage
+# view shows prior runs at 9/5 RPM and 31/20 RPD — both limits breached, which
+# is why runs stalled past what any backoff could clear; that stall had no
+# name until this screenshot (2026-08-12). Enabling billing raises the real
+# limit and this number can go with it; it is not a property of the model.
+RATE_LIMITS = {"gemini": 5}
+
+# The free tier's daily cap, from the same dashboard. Not enforced by the
+# Pacer — a day's remaining quota cannot be waited out, only stopped short of.
+# `bakeoff run --model gemini-3.5-flash --limit N` with N growing by this much
+# each day is how a >20-call target gets collected without burning hours on
+# backoff against a wall that will not open until midnight Pacific.
+RATE_LIMIT_DAILY = {"gemini": 20}
 
 # A 429 is retried with exponential backoff. Past this many attempts the run
 # stops asking that candidate at all.
@@ -161,9 +170,10 @@ class Attempt:
     # True when the call failed *before the model answered* — quota, credit,
     # outage, a rejected parameter. Kept apart from a schema failure because
     # SPEC §7.4's compliance rate is a measure of the model's structured-output
-    # maturity, and a 429 says nothing about that. Measured 2026-08-11: Gemini's
-    # free tier stops at ~8 calls/min, so a 500-call run against it would report
-    # the model at ~2% compliance when the model never spoke.
+    # maturity, and a 429 says nothing about that. Gemini's free tier is 5
+    # RPM / 20 RPD (AI Studio dashboard, confirmed 2026-08-12), so a 500-call
+    # run against it would report the model at ~4% compliance when the model
+    # never spoke.
     transport: bool = False
     # The temperature actually sent, or None when the candidate was called
     # without one. Recorded per call rather than assumed from SPEC §6.3,
@@ -301,13 +311,13 @@ def run(
     reach the table as 97% rather than as a crash.
 
     Calls are paced per provider and a 429 is retried with backoff, because
-    Google's free tier serves 9 calls a minute and an unpaced run would collect
-    490 quota errors instead of a comparison. When the backoffs are exhausted
-    the candidate is abandoned rather than retried for an hour — see
-    ``MAX_RATE_LIMIT_RETRIES``.
+    Google's free tier serves 5 calls a minute (and 20 a day, which no backoff
+    clears) and an unpaced run would collect 490 quota errors instead of a
+    comparison. When the backoffs are exhausted the candidate is abandoned
+    rather than retried for an hour — see ``MAX_RATE_LIMIT_RETRIES``.
 
     ``sink`` is called with each Attempt the moment it is finished, and is how
-    a run survives its own interruption. Pacing Google at 8 calls/min makes a
+    a run survives its own interruption. Pacing Google at 5 calls/min makes a
     full run over an hour long, and the money is spent per call rather than at
     the end: writing only after the last one means a laptop sleeping at call
     1,400 of 1,500 discards every one of them. The module docstring's promise
@@ -470,9 +480,10 @@ def latest_run(attempts: list[Attempt]) -> list[Attempt]:
     alongside the real one. Averaging them together would let a `--limit 3`
     smoke test move a decision that cost $6 to make.
 
-    Selection is per model rather than one global timestamp on purpose: pacing
-    Google at 8 calls/min makes its 500 calls an hour long, so running that
-    candidate in its own invocation is the expected workflow, not an accident.
+    Selection is per model rather than one global timestamp on purpose: Google's
+    20-a-day free-tier cap spreads its 500 calls over several invocations on
+    several days, so running that candidate across many invocations is the
+    expected workflow, not an accident.
     Taking the newest run *of each model* keeps that workflow working while
     still dropping superseded attempts.
     """
@@ -728,8 +739,9 @@ def report(attempts: list[Attempt]) -> str:
         "mean latency, because SPEC §7.4 measures the model there and a 429 says nothing "
         "about it. A non-zero count is still a warning about the *run*: a model measured on "
         "a fraction of the corpus is being compared on a different sample from its rivals. "
-        "Measured 2026-08-11 — Gemini's free tier caps at roughly 8 calls/min, so an "
-        "unthrottled 500-call run against it lands almost entirely in this column.",
+        "Confirmed on the AI Studio dashboard 2026-08-12 — Gemini's free tier is 5 RPM / "
+        "20 RPD, so an unthrottled 500-call run against it lands almost entirely in this "
+        "column, and even a paced one needs several days to clear the corpus once.",
     ]
 
     if len(models) > 1:
