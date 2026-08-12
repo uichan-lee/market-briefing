@@ -172,6 +172,61 @@ def test_a_full_bucket_still_records_the_honest_label(tmp_path, monkeypatch, cap
     assert len(picked) == PER_BUCKET
 
 
+def test_redo_all_reopens_a_dimension_score_conflicts_would_not_flag(tmp_path, monkeypatch):
+    """2026-08-12: `relevance` went stale for rows no keyword rule catches.
+
+    `--redo` alone only reopens what `score_conflicts` flags, which is the
+    right default — but the fix for a moved *definition* has to reach every
+    row, and a rule built to reach exactly those rows would be reverse-
+    engineered from which articles a model disagreed with the label on. This
+    pins the escape hatch: `redo_all=True` must reopen a row even when the
+    row is, by the rule's own account, clean.
+    """
+    import scripts.golden as golden
+
+    monkeypatch.setattr(golden, "TRIAGE", tmp_path / "triage.jsonl")
+    row = {
+        "article_id": "a1",
+        "ticker": "005930",
+        "name": "삼성전자",
+        "bucket": "positive",
+        "title": "평범한 실적 기사",
+    }
+    golden.append_jsonl(golden.TRIAGE, row)
+
+    progress = tmp_path / "v1-scores.jsonl"
+    labeled_at = "2026-08-01T00:00:00+00:00"
+    # A positive-bucket row with matching-sign polarity and a relevance that
+    # trips no keyword rule — the "clean by the rule's own account" row the
+    # docstring above names.
+    seed = {
+        "relevance": 0.9,
+        "polarity": 0.5,
+        "intensity": 0.0,
+        "uncertainty": 0.0,
+        "forwardness": 0.0,
+    }
+    for name, _, _, _, _ in DIMENSIONS:
+        golden.append_jsonl(
+            progress,
+            {**row, "dimension": name, "value": seed[name], "labeled_at": labeled_at},
+        )
+    assert not score_conflicts(scored_rows(progress, [row])), "fixture must start rule-clean"
+
+    target = tmp_path / "v1.jsonl"
+    monkeypatch.setattr(golden, "_prompt", lambda _: "0.1")
+    result = golden.run_label(
+        target=target, source=[row], progress=progress, redo="relevance", redo_all=True
+    )
+
+    assert result == 0
+    finalised = {r["article_id"]: r for r in golden.read_jsonl(target)}
+    assert finalised["a1"]["relevance"] == 0.1, "redo_all must win over the untouched old score"
+    # The other four dimensions were already answered and redo_all must not
+    # reopen them — only the named dimension.
+    assert finalised["a1"]["polarity"] == 0.5
+
+
 # --- flags -----------------------------------------------------------------
 
 

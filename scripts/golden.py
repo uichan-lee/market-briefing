@@ -907,6 +907,7 @@ def run_label(
     source: Sequence[dict] | None = None,
     progress: Path | None = None,
     redo: str | None = None,
+    redo_all: bool = False,
 ) -> int:
     triaged = read_jsonl(TRIAGE)
     if not triaged:
@@ -918,11 +919,22 @@ def run_label(
     scored = read_jsonl(progress)
     done = {(r["article_id"], r["ticker"], r["dimension"]) for r in scored}
 
-    # `--redo` re-asks only what a rule flags, never a whole dimension. Re-asking
-    # all 100 after a definition change would mean re-deriving the scale from
-    # memory, which is the thing scoring one dimension at a time exists to avoid.
+    # `--redo` normally re-asks only what a rule flags, never a whole dimension:
+    # re-asking all 100 after a definition change would mean re-deriving the
+    # scale from memory, which is the thing scoring one dimension at a time
+    # exists to avoid. `--redo-all` is the deliberate exception, for when the
+    # *reason* to redo cannot be expressed as a rule without the rule being
+    # reverse-engineered from which articles a model disagreed with the label
+    # on — which would make the golden set partly a function of the model
+    # output it exists to rank. 2026-08-12: `relevance` moved onto 손익 on
+    # 2026-08-07 and old labels went stale, but no keyword rule found the
+    # affected rows without first reading the ones the models flagged.
     reasons: dict[tuple[str, str, str], str] = {}
-    if redo:
+    if redo and redo_all:
+        for row in picked:
+            done.discard((row["article_id"], row["ticker"], redo))
+        print(f"\n재채점 — {redo} 차원 전체 {len(picked)}건 (규칙 판정 없이, 조건 없이)")
+    elif redo:
         for conflict in score_conflicts(scored_rows(progress, picked)):
             if conflict["dimension"] != redo:
                 continue
@@ -1293,6 +1305,11 @@ def main(argv: list[str] | None = None) -> int:
         choices=[name for name, _, _, _, _ in DIMENSIONS],
         help="그 차원에서 규칙에 걸린 항목만 다시 매긴다",
     )
+    labeller.add_argument(
+        "--redo-all",
+        action="store_true",
+        help="`--redo`의 차원을 규칙 판정 없이 전체(100건) 다시 매긴다 — --redo와 함께 써야 함",
+    )
     sub.add_parser("recheck", help="하루 뒤 재라벨링 검사")
     sub.add_parser("verify", help="완성된 골든셋을 검사한다")
 
@@ -1305,7 +1322,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "review":
         return run_review()
     if args.command == "label":
-        return run_label(redo=args.redo)
+        if args.redo_all and not args.redo:
+            parser.error("--redo-all은 --redo <차원>과 함께 써야 합니다")
+        return run_label(redo=args.redo, redo_all=args.redo_all)
     if args.command == "recheck":
         return run_recheck()
 
