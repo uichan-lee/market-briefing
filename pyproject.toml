@@ -52,15 +52,35 @@ dependencies = [
     # switched HTTP clients would break both collectors with an ImportError and
     # no indication why. Declared so the lockfile pins it on its own terms.
     "requests>=2.31",
-    # SPEC §6.1 Stage 1's local embedding runtime, for step 6 (dedup +
-    # relevance filtering) — SPEC §3 names it, and CLAUDE.md's determinism-first
-    # principle is why this stage runs on embeddings rather than an LLM call:
-    # zero cost, and 100% reproducible where an LLM is not even at
-    # temperature=0. Decided 2026-08-12 by Ricky, after Claude laid out the
-    # tradeoff (model size, install footprint, the settled alternative of
-    # calling an LLM instead, which SPEC's v0.2 redesign already rejected on
-    # cost and reproducibility grounds).
+]
+
+# SPEC §6.1 Stage 1's local embedding runtime, for step 6 (dedup + relevance
+# filtering) — SPEC §3 names it, and CLAUDE.md's determinism-first principle is
+# why that stage runs on embeddings rather than an LLM call: zero cost, and
+# 100% reproducible where an LLM is not even at temperature=0. Decided
+# 2026-08-12 by Ricky.
+#
+# **Optional, and that is load-bearing rather than tidy.** `uv run` installs the
+# default dependencies before executing, so anything listed above is installed
+# by *every* workflow — including `collect-news.yml`, which runs up to 31 times
+# a day under `timeout-minutes: 10` and touches nothing but RSS. torch is the
+# heaviest install in the project; putting it on that schedule spends minutes
+# per run on a library the news collector never imports, and a sync that
+# overruns the timeout loses that hour's articles permanently (CLAUDE.md: news
+# is the one source where a missed run is unrecoverable).
+#
+# Declared as an extra so only the workflow that needs it asks for it:
+# `uv sync --extra embed`, wired into `report.yml` when step 6's code lands.
+# Until then nothing installs it, which is correct — no module imports
+# sentence_transformers yet.
+[project.optional-dependencies]
+embed = [
     "sentence-transformers>=3.0",
+    # Declared explicitly, not left to arrive through sentence-transformers,
+    # because `[tool.uv.sources]` below only binds to *declared* dependencies.
+    # Pinned transitively it resolves from PyPI and the CPU-only source is
+    # silently ignored — see the comment on that block.
+    "torch>=2.0",
 ]
 
 [dependency-groups]
@@ -69,16 +89,28 @@ dev = [
     "ruff>=0.6",
 ]
 
-# sentence-transformers pulls in torch, whose default PyPI build bundles CUDA
-# and runs ~5.5GB installed. Nothing in this project has a GPU — collectors run
-# on Ricky's Mac and GitHub Actions' ubuntu-latest runners, neither of which
-# has one — so the CUDA build buys nothing and costs bandwidth and disk on
-# every `uv sync`, including in CI on every report run. Pinned to PyTorch's own
-# CPU-only wheel index instead, per uv's documented pattern
-# (docs.astral.sh/uv/guides/integration/pytorch), which brings the install down
-# to roughly 1-1.5GB.
+# torch's default PyPI build bundles CUDA and pulls ~18 `nvidia-*` packages on
+# Linux, ~2.7GB of wheels. Nothing here has a GPU — Ricky's Mac and Actions'
+# ubuntu-latest runners — so that payload buys nothing. Pinned to PyTorch's
+# CPU-only wheel index per uv's documented pattern
+# (docs.astral.sh/uv/guides/integration/pytorch).
+#
+# **The marker is required, and its absence is why the first attempt at this
+# silently did nothing (2026-08-12).** Two mistakes compounded: `torch` was not
+# a declared dependency, so `tool.uv.sources` never bound to it, and there was
+# no marker. The CPU index publishes no macOS wheels, so darwin must fall
+# through to PyPI — which is also the right build there, since it carries MPS
+# and no CUDA. Verification on a Mac therefore cannot tell a working pin from a
+# broken one: darwin gets a 106MB CUDA-free wheel either way. That is exactly
+# what happened, and `uv.lock` carried the full CUDA tree for `sys_platform ==
+# 'linux'` — the only platform CI runs on — while the commit message claimed
+# the opposite.
+#
+# Check this pin the way it actually fails, not the way it passes:
+#   uv pip install --dry-run --python-platform x86_64-manylinux_2_28 torch
+#   grep -c "download.pytorch.org" uv.lock   # must be non-zero
 [tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
