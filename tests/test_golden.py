@@ -514,7 +514,7 @@ def test_saying_a_story_misses_the_books_then_scoring_it_large_is_flagged():
     does a line of this company's P&L move. Hit live on 2026-08-08: two
     브로커리지 목표가 rows both at relevance 0.0, one scored intensity 0.8 and
     the other 0.0."""
-    (conflict,) = score_conflicts(
+    conflicts = score_conflicts(
         [
             _scored(
                 "irrelevant",
@@ -524,7 +524,25 @@ def test_saying_a_story_misses_the_books_then_scoring_it_large_is_flagged():
             )
         ]
     )
-    assert conflict["dimension"] == "intensity"
+    # Filed under both sides since 2026-08-12: the contradiction is between the
+    # two numbers, and `--redo <dimension>` must be able to reach whichever one
+    # Ricky decides is the wrong one.
+    assert {c["dimension"] for c in conflicts} == {"relevance", "intensity"}
+
+
+def test_a_detached_pair_is_reachable_from_either_dimension():
+    """Hit live on 2026-08-12. 삼성전기's 테슬라 공급 story sat at relevance 0.1
+    with intensity 0.7, and Ricky's call was that the *relevance* was the wrong
+    side. Filed under `intensity` alone, `label --redo relevance` could not
+    reopen it and the only route left was `--redo-all` over all 100 rows."""
+    conflicts = score_conflicts(
+        [_scored("positive", "테슬라 공급 싹쓸이에…삼성전기 급등", relevance=0.1, intensity=0.7)]
+    )
+    by_dimension = {c["dimension"]: c["reason"] for c in conflicts}
+    assert "relevance" in by_dimension and "intensity" in by_dimension
+    # Neither side may name a replacement value — that is Ricky's to write.
+    for reason in by_dimension.values():
+        assert "0.7" in reason and "0.1" in reason, "must quote both numbers, propose neither"
 
 
 def test_a_low_intensity_story_that_touches_the_books_is_left_alone():

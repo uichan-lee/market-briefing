@@ -657,12 +657,19 @@ def score_conflicts(rows: Sequence[dict]) -> list[dict]:
             and float(relevance) <= _DETACHED_RELEVANCE
             and float(intensity) >= _DETACHED_INTENSITY
         ):
-            add(
-                row,
-                "intensity",
+            # Filed under *both* dimensions, because the contradiction is
+            # between the two numbers and either one may be the wrong one.
+            # Until 2026-08-12 it was filed under `intensity` alone, which made
+            # `label --redo relevance` unable to reach a row whose `relevance`
+            # was the side Ricky wanted to change — the only route left being
+            # `--redo-all` over all 100. Which number gives way stays his call;
+            # this only makes both sides reachable.
+            detached = (
                 f"relevance={float(relevance):.1f}인데 intensity={float(intensity):.1f} "
-                "— 손익에 닿지 않는다면서 손익 충격은 크다는 뜻이 됩니다",
+                "— 손익에 닿지 않는다면서 손익 충격은 크다는 뜻이 됩니다"
             )
+            add(row, "relevance", detached)
+            add(row, "intensity", detached)
 
     names = [name for name, _, _, _, _ in DIMENSIONS]
     for index, row in enumerate(rows):
