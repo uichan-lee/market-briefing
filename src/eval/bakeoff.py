@@ -170,6 +170,12 @@ class Attempt:
     # because as of 2026-08-11 the frontier models disagree about whether the
     # parameter exists at all — see `candidate_settings`.
     temperature: float | None = None
+    # What the model actually returned, kept only when the call failed. The
+    # 2026-08-11 run recorded 13 out-of-range failures and discarded the values
+    # that caused them, so diagnosing it needed a fresh paid call to reproduce
+    # what was already on disk once. A failure nobody can read is a failure
+    # that gets re-bought.
+    raw: dict[str, Any] = field(default_factory=dict)
     # Which invocation of `run` produced this call, stamped by `store`. Carried
     # on the record because `attempts.jsonl` is append-only and a `--limit 3`
     # dry run would otherwise be averaged into the real table forever.
@@ -392,6 +398,7 @@ def run(
                     bad = out_of_range(result.parsed)
                     if bad:
                         attempt.failure = f"out of range: {', '.join(bad)}"
+                        attempt.raw = result.parsed
                     else:
                         attempt.scores = {
                             name: float(result.parsed[name]) for name, *_ in DIMENSIONS
