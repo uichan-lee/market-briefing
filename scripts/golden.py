@@ -707,6 +707,12 @@ def scored_rows(progress: Path, picked: Sequence[dict]) -> list[dict]:
     ``collate_scores`` drops examples missing a dimension, which is right for
     the finished set and wrong here — a conflict between two scores is worth
     seeing before the other three arrive.
+
+    ``picked`` wins on ``bucket``, for the reason spelled out in
+    :func:`_finalise_labels`: each score record carries a copy of the bucket as
+    it stood when that dimension was scored, and a bucket corrected afterwards
+    lives in `triage.jsonl`. Letting the copy win made `--redo` re-ask a
+    just-corrected row using the bucket it had been corrected *away* from.
     """
     known = {key_of(row): row for row in picked}
     merged: dict[tuple[str, str], dict] = {}
@@ -715,7 +721,7 @@ def scored_rows(progress: Path, picked: Sequence[dict]) -> list[dict]:
         entry = merged.setdefault(key, dict(known.get(key, {})))
         entry.setdefault("article_id", record["article_id"])
         entry.setdefault("ticker", record["ticker"])
-        entry["bucket"] = record.get("bucket", entry.get("bucket", ""))
+        entry["bucket"] = known.get(key, {}).get("bucket") or record.get("bucket", "")
         entry[record["dimension"]] = record["value"]
     return list(merged.values())
 
@@ -982,7 +988,7 @@ def run_label(
             while True:
                 answer = _prompt(f"  {name} [{low:g}~{high:g}] > ")
                 if answer.lower() == "q":
-                    _finalise_labels(progress, target)
+                    _finalise_labels(progress, target, picked)
                     print(f"\n저장 완료. 진행 {progress}")
                     return 0
                 if answer.lower() == "s":
@@ -1005,20 +1011,38 @@ def run_label(
                 )
                 break
 
-    complete = _finalise_labels(progress, target)
+    complete = _finalise_labels(progress, target, picked)
     print(f"\n채점 완료 {complete}건 → {target}")
     return 0
 
 
-def _finalise_labels(progress: Path, target: Path) -> int:
+def _finalise_labels(progress: Path, target: Path, picked: Sequence[dict] | None = None) -> int:
     """Rewrite ``target`` from whatever is complete in ``progress``.
 
     Rewritten rather than appended because a partially scored example becomes
     complete later, and appending would leave the earlier incomplete copy in
     place. ``progress`` stays append-only, so nothing Ricky typed is ever
     rewritten — only the derived file is.
+
+    ``picked`` is the currently selected set, and when given it is authoritative
+    for two things that ``progress`` cannot be. Both only started mattering on
+    2026-08-12, when a bucket was corrected after scoring and the selection
+    changed underneath the scores for the first time:
+
+    * **Membership.** A row that leaves the selection stays complete in
+      ``progress`` forever, so collating the file alone would keep writing it
+      into the finished set beside the row that replaced it.
+    * **Bucket.** ``progress`` carries a copy of the bucket taken when each
+      dimension was scored. `triage.jsonl` is where a bucket is actually
+      corrected (that is what `review` appends to), so a stale copy would let
+      the finished set disagree with the decision Ricky just made.
     """
     complete = collate_scores(read_jsonl(progress))
+    if picked is not None:
+        buckets = {key_of(row): row.get("bucket", "") for row in picked}
+        complete = [
+            {**row, "bucket": buckets[key_of(row)]} for row in complete if key_of(row) in buckets
+        ]
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("w", encoding="utf-8") as handle:
         for row in complete:

@@ -679,6 +679,53 @@ def test_a_rescored_dimension_wins_when_progress_is_merged(tmp_path):
     assert score_conflicts([row]) == []
 
 
+def test_finalising_drops_a_row_that_left_the_selection_and_refreshes_its_bucket(tmp_path):
+    """Both hit on 2026-08-12, when a bucket was corrected after scoring.
+
+    `progress` is append-only, so a row that leaves the selection stays complete
+    in it forever and would keep being written into the finished set beside its
+    replacement. And its bucket there is a copy taken at scoring time, so a
+    correction appended to `triage.jsonl` — which is where `review` records one
+    — would never reach the finished file.
+    """
+    import scripts.golden as golden
+
+    progress = tmp_path / "scores.jsonl"
+    scored = _score_rows(
+        "stays", relevance=0.4, polarity=0.5, intensity=0.3, uncertainty=0.2, forwardness=0.1
+    ) + _score_rows(
+        "leaves", relevance=0.9, polarity=0.8, intensity=0.7, uncertainty=0.6, forwardness=0.5
+    )
+    progress.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in scored) + "\n", encoding="utf-8"
+    )
+    # Both rows were scored as `positive`; only "stays" is still selected, and
+    # its bucket has since been corrected to `negative`.
+    picked = [_article("stays", "005930", "negative", "제목")]
+
+    written = golden._finalise_labels(progress, tmp_path / "v1.jsonl", picked)
+
+    assert written == 1, "the row that left the selection must not be written"
+    (row,) = golden.read_jsonl(tmp_path / "v1.jsonl")
+    assert row["article_id"] == "stays"
+    assert row["bucket"] == "negative", "triage is authoritative for the bucket, not the score copy"
+
+
+def test_finalising_without_a_selection_keeps_every_complete_row(tmp_path):
+    """`recheck` collates a subset against its own target and must not be
+    filtered against a selection it was never part of."""
+    import scripts.golden as golden
+
+    progress = tmp_path / "scores.jsonl"
+    scored = _score_rows(
+        "a1", relevance=0.4, polarity=0.5, intensity=0.3, uncertainty=0.2, forwardness=0.1
+    )
+    progress.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in scored) + "\n", encoding="utf-8"
+    )
+    assert golden._finalise_labels(progress, tmp_path / "v1.jsonl") == 1
+
+
 def test_polarity_alone_accepts_negative_values():
     """The four other dimensions are magnitudes; polarity is the only signed
     one, and rejecting its sign would make every negative article unlabelable."""
