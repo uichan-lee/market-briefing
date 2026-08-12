@@ -17,3 +17,5 @@
 {"article_id": "0d5f4b2604e0bcebafbb", "ticker": "000660", "flag": "shared_sign", "before": "positive", "after": "positive", "changed": false, "decided_at": "2026-08-07T09:16:14+00:00"}
 {"article_id": "f39dd617a7827f8b77d2", "ticker": "005380", "flag": "shared_sign", "before": "negative", "after": "negative", "changed": false, "decided_at": "2026-08-07T10:12:07+00:00"}
 {"article_id": "f39dd617a7827f8b77d2", "ticker": "000270", "flag": "shared_sign", "before": "negative", "after": "negative", "changed": false, "decided_at": "2026-08-07T10:12:10+00:00"}
+{"article_id": "935101b916cae3cb0e0c", "ticker": "000150", "flag": "score_conflict", "before": "irrelevant", "after": "negative", "changed": true, "decided_at": "2026-08-12T08:10:22+00:00"}
+{"article_id": "694a4179e7c38ce5c6f4", "ticker": "005380", "flag": "score_conflict", "before": "irrelevant", "after": "ambiguous", "changed": true, "decided_at": "2026-08-12T08:10:22+00:00"}
