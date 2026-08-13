@@ -115,7 +115,7 @@ the gate criterion, per PREREGISTRATION §8.3's own text quoted above.
   parameter (default-argument change, existing golden-set bake-off calls
   unaffected).
 - A dry run against a small `limit` first (matching the existing `--limit`
-  pattern in `bakeoff.py main()`) before spending the full ~$3.60.
+  pattern in `bakeoff.py main()`) before spending the full ~$4.44.
 - Record the result in PREREGISTRATION §R regardless of outcome — pass or
   fail, per the project's own stated discipline that a measurement, once
   taken, is recorded rather than quietly reused or dropped.

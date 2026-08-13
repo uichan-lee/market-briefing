@@ -418,7 +418,7 @@ Claude를 막는 판단은 지금 하나뿐이다 — 아래 1번, 돈이 걸린
 
 | # | 작업 | 예상 시간 | 막고 있는 것 |
 |---|---|---|---|
-| 1 | 1회성 게이트 측정 비용(~$3.60) 승인 | 판단 | PREREGISTRATION §8.5 2주 게이트 4번 기준 — [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
+| 1 | 1회성 게이트 측정 비용(~$4.44) 승인 | 판단 | PREREGISTRATION §8.5 2주 게이트 4번 기준 — [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
 | 2 | `rev_4w` 데이터 소스 결정 | 판단 | `news_polarity` 외 유일하게 소스 없는 등급 피처 |
 | 3 | `config/rating.yaml` 캘리브레이션 | 30분 | 신뢰할 수 있는 등급 (2주 게이트 *이후에*) |
 | 4 | KIS 신청 | 15분 | 실시간 시세뿐. 오늘 막는 것은 없다 |

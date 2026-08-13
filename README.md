@@ -416,7 +416,7 @@ These are Ricky's, in the order they will be needed. Full detail in
 
 | # | Task | Est. time | Blocks |
 |---|---|---|---|
-| 1 | Sign off on the ~$3.60 one-time gate-measurement spend | judgment | PREREGISTRATION §8.5's 4th 2-week-gate criterion — [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
+| 1 | Sign off on the ~$4.44 one-time gate-measurement spend | judgment | PREREGISTRATION §8.5's 4th 2-week-gate criterion — [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
 | 2 | `rev_4w` data source decision | judgment | The one rating feature besides `news_polarity` with no source |
 | 3 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* the 2-week gate) |
 | 4 | KIS application | 15 min | Real-time quotes only; blocks nothing today |
