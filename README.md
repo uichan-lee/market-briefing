@@ -61,7 +61,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | GitHub Actions workflow | ✅ Done | `collect-news.yml` hourly, `report.yml` morning ×3 + evening; live since 2026-08-03 |
 | Golden set (100 hand-labeled articles) | ✅ Done | 100 examples × 5 dimensions, `relevance` fully re-labelled 2026-08-12 after a mid-run definition change; `verify` reports zero conflicts. `forwardness`'s ±0.13 floor ([PREREGISTRATION §8.3](PREREGISTRATION.md)) predates the redo and needs re-measuring |
 | LLM adapter + scoring bake-off | ✅ Done | `src/llm/adapter.py` + `src/eval/bakeoff.py`, 2,132 calls logged in `data/bakeoff/attempts.jsonl`. **`gpt-5.1` selected 2026-08-12** — see below |
-| Embedding pipeline (dedup + relevance) | ⬜ Not started | SPEC §12 step 6; needs a local embedding dependency. Now the only thing blocking `news_polarity` |
+| Embedding pipeline (dedup + relevance) | ⬜ Not started | SPEC §12 step 6, dependency resolved 2026-08-12. Not blocking `news_polarity` — see caveat below |
 | `news_polarity`, `rev_4w` features | ⬜ Not started | Both carry live weight in `config/rating.yaml` — see the caveat below |
 | `src/eval/ic.py`, `shadow_portfolio.py` | ⬜ Not started | Needed for the 3-month gate (§8.5). Start well before the gate — see [MANUAL-TASKS §10](MANUAL-TASKS.md) |
 | `us_filings`, `kr_filings` | ⬜ Not started | SEC EDGAR and DART |
@@ -312,11 +312,11 @@ be checked against the repository rather than taken on trust.
 | 3 | Collectors + validation tests | ✅ 6 collectors, 602 offline tests, 9 network |
 | 4 | **3-year backfill into `data/raw/`** | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
 | 5 | Entity resolution + ambiguous ratio | ✅ **ambiguous 7.9%** of 1,013 articles, 2026-08-11 (threshold 30%) |
-| 6 | Embedding pipeline (dedup + relevance) | ⬜ needs a local embedding dependency — see [notes/step6-plan.md](notes/step6-plan.md). Now the only thing blocking `news_polarity` |
+| 6 | Embedding pipeline (dedup + relevance) | ⬜ dependency resolved 2026-08-12, see [notes/step6-plan.md](notes/step6-plan.md). Not blocking anything — deprioritized behind the §8.5 gate measurement |
 | 7 | Golden set — 100 hand-labeled articles | ✅ **done**, `relevance` fully re-labelled 2026-08-12 after a mid-run definition change |
 | 8 | Model adapter + bake-off | ✅ **done 2026-08-12** — `gpt-5.1` selected, see [Current status](#current-status) above |
 | 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |
-| 10 | Report renderer + delivery | ✅ vault + email live; 8 briefings rendered, 2026-08-03..2026-08-11 |
+| 10 | Report renderer + delivery | ✅ vault + email live; 10 briefings rendered, 2026-08-03..2026-08-12 |
 | 11 | Daily collection + report workflow | ✅ **full cloud round trip 2026-08-06** — 5 collectors, render, email, commit |
 | 12 | Schedule burn-in | 🟡 **in progress** — cron fires unattended; delivery 42.6% of declared runs (2026-08-03..07) |
 | 13 | Two-week gate | ⬜ **clock starts 2026-08-12, read 2026-08-26** — pinned in PREREGISTRATION §8.5 |
@@ -399,15 +399,19 @@ These are Ricky's, in the order they will be needed. Full detail in
 
 | # | Task | Est. time | Blocks |
 |---|---|---|---|
-| 1 | Embedding dependency decision (`sentence-transformers`) | judgment | Step 6, and therefore `news_polarity` |
+| 1 | Sign off on the ~$3.60 one-time gate-measurement spend | judgment | PREREGISTRATION §8.5's 4th 2-week-gate criterion — [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
 | 2 | `rev_4w` data source decision | judgment | The one rating feature besides `news_polarity` with no source |
 | 3 | `config/rating.yaml` calibration | 30 min | Trustworthy ratings (do *after* the 2-week gate) |
 | 4 | KIS application | 15 min | Real-time quotes only; blocks nothing today |
 
 Credentials, the `.env` fixes, the watchlist, the Alpaca switch, the alias
-dictionary, the golden set, and the model bake-off are all done — `gpt-5.1`
-was selected 2026-08-12. Nothing blocks step 6 except the dependency decision
-above.
+dictionary, the model bake-off, and the `sentence-transformers` dependency
+decision are all done. **Nothing blocks step 6 any more, and step 6 no longer
+blocks anything either** — `src/entity/resolve.py` alone already produces
+92–148 (article, ticker) pairs/day, inside SPEC §6.1's own 60–100 target band.
+The next priority is the gate measurement above, not step 6; see
+[notes/step6-plan.md](notes/step6-plan.md)'s "Priority" section for why the
+order flipped 2026-08-13.
 
 The `relevance` re-labelling that used to be the open item here is finished
 too, and it earned its place: three models failing the same correlation bar
@@ -423,8 +427,7 @@ H1 (rating archive) and H2 (phantom weights) were fixed on 2026-08-08. M1
 (news-failure reporting) is now partly closed: a failed check in the standalone
 news run exits non-zero, so GitHub mails the failure instead of leaving it in a
 log nobody reads — the detail still requires opening the run. L1 remains and
-costs nothing. The dedup half of step 6 needs no golden set either, only a
-decision on a local embedding dependency.
+costs nothing.
 
 ---
 
