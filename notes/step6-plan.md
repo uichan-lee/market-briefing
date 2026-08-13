@@ -1,10 +1,16 @@
 # Step 6 — embedding pipeline: plan
 
-Written before implementation, on 2026-08-12. SPEC §12 step 6, SPEC §6.1 Stage 1.
-Steps 7 and 8 (golden set, bake-off) finished the same day — `gpt-5.1` selected
-for Stage 2 scoring — which is why this step is next: it is the last thing
-standing between the deterministic pipeline that already runs daily and a
-working `news_polarity`.
+Written before implementation, on 2026-08-12, revised 2026-08-13 after a
+`/project-review` pass found three of the original version's load-bearing
+claims did not hold up against the repo. This version corrects them rather
+than editing quietly — see "What changed from the first version" at the
+bottom, so the wrong claims stay visible instead of disappearing.
+
+SPEC §12 step 6, SPEC §6.1 Stage 1. `sentence-transformers` was added
+2026-08-12 as an optional `embed` extra (`pyproject.toml`), so the dependency
+decision that blocked starting this is resolved. **This step is not on the
+critical path for anything** — see "Priority" below, corrected from the first
+version's claim that it was.
 
 ## What this has to produce
 
@@ -18,43 +24,48 @@ exercised so far only by the bake-off). Two things do the cutting:
    similarity on `bge-m3` embeddings (threshold 0.92, SPEC §6.1 — an initial
    value, "to be tuned against the golden set"), keep one representative per
    cluster.
-2. **Relevance filter.** Embed a per-ticker profile sentence (SPEC §6.1: "against
-   ticker profile sentences" — the exact sentence template is not yet
-   specified and is this step's first open question, see below) and cut the
-   bottom tail of article-to-profile similarity.
+2. **Topicality filter** (renamed from "relevance filter" — see the design
+   section below for why the name matters). Embed a per-ticker profile
+   sentence and cut the bottom tail of article-to-profile similarity.
 
-## Dependency decision — this step's actual blocker
+## Priority — corrected
 
-`sentence-transformers` is SPEC §3's named choice for running `bge-m3` locally,
-but it has not been added to `pyproject.toml` yet — CLAUDE.md's rule is
-"dependencies are added when the code that needs them is written," and this is
-that code. Per CLAUDE.md, adding it needs Ricky's go-ahead with a stated
-reason before the first line of `src/embed/` is written. That is
-[README's blocking-work item 1](../README.md#whats-blocking-progress) and the
-actual reason step 6 hasn't started yet — not effort, a decision.
+The first version of this plan said step 6 was "the last thing standing
+between the deterministic pipeline and a working `news_polarity`." That was
+wrong. Measured against the live corpus: `src/entity/resolve.py` alone already
+produces **92–148 (article, ticker) pairs/day** (mean ~108) — inside SPEC
+§6.1's own 60–100 target band without any filtering. `src/llm/score.py`
+already exists and is exercised by the bake-off. Nothing blocks running Stage
+2 today, unfiltered, at roughly $4/month (gpt-5.1, measured rate) — inside
+Ricky's stated cost tolerance.
 
-## Why the 두산 alias fix belongs to this step, not a separate one
+So step 6 is a **cost and quality optimization on an already-runnable path**,
+not a blocker. What actually has a deadline is PREREGISTRATION §8.3's 2-week
+gate criterion (inter-model polarity correlation on the live window,
+2026-08-12 → 2026-08-26) — see
+[`notes/gate-inter-model-plan.md`](gate-inter-model-plan.md), which is now
+the higher-priority item. This step follows it.
 
-`config/aliases.yaml:73-79` already documents a live, measured defect: 두산
-(000150)'s alias config carries **~27% noise** from baseball-team headlines,
-because for this one ticker the group name *is* the company name and cannot be
-excluded by `exclude:`/`ambiguous_parents:` the way every other ambiguous name
-in that file is handled. The alias file itself names the fix: it needs
-**relevance scoring**, which does not exist anywhere in this repository until
-this step builds it.
+## Why the 두산 alias claim was wrong, and what actually happened instead
 
-So this is not two projects that happen to share a ticker. **The relevance
-filter's ability to push 두산 sports coverage below the cut is a real exit
-criterion for step 6**, not a nice-to-have:
+The first version claimed `config/aliases.yaml:73-79` documented "~27% noise"
+from 두산 (000150) baseball coverage that only this step's relevance scoring
+could fix, and made removing that noise an exit criterion. **Neither the
+number nor the file existed as described.** The 27% traced to a different
+measurement entirely — the sports share of a since-retired site-wide feed
+(`config/news_feeds.yaml`'s old `chosunbiz` entry), fixed on 2026-08-05 by
+switching to section feeds. Re-measured against the live corpus for
+2026-08-06..12 (after that fix): **8 matches on 000150, zero baseball.**
 
-- Before: measure 두산's current noise rate precisely (README/Lens B cited
-  ~27%; get the exact current figure from `scripts/config_helper.py audit` on
-  today's collected corpus before writing any embedding code, so there's a
-  real baseline rather than a remembered one).
-- After: run the same audit through the relevance filter and report the new
-  rate. If it does not drop materially, that is a finding about the profile
-  sentence design (see open question 1 below), not a reason to ship anyway and
-  hope entity resolution alone will paper over it.
+The actual residual noise (apartment-brand and affiliate-abbreviation
+mismatches, not sports) was fixed the same way every other alias defect in
+that file is fixed — four lines added to `exclude:`, 2026-08-13, verified
+against the corpus: 8 matches → 4, and all 4 survivors are genuine 000150
+coverage. No embedding involved, and none was needed. **This step carries no
+두산-shaped exit criterion.** The general lesson stands: a topicality filter
+should reduce cross-domain noise (a sports article, a real-estate article) as
+a side effect of doing its actual job, but it is not owed credit for fixing a
+defect a four-line config edit already closed.
 
 ## Design decisions
 
@@ -65,14 +76,83 @@ construction (SPEC §4's ambiguous-bucket sampling did not filter for this).
 Measure pairwise cosine similarity within known-duplicate pairs before
 picking a final threshold, rather than shipping 0.92 unverified.
 
-**The relevance filter's cut point is a golden-set question, same as the dedup
-threshold.** Cutting "the bottom tail" needs a percentile or absolute
-threshold — SPEC does not fix one. `data/golden/v1.jsonl`'s `relevance`
-dimension (100 examples, hand-labelled, the same file the bake-off measures
-models against) is the ground truth to calibrate against: articles Ricky
-scored ≤0.3 relevance should mostly fall below whatever cut point Stage 1
-picks, or Stage 1 is discarding signal Stage 2 would have used, or letting
-noise through that Stage 2 pays to re-reject.
+**Dedup clusters within a ticker's article set, after entity resolution —
+already settled, not open.** The first version listed this as an open
+question; it isn't. SPEC's Stage 0 → Stage 1 ordering already implies it, and
+`config/news_feeds.yaml:29-33` states the mechanism directly: outlets vary
+wildly in body length (한국경제/조선비즈 0 chars, 뉴시스 ~1,155 chars) *"so
+SPEC §6.1's clustering will group a 한국경제 headline with a 뉴시스 item
+carrying the full body, and the cluster representative can be the latter."*
+That is the representative-selection rule: **prefer the cluster member with
+the longest `description`.**
+
+**The length asymmetry is the actual open question the first version missed.**
+A cosine threshold of 0.92 between a 0-character headline-only embedding and a
+1,155-character full-body embedding of the same story will rarely clear 0.92
+— short and long representations of identical content are not neighbors in
+embedding space the way two paraphrases of similar length are. This needs
+resolving before the threshold means anything: either embed title-only for
+every outlet (throws away 뉴시스/머니투데이's extra signal) or find a
+similarity measure that tolerates the asymmetry (e.g. compare against the
+shorter text truncated to the longer one's opening, or weight title similarity
+higher than body similarity). Calibrate against real cross-outlet duplicate
+pairs in the golden set's triage sample, not against intuition.
+
+**The topicality/materiality split — this is the substantive correction.**
+The first version's design decision said: *"articles Ricky scored ≤0.3
+relevance should mostly fall below whatever cut point Stage 1 picks."* That
+assumes cosine similarity to a ticker profile sentence measures the same thing
+`v1.jsonl`'s `relevance` dimension does. **It does not, and on the corpus's
+largest noise class the two run in opposite directions.**
+
+`relevance` was redefined 2026-08-07 and fully re-labelled 2026-08-12 to mean
+*이 회사의 손익에 얼마나 닿나* — does this touch the company's P&L
+(`src/llm/prompts/v1_scoring.md`). Its own anchor: *"수급·매매동향은 주가
+얘기지만 손익에는 닿지 않는다 — 0.0~0.3."* But a 수급 article ("삼성전자
+주가 급등, 외국인 순매수") is maximally *topical* to a 삼성전자 profile
+sentence — cosine similarity would score it high while the golden set scores
+it low by design. Forcing a single threshold to satisfy both constructs
+produces a bad cut point in one direction or the other.
+
+**Resolution: split the two constructs instead of conflating them.**
+- **Stage 1 filters on topicality only** — is this article about this company
+  at all (namesake, brand, passing mention, wrong-company analyst coverage),
+  the thing `bge-m3` similarity is actually good at. Calibrate against a
+  *new*, small, purpose-built topicality label set — not `v1.jsonl`.
+- **Stage 2 keeps materiality**, exactly as it already does. `relevance`'s
+  output is already used as a weight in SPEC §2.2③'s relevance-weighted
+  polarity average, so a topical-but-immaterial article that survives Stage 1
+  is already down-weighted toward zero downstream. Stage 1 does not need to
+  replicate that job.
+- **Why not calibrate Stage 1 against `v1.jsonl` even loosely:** doing so
+  reads the golden set rather than writing to it, so it does not violate the
+  no-model-touches-labels rule. But SPEC §7.3 requires the set to represent
+  25 irrelevant / 25 ambiguous / 25 negative / 25 positive examples of the
+  *unfiltered* corpus, and the §7.4 bake-off's correlation numbers — the ones
+  that just selected `gpt-5.1` — were measured against that unfiltered
+  distribution. A production filter tuned to match the golden set's
+  low-relevance tail would start silently removing the kind of article the
+  golden set was built to represent, making the set describe a corpus
+  production no longer sees. Keeping the two calibration sets separate avoids
+  this.
+
+**`bge-m3`'s HuggingFace revision must be pinned, not referenced by name
+only.** Currently referenced only as `BAAI/bge-m3` — in `config/models.yaml`,
+in this plan, and in `report.yml`'s cache key (`huggingface-bge-m3`). HF repos
+are mutable; an unpinned revision plus a hard 0.92 threshold means a silent
+upstream model update could shift cluster membership with no record of why.
+This stage's entire justification (SPEC §6.1) is being "100% reproducible" —
+an unpinned revision undermines the one property that justifies the stage's
+existence. Pin a specific commit hash when the code is written.
+
+**Cross-platform float determinism is a live risk, not a hypothetical.** The
+same 0.92 threshold runs on two architectures — Mac arm64 (Ricky, local
+testing) and ubuntu x86_64 (`report.yml`, production). Floating-point
+embedding output can differ by ~1e-6 between them; near a hard threshold,
+that is enough to flip cluster membership for borderline pairs. Either accept
+this as noise (and widen the threshold's effective margin) or note it as a
+known non-determinism and report it, rather than assuming embeddings computed
+on two platforms are bit-identical.
 
 **Output schema.** SPEC §3.3 pattern (raw + gitignored derived data) suggests
 `data/embeddings/YYYY-MM-DD.parquet` follows the same convention as
@@ -81,44 +161,77 @@ noise through that Stage 2 pays to re-reject.
 collector; do not add a new committed path without the same
 `# UNVERIFIED`-grade justification `data/bakeoff/` and `data/golden/` needed.
 
-**Look-ahead.** Same discipline as every other feature: an article is only
-usable once its publication timestamp has passed, and Stage 1 must not embed
-or cluster using anything timestamped at or after the `as_of` boundary it is
-computing for. This is not new to this step, but it is the first step where
-"the article" rather than "the price bar" is the thing being time-boundaried,
-so the existing `next_tradeable_open()` logic in `src/util/session.py` needs
-an explicit read-through before Stage 1 is wired to the daily run, not an
-assumption that it obviously applies.
+**Look-ahead — already solved, not open.** The first version flagged this as
+needing "an explicit read-through" of `src/util/session.py`; it's done and
+in production already. `src/collectors/kr_news.py:479` computes
+`known_at_utc = next_tradeable_open("KR", published_at)` per article at
+collection time and stores it on every raw record. Stage 1 reads that
+existing field; it does not need new look-ahead logic of its own.
+
+**Does the relevance/topicality cut feed `news_volume_z` /
+§2.2② `news_spike`?** SPEC §5 defines the article count for those features as
+"after deduplication" — not after the topicality filter. If the topicality
+cut also removes articles from that count, a live rating flag's meaning
+changes. Decide and document before wiring either feature to Stage 1's output.
+
+## What text gets embedded — the open question the first version missed
+
+`config/news_feeds.yaml`'s per-outlet `description` length varies from 0
+chars (한국경제, 조선비즈) to ~1,155 (뉴시스). Title-only embedding is
+consistent across outlets but throws away the extra signal long-description
+outlets carry; title+description is richer but directly causes the length-
+asymmetry dedup problem above. This decides both dedup and topicality
+filter behavior first-order and needs settling before either is implemented,
+not left to fall out of whatever's convenient to code.
 
 ## Open questions — flagged rather than guessed
 
-1. **The ticker profile sentence's exact content is unspecified.** SPEC §6.1
-   says "against ticker profile sentences" and nothing else. A one-line
-   template ("{종목명}, {업종} 기업, 코드 {ticker}") is the obvious starting
-   point but has not been validated against the golden set's relevance labels.
-   This is the single highest-leverage open question — a bad profile sentence
-   makes the relevance filter noise, and the 두산 exit criterion above cannot
-   be judged until this is settled.
-2. **Whether dedup runs before or after entity resolution.** SPEC's diagram
-   puts Stage 0 (entity matching) before Stage 1 (embedding), which resolves
-   which ticker an article is about before dedup runs — meaning duplicate
-   detection should cluster within a ticker's article set, not across the
-   whole day's corpus. Confirm this reading before implementing; clustering
-   across tickers first would risk collapsing two different companies'
-   coverage of the same macro event into one representative.
-3. **`sentence-transformers` model download and offline-test story.** `bge-m3`
-   is a multi-GB download. `tests/fixtures/` holds committed sample payloads
-   per CLAUDE.md's testing convention — decide whether embedding-pipeline
-   tests use committed precomputed embedding vectors (fast, no model download
-   in CI) or a smaller stand-in model, before writing the test suite, not
-   after hitting CI timeouts.
+1. **What text is embedded** (title-only vs title+description) — see above,
+   highest-leverage open question, unresolved.
+2. **`sentence-transformers` model download and offline-test story.** `bge-m3`
+   is a multi-GB download. No CI workflow runs `pytest` — `.github/workflows/`
+   holds only `collect-news.yml` and `report.yml`, neither of which tests —
+   so this is purely about Ricky's Mac, where the model downloads once and
+   stays cached regardless of the fixture strategy. `tests/fixtures/`'s
+   existing convention (committed sample payloads, per CLAUDE.md) still
+   applies, but there is no CI-timeout pressure driving the decision the way
+   the first version of this plan assumed.
+3. **Whether the topicality cut affects `news_volume_z`'s "after deduplication"
+   article count** — see the design-decisions section above.
 
 ## Scope boundary
 
 Builds `src/embed/encode.py`, `src/embed/dedup.py`, `src/embed/relevance.py`
-with offline tests, using committed fixtures per the open question above.
-Does **not** wire Stage 1 into `scripts/collect_daily.py`'s daily run, build
-the LLM synthesis stage (§2.2⑤/⑧), or touch `src/report/consistency.py`'s
-wiring into `render.py` — that is a separate, already-flagged item
-([MANUAL-TASKS §10](../MANUAL-TASKS.md)) that depends on this step's output
-existing, not on this step's code.
+(or renamed to reflect the topicality/materiality split above —
+`src/embed/topicality.py` may be the more honest name) with offline tests,
+using committed fixtures per the open question above. Does **not** wire Stage
+1 into `scripts/collect_daily.py`'s daily run, build the LLM synthesis stage
+(§2.2⑤/⑧), or touch `src/report/consistency.py`'s wiring into `render.py` —
+that is a separate, already-flagged item ([MANUAL-TASKS
+§10](../MANUAL-TASKS.md)) that depends on this step's output existing, not on
+this step's code. Also does not build
+[`notes/gate-inter-model-plan.md`](gate-inter-model-plan.md)'s live-sampling
+work, which precedes this step in priority and needs none of it.
+
+## What changed from the first version (2026-08-12 → 2026-08-13)
+
+A `/project-review` direction-lens pass found three claims that did not hold
+up against the repo, corrected above rather than silently:
+
+1. **Priority claim was wrong.** "Step 6 is the last thing blocking
+   `news_polarity`" — false; entity resolution alone already produces pairs in
+   SPEC's target band. Corrected in "Priority" above, and step 6 was
+   deprioritized behind `notes/gate-inter-model-plan.md`.
+2. **The 두산 exit criterion's evidence didn't exist.** The cited "~27% noise"
+   in `config/aliases.yaml:73-79` was a different measurement from a different
+   file, about a defect already fixed 2026-08-05. Corrected above; the actual
+   residual noise was fixed by a four-line alias edit, not embeddings.
+3. **The relevance-filter calibration target measured the wrong construct.**
+   Cosine-similarity topicality and the golden set's P&L-materiality
+   `relevance` are different things and anti-correlated on the corpus's
+   largest noise class. Corrected via the topicality/materiality split above.
+
+Two open questions from the first version were also resolved on
+re-examination (dedup ordering — already answered by `config/news_feeds.yaml`;
+look-ahead — already built into `kr_news.py`), and two new ones were added
+(what text to embed; whether the topicality cut affects `news_volume_z`).
