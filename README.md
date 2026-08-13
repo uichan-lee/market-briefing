@@ -10,6 +10,29 @@ This system does not execute trades. It produces a document a human reads and ac
 
 한국어: **[README.ko.md](README.ko.md)**
 
+<table>
+<tr>
+<td>
+
+**Read this first**
+[The short version](#the-short-version) · [What the output looks like](#what-the-output-actually-looks-like) · [Why it is built this way](#why-it-is-built-this-way)
+
+</td>
+<td>
+
+**How it works**
+[Pipeline](#how-the-pipeline-works) · [Rating](#how-the-rating-works) · [The AI guard](#how-the-ai-commentary-stays-honest)
+
+</td>
+<td>
+
+**Is it any good?**
+[Evaluation](#evaluation-and-what-a-failed-measurement-looks-like) · [Project status](#project-status) · [Repo map](#repository-map)
+
+</td>
+</tr>
+</table>
+
 ---
 
 ## The short version
@@ -77,6 +100,7 @@ Five rules shape every decision in the repository.
 - No auto-generated ticker aliases. A wrong alias corrupts every downstream number silently; a missing one only loses coverage.
 - No real-money trading before the 3-month evaluation gate passes.
 
+> [!IMPORTANT]
 > **Opinion vs. execution.** These are different things and the project takes both seriously. Stating 강한 매수 with cited evidence is the product. Placing the order is not, and never becomes so.
 
 ---
@@ -236,6 +260,7 @@ market-briefing/
 
 **`src/util/config.py`** — Loading is also validation. It rejects the mistakes that are easy to make by hand and impossible to spot later: an alias claimed by two different tickers, an alias that also appears in its own exclude list, unquoted tickers, and out-of-order rating cut points.
 
+> [!WARNING]
 > **The unquoted-ticker trap.** YAML reads a bare leading-zero number as octal, so an unquoted `000660` (SK하이닉스) silently becomes the integer `432`. `005930` survives only because `9` is not a valid octal digit — which makes the failure inconsistent and very easy to miss. Always quote tickers; the loader rejects unquoted ones with an explanatory error.
 
 </details>
@@ -297,6 +322,7 @@ With the history in place the features stopped being `NaN` — counts measured t
 | `rel_strength_20d` | 18,368 | 11,816 |
 | `valuation_band` | 0 | 0 |
 
+> [!NOTE]
 > `short_ratio`'s counts predate the 2026-08-13 disclosure-lag fix and are left as measured. The feature now carries the balance disclosed by each session rather than the one recorded against it, which costs the first three sessions of each ticker's history — 31 rows across the archive.
 
 `valuation_band` is empty because it needs 756 sessions and the window is still short of that. 454910 is exactly **40 sessions** behind every other ticker because it listed on 2023-10-05, 40 sessions after the window opens, which is history that does not exist rather than history that is missing.
