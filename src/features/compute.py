@@ -35,6 +35,15 @@ Even so it needs 756 sessions and the stored window is still short — 732 as of
 late. Extending the backfill to four years only brings that forward. Until then
 the feature is absent and the other four carry 0.70 of the 0.75 in ``weights``.
 
+**``short_ratio`` carries a disclosure lag, and that lag is a second look-ahead
+boundary.** KRX publishes a session's short-sale balance about three sessions
+later, so the balance stored against session ``D`` was not knowable on ``D``.
+``known_at_utc`` cannot express that — it is stamped once per row, at the
+session close, for every column alike — so :func:`_visible` does not catch it
+and never could. The lag is therefore applied here, in the feature definition;
+see :func:`compute`. Anyone reading :func:`_visible` and concluding that the
+look-ahead boundary is handled in one place is reading half of it.
+
 **Nothing here has been verified against real data by its author.** The tests
 are offline and use synthetic frames.
 """
@@ -47,6 +56,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.collectors.kr_flow import SHORT_LAG_SESSIONS
 from src.features.normalize import WINDOW, rolling_percentile, rolling_z
 from src.util.config import WatchlistEntry
 from src.util.session import to_utc
@@ -125,12 +135,14 @@ def compute(
     as_of: pd.Timestamp | None = None,
     window: int = WINDOW,
     valuation_window: int = VALUATION_WINDOW,
+    short_lag: int = SHORT_LAG_SESSIONS,
 ) -> pd.DataFrame:
     """Compute every feature and its z-score, one row per (ticker, session).
 
     ``as_of`` is the look-ahead boundary and is not optional in spirit: passing
     ``None`` means "no boundary" and suits only a historical rebuild, where the
-    boundary is applied when the features are consumed.
+    boundary is applied when the features are consumed. It is not the *only*
+    boundary — ``short_lag`` is the other; see ``short_ratio`` below.
 
     The returned frame carries both ``{feature}`` and ``{feature}_z``. ``rate()``
     needs only the z-score, but the MANUAL-TASKS §6 calibration cannot judge
@@ -165,7 +177,35 @@ def compute(
         out[name] = _ratio(net, turnover)
 
     # --- short interest ---------------------------------------------------
-    out["short_ratio"] = _ratio(flow["short_balance"], flow["shares_outstanding"])
+    # KRX discloses a session's short balance about three sessions later, so the
+    # balance stored against session D was not knowable on D. Two consequences,
+    # and this shift is the single fix for both:
+    #
+    #   Without it the rated session — always the newest one, whose balance has
+    #   not published — divides by a missing numerator and yields NaN. Measured
+    #   2026-08-13: short_ratio was absent from all 31 tickers of 5 of the 6
+    #   sessions published to that date, the exception being 2026-08-03, which
+    #   was computed off the backfill. That is 0.10 of the 0.75 live weight.
+    #
+    #   And the historical series read the balance on the session it describes
+    #   rather than the session it was published on, which is look-ahead — the
+    #   backtest kind, invisible today because nothing has computed a return yet.
+    #
+    # The ratio is formed on its own session and *then* shifted, rather than
+    # shifting the numerator alone. A D−3 balance over a D share count mixes two
+    # dates and stops corresponding to KRX's own published 비중, which kr_flow
+    # stores beside it precisely so the derived value can be checked against it.
+    #
+    # `short_lag` defaults to kr_flow.SHORT_LAG_SESSIONS, where the same number
+    # means "how many recent sessions the missing-ratio check must forgive".
+    # One number, two roles, because both descend from one fact about KRX rather
+    # than by coincidence — imported rather than copied so they cannot drift. If
+    # the two ever need to differ, split them then.
+    #
+    # Rows inside the first `short_lag` sessions of a ticker's history stay NaN:
+    # absent rather than approximated, the same stance valuation_band takes.
+    ratio = _ratio(flow["short_balance"], flow["shares_outstanding"])
+    out["short_ratio"] = ratio.groupby(flow["ticker"], observed=True).shift(short_lag)
 
     # --- valuation --------------------------------------------------------
     # Already normalized; see the module docstring. Inverted so cheap is

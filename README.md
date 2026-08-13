@@ -56,7 +56,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | `us_price` over Alpaca | ✅ Done | The US source in use. SIP confirmed on the free plan; **48 symbols in 2 requests** where Tiingo needed 48 |
 | `kr_flow` collector (pykrx) | ✅ Done | Investor flows, short interest, cap, fundamentals — **the 55% of rating weight KRX was gating**. Six checks incl. an accounting identity and a cross-collector price check |
 | Entity resolution (`src/entity/resolve.py`) | ✅ Done | Alias-driven, ambiguous bucket reported in the header — running at 7.9% of 1,013 articles |
-| Feature computation (`src/features/compute.py`) | ✅ Done | 5 of the 7 weighted features; 252-day rolling z-score per ticker |
+| Feature computation (`src/features/compute.py`) | ✅ Done | 5 of the 7 weighted features; 252-day rolling z-score per ticker. `short_ratio` carries KRX's ~3-session disclosure lag since 2026-08-13 — before that it reached no published rating at all |
 | Report renderer + delivery (`src/report/`, `src/notify/`) | ✅ Done | SPEC §2 sections, `vault` + `email`, HTML mail with a `text/plain` alternative |
 | GitHub Actions workflow | ✅ Done | `collect-news.yml` hourly, `report.yml` morning ×3 + evening; live since 2026-08-03 |
 | Golden set (100 hand-labeled articles) | ✅ Done | 100 examples × 5 dimensions, `relevance` fully re-labelled 2026-08-12 after a mid-run definition change; `verify` reports zero conflicts. `forwardness`'s ±0.13 floor ([PREREGISTRATION §8.3](PREREGISTRATION.md)) predates the redo and needs re-measuring |
@@ -72,6 +72,11 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 
 > [!note]
 > **The outer buckets are now harder to reach, and that is unresolved.** The composite's scale tracks total weight, so `강한 매수`/`강한 매도` begin at a uniform z of **2.67** where they began at 1.82. Rescaling the cut points is permitted by §8.4 for distributional reasons, but doing it inside the same change that moved the scale would have made the two indistinguishable afterwards. Left as measured, and pinned by `test_the_outer_bucket_needs_a_z_of_two_point_seven`. It belongs with the calibration in [MANUAL-TASKS §6](MANUAL-TASKS.md).
+
+**`short_ratio` had never once entered a published rating, and now does (2026-08-13).** KRX discloses a session's short-sale balance about three sessions later, and `src/features/compute.py` divided `short_balance` by `shares_outstanding` **on the same row** — so on the newest session, which is the only one a rating is ever computed for, the numerator was always absent. The feature is missing from all 31 tickers of **5 of the 6 published sessions**; only the 2026-08-03 run, computed off the backfill, carried it. That is 0.10 of the 0.75 live weight, presented as working by this file's own status table and by the report header. The same defect ran backwards through history: each session's balance was read on the session it describes rather than the session it was published on, which is look-ahead — `known_at_utc` is stamped once per row at the session close for every column alike, so `_visible()` cannot express a per-column lag and never could. **The ratio is now formed on its own session and shifted forward by the disclosure lag, per ticker.** Nothing under `data/raw/` was touched and no KRX request was re-issued: the archive already self-repairs, because `collect_daily.py` re-fetches an 8-day catch-up window every run and writes a `-vN` when a stored date gains rows. Measured over the current archive, recomputing both ways: weight coverage on the two sessions whose balance is still undisclosed rises **0.768 → 0.901**, and labels move on 2, 3, 0, 2, 9 and 4 of 31 tickers for 2026-08-03, 06, 07, 10, 11 and 12. Logged in [PREREGISTRATION §R](PREREGISTRATION.md).
+
+> [!note]
+> **The look-ahead boundary is now enforced in two places, not one.** `_visible()` filters whole rows on `known_at_utc`; the short-balance lag lives in the feature definition because a single per-row timestamp cannot carry a per-column disclosure delay. `compute.py`'s docstring says this outright, so that reading `_visible()` alone does not leave the impression the boundary is handled in one place. A separate defect found in the same pass and **not** fixed here: `src/report/render.py` calls `compute(..., as_of=None)`, which makes `_visible()` inert in production. Live ratings do not read the future today — `collect_daily.py`'s `kr_end` clamps the fetch window first — but the guard is doing nothing, and it will matter the moment `src/eval/ic.py` reconstructs a past `as_of`. It is the first prerequisite of that work.
 
 **The news collector's alarm was pointing the wrong way, and is fixed (2026-08-10).** Five consecutive `collect-news` runs mailed a failure on the night of 2026-08-08 and none of them had lost anything. `last_run_at` reads the run clock off the last written filename, but a run with no new articles wrote no file — so through the quiet Korean night `check_collection_gap` measured time since the last *article* and reported 2.9h, 3.8h, 5.0h, 5.8h for a collector firing on schedule, while `check_feed_continuity` passed on every one. The same conflation ran the other way in the exit code, which consulted the report only when the frame was empty: a run that stored articles with a feed timed out — unmeasured, unrecoverable loss — exited 0 and stayed silent. **Runs now always write what they collected, empty or not, and the exit code reports validation and nothing else.** The commit step became `if: always()`, without which the new alarm would have skipped the commit and destroyed the articles it was warning about.
 
@@ -347,6 +352,13 @@ same day, and they grow by one session per ticker per KRX day since:
 | `short_ratio` | 22,528 | 14,408 |
 | `rel_strength_20d` | 18,368 | 11,816 |
 | `valuation_band` | 0 | 0 |
+
+> [!note]
+> `short_ratio`'s counts predate the 2026-08-13 disclosure-lag fix below and are
+> left as measured. The feature now carries the balance disclosed by each
+> session rather than the one recorded against it, which costs the first three
+> sessions of each ticker's history — 31 rows across the archive, not enough to
+> move the column above.
 
 `valuation_band` is empty because it needs 756 sessions and the window is still
 short of that — see the parked decisions below. 454910 is exactly **40 sessions**

@@ -19,6 +19,7 @@ import pytest
 
 from src.features.compute import (
     FEATURES,
+    _ratio,
     compute,
     load_raw,
     z_scores_for,
@@ -192,11 +193,78 @@ def test_a_ticker_that_did_not_trade_gives_none_not_zero():
     assert out["foreign_flow_5d"].isna().all()
 
 
-def test_short_ratio_is_balance_over_shares_outstanding():
+def test_short_ratio_is_balance_over_shares_outstanding_from_the_disclosed_session():
+    """The ratio is formed on its own session, then carried forward by the lag.
+
+    Not `balance ÷ shares` on the same row: KRX publishes a session's balance
+    about three sessions later, so row D reports what was disclosed by D — the
+    figure for D − `short_lag`. `flow_frame` counts `short_balance` up from 100,
+    so row 3 must read row 0's value.
+    """
     days = sessions(5)
     flow = flow_frame(["005930"], days)
-    out = compute(flow, pd.DataFrame(), watchlist(("005930", "반도체")), window=2)
-    assert out.iloc[0]["short_ratio"] == pytest.approx(100 / 10_000)
+    out = compute(flow, pd.DataFrame(), watchlist(("005930", "반도체")), window=2, short_lag=3)
+    assert out.iloc[3]["short_ratio"] == pytest.approx(100 / 10_000)
+    assert out.iloc[4]["short_ratio"] == pytest.approx(101 / 10_000)
+
+
+def test_short_ratio_survives_the_undisclosed_recent_sessions():
+    """The defect this lag exists to fix, pinned.
+
+    Every rating is computed on the newest session, whose short balance has not
+    published — so before 2026-08-13 `short_ratio` was NaN on every rating ever
+    written, and 0.10 of the 0.75 live weight was silently absent. The lag makes
+    the newest row read the newest *disclosed* balance instead.
+    """
+    days = sessions(10)
+    flow = flow_frame(["005930"], days)
+    flow.loc[flow.index[-3:], "short_balance"] = pd.NA  # the undisclosed tail
+
+    out = compute(flow, pd.DataFrame(), watchlist(("005930", "반도체")), window=2, short_lag=3)
+    assert out.iloc[-1]["short_ratio"] == pytest.approx(106 / 10_000)
+    assert out["short_ratio"].tail(3).notna().all()
+
+
+def test_short_ratio_never_reads_a_balance_disclosed_after_its_own_session():
+    """Look-ahead, stated as the property rather than as an example.
+
+    `known_at_utc` is stamped once per row at the session close, so `_visible`
+    cannot express a per-column disclosure lag — this is the only thing standing
+    between the stored balance and a feature that reads the future.
+    """
+    days = sessions(12)
+    flow = flow_frame(["005930"], days)
+    out = compute(flow, pd.DataFrame(), watchlist(("005930", "반도체")), window=2, short_lag=3)
+
+    disclosed = _ratio(flow["short_balance"], flow["shares_outstanding"]).to_numpy()
+    for row in range(3, len(days)):
+        assert out.iloc[row]["short_ratio"] == pytest.approx(disclosed[row - 3])
+
+
+def test_short_ratio_is_absent_rather_than_approximated_before_the_lag_clears():
+    """A ticker's first `short_lag` sessions have no disclosed balance yet.
+
+    Absent, not forward-filled from nothing and not zero — the stance
+    `valuation_band` already takes on a window it cannot fill.
+    """
+    days = sessions(5)
+    flow = flow_frame(["005930"], days)
+    out = compute(flow, pd.DataFrame(), watchlist(("005930", "반도체")), window=2, short_lag=3)
+    assert out["short_ratio"].head(3).isna().all()
+
+
+def test_the_short_lag_does_not_leak_across_tickers():
+    """The shift is per ticker. Sharing it would hand 005930's balance to 000660."""
+    days = sessions(6)
+    flow = flow_frame(["005930", "000660"], days)
+    flow.loc[flow["ticker"] == "000660", "short_balance"] = 900
+
+    out = compute(
+        flow, pd.DataFrame(), watchlist(("005930", "반도체"), ("000660", "반도체")), window=2
+    )
+    other = out[out["ticker"] == "000660"]["short_ratio"]
+    assert other.head(3).isna().all()
+    assert other.tail(3).eq(900 / 10_000).all()
 
 
 def test_valuation_band_is_positive_when_pbr_is_cheap():
