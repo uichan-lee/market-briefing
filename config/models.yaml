@@ -50,11 +50,23 @@ scoring:
   # gives daily complimentary tokens for sharing traffic — up to **250K
   # tokens/day** shared across {gpt-5.4, gpt-5.2, gpt-5.1, gpt-5, gpt-4.1,
   # gpt-4o, o1, o3, ...}, up to **2.5M/day** across the mini/nano tier of the
-  # same generations. Ricky opted in. **None of gpt-5.6's tiers — sol, terra,
-  # or luna — are in either list.** This inverts the earlier price comparison:
-  # a model sharing gpt-5.1's free pool is not "dominated" by a cheaper-on-
-  # paper model that is not in the program at all, because inside the free
-  # cap the sticker price is moot for both.
+  # same generations. **None of gpt-5.6's tiers — sol, terra, or luna — are in
+  # either list.** This inverts the earlier price comparison: a model sharing
+  # gpt-5.1's free pool is not "dominated" by a cheaper-on-paper model that is
+  # not in the program at all, because inside the free cap the sticker price is
+  # moot for both.
+  #
+  # ⚠ **The sharing setting has not been confirmed on.** Ricky read the
+  # eligibility list off the dashboard and agreed to enrol; whether the toggle
+  # itself is on has not been checked since, and nothing in this repository can
+  # check it — see the closing note below. This matters more than it looks:
+  # on sticker price gpt-5.4 is **4.4× dearer** than gpt-5.1 ($0.0448 vs
+  # $0.0101 per valid signal, $0.00421 vs $0.00120 per call over the stored
+  # attempts), and MANUAL-TASKS §5's rule takes the cheapest passing candidate.
+  # The whole case for 5.4 over 5.1 is that inside the free pool both cost $0,
+  # so **if sharing is off, the rule selects gpt-5.1.** MANUAL-TASKS lists the
+  # check as a waiting item; do not treat this decision as settled until it
+  # comes back.
   #
   # Measured full-sample token use: gpt-5.1 averages 1,388 tokens/call
   # (1,310 in + 78 out, n=505), gpt-5.4 averages 1,374 (1,312 in + 62 out,
@@ -109,9 +121,20 @@ scoring:
   # `uv run python -m src.eval.bakeoff report` regenerates this table from
   # stored attempts — no API calls, so re-reading the decision costs nothing.
   #
-  # ── Not yet done: enabling the free-tier credit is an OpenAI account
-  # setting (Data Controls → Sharing), not a code change — nothing in this
-  # repo reads or depends on it. If usage grows past the ~77% mark and starts
+  # ── Not yet done, and it is what this whole decision rests on: confirming
+  # the free-tier credit is actually enabled. It is an OpenAI account setting
+  # (Data Controls → Sharing), not a code change — nothing in this repo reads,
+  # depends on, or can verify it, which is exactly why it needs a human check
+  # rather than a test. MANUAL-TASKS carries it as a waiting item; the ⚠ block
+  # in the scoring comment above states what changes if it comes back off.
+  #
+  # Worth stating once, because it is the price of the free tokens: sharing
+  # sends the scoring prompts — article title, description and ticker — to
+  # OpenAI for training. Every one is public RSS text that was already
+  # published, so nothing private leaves, but it is a real term of the trade
+  # and the cost argument above should not be read as if it were free of one.
+  #
+  # If usage grows past the ~77% mark and starts
   # spilling into paid overflow regularly, revisit whether a same-day
   # cheaper-model fallback (e.g. gpt-5.6-luna) is worth the added routing
   # complexity — deferred because scoring is not wired into
