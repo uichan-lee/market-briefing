@@ -99,6 +99,10 @@ class ReportInputs:
     # Empty is the normal state; a line here means one vendor changed its
     # adjustment handling and is worth reading.
     vendor_disagreements: Sequence[str] = ()
+    # The `data/` directory these inputs were loaded from. Carried rather than
+    # rediscovered so ⑦ reads the same archive the rest of the run did — a test
+    # pointing at a tmp_path must not have one section quietly read the real one.
+    root: Path = field(default_factory=lambda: Path("data"))
 
 
 # --- small helpers --------------------------------------------------------
@@ -751,6 +755,11 @@ def render_shadow(inputs: ReportInputs, history: pd.DataFrame | None) -> str:
     Rendered from day one anyway, holding the count of sessions recorded. A
     section that appears only once it has something to say is a section nobody
     knows is coming.
+
+    The construction is PREREGISTRATION §8.5's and is computed by
+    :mod:`src.eval.shadow_portfolio`; nothing about it is decided here. The
+    import is local because the briefing must still render if the evaluation
+    layer is broken — a failed P&L is a missing section, never a missing report.
     """
     lines = ["## ⑦ 섀도 포트폴리오", ""]
     sessions = 0 if history is None or history.empty else history["date"].nunique()
@@ -763,7 +772,42 @@ def render_shadow(inputs: ReportInputs, history: pd.DataFrame | None) -> str:
         ]
         return "\n".join(lines)
 
-    lines += [f"> 등급 이력 {sessions}일치 기록됨. 성과 계산은 SPEC §12 이후 단계입니다.", ""]
+    try:
+        from src.eval.shadow_portfolio import load, summary
+
+        stats = summary(load(inputs.root))
+    except (OSError, KeyError, ValueError) as exc:  # noqa: BLE001 - reported, not raised
+        lines += [f"> ⚠ 성과를 계산하지 못했습니다: {exc}", ""]
+        return "\n".join(lines)
+
+    if not stats["sessions"]:
+        lines += [
+            f"> 등급 이력 {sessions}일치 기록됨. PREREGISTRATION §8.5의 측정 창이 "
+            "2026-08-13에 열렸고, 한 세션은 등급과 그 다음 세션 수익률이 **둘 다** "
+            "있어야 들어갑니다. 아직 그런 세션이 없습니다.",
+            "",
+        ]
+        return "\n".join(lines)
+
+    portfolio, benchmark = stats["portfolio"], stats["benchmark"]
+    verdict = "앞섬" if stats["excess"] > 0 else "뒤짐"
+    lines += [
+        "> 상위 20% 동일가중 롱온리, 매 세션 다음 시가에 리밸런스. "
+        f"**{stats['sessions']}세션** 누적.",
+        "",
+        "| | 누적 수익률 |",
+        "|---|---:|",
+        f"| 섀도 포트폴리오 | {portfolio:+.2%} |",
+        f"| KODEX 200 매수후보유 | {benchmark:+.2%} |",
+        f"| **차이** | **{stats['excess']:+.2%}** ({verdict}) |",
+        "",
+        "> 수수료·거래세·슬리피지는 반영되지 않았습니다 (PREREGISTRATION §8.5가 6개월 "
+        "게이트로 미룬 항목). KODEX 200은 분배금이 가격에 반영되지 않아 벤치마크가 "
+        "그만큼 불리하게 잡힙니다 — **근소한 우위는 우위가 아닙니다.**",
+        "",
+        "> 이 계좌는 주문을 내지 않습니다 (SPEC §0 원칙 5). 3개월 게이트 판독은 2026-11-13입니다.",
+        "",
+    ]
     return "\n".join(lines)
 
 
@@ -976,6 +1020,7 @@ def load_inputs(
         news_gaps=news_gaps,
         us_preview_dates=preview_dates,
         vendor_disagreements=disagreements,
+        root=root,
     )
 
 

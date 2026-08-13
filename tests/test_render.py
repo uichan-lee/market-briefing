@@ -472,6 +472,55 @@ def test_the_shadow_section_counts_sessions_not_rows(tmp_path):
     assert "1일치" in section
 
 
+def test_the_shadow_section_reports_a_pnl_once_the_window_has_sessions(tmp_path, monkeypatch):
+    """⑦ stops being a placeholder the moment shadow_portfolio can compute.
+
+    The section is fed `inputs.root` rather than a rediscovered path, so a run
+    pointed at a tmp_path cannot have this one section quietly read the real
+    archive — which is what the assertion on the *tmp* numbers checks.
+    """
+    import src.eval.shadow_portfolio as shadow
+
+    directory = tmp_path / "ratings"
+    for day in (dt.date(2026, 8, 6), dt.date(2026, 8, 7)):
+        _archive(directory, f"{day.isoformat()}.parquet", day)
+
+    track = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2026-08-13"), pd.Timestamp("2026-08-14")],
+            "portfolio": [0.02, 0.05],
+            "benchmark": [0.01, 0.01],
+        }
+    )
+    monkeypatch.setattr(shadow, "load", lambda root=None: track)
+
+    section = render_shadow(inputs(root=tmp_path), load_rating_history(tmp_path))
+
+    assert "+5.00%" in section
+    assert "+1.00%" in section
+    assert "앞섬" in section
+    assert "근소한 우위는 우위가 아닙니다" in section
+
+
+def test_the_shadow_section_survives_a_broken_evaluation_layer(tmp_path, monkeypatch):
+    """CLAUDE.md: a partial report beats no report. A failed P&L is a missing
+    section, never a missing briefing."""
+    import src.eval.shadow_portfolio as shadow
+
+    directory = tmp_path / "ratings"
+    for day in (dt.date(2026, 8, 6), dt.date(2026, 8, 7)):
+        _archive(directory, f"{day.isoformat()}.parquet", day)
+
+    def boom(root=None):
+        raise ValueError("benchmark archive is empty")
+
+    monkeypatch.setattr(shadow, "load", boom)
+
+    section = render_shadow(inputs(root=tmp_path), load_rating_history(tmp_path))
+    assert "계산하지 못했습니다" in section
+    assert "benchmark archive is empty" in section
+
+
 def test_the_footer_states_that_nothing_is_executed():
     """SPEC §0 principle 5 and CLAUDE.md absolute rule 2, on the page."""
     page = render(inputs())

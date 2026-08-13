@@ -63,7 +63,7 @@ English: [README.md](README.md)
 | LLM 어댑터 + 스코어링 베이크오프 | ✅ 완료 | `src/llm/adapter.py` + `src/eval/bakeoff.py`, `data/bakeoff/attempts.jsonl`에 3,195콜 기록. **2026-08-12 `gpt-5.1` 선택, 2026-08-13 `gpt-5.4`로 교체** — 아래 참고 |
 | 임베딩 파이프라인 (중복 제거 + 관련성) | ⬜ 미착수 | SPEC §12 6단계, 의존성은 2026-08-12에 해결됨. `news_polarity`를 막고 있지 않음 — 아래 설명 참고 |
 | `news_polarity`, `rev_4w` 피처 | ⬜ 미착수 | 둘 다 `config/rating.yaml`에서 가중치가 살아 있다 — 아래 경고 참고 |
-| `src/eval/ic.py`, `shadow_portfolio.py` | 🟡 진행 중 | 3개월 게이트(§8.5). **기준은 2026-08-13에 확정** — 창 2026-08-13→2026-11-13, 62 KR 세션 |
+| `src/eval/ic.py`, `shadow_portfolio.py` | ✅ 완료 | 3개월 게이트(§8.5). **기준을 코드보다 먼저 확정(2026-08-13)** — 창 2026-08-13→2026-11-13, 62 KR 세션. 11월까지는 "표본 부족"을 출력하고, 그게 정답이다 |
 | `us_filings`, `kr_filings` | ⬜ 미착수 | SEC EDGAR, DART |
 
 **파이프라인은 오늘 이미 끝에서 끝까지 돈다.** 수집기 → 피처 → 계산된 등급 → 렌더링된 브리핑 → 이메일까지, 하루 두 번 무인으로. 빠진 것은 점수의 *뉴스* 절반이다. LLM 단계(SPEC §12 6~8단계)가 아직 없어서 `news_polarity`가 아무것도 만들지 못한다.
@@ -265,7 +265,8 @@ market-briefing/
 │   ├── notify/                ✅ vault, email 어댑터
 │   └── eval/
 │       └── bakeoff.py         ✅ SPEC §7.4 베이크오프 하네스
-│       # ic.py, shadow_portfolio.py ⬜ — 3개월 게이트에 필요, 미착수
+│       ├── ic.py             ✅ IC / ICIR / 분위 스프레드 (§8.4)
+│       └── shadow_portfolio.py ✅ §8.5 KODEX 200 대비
 │
 ├── scripts/
 │   ├── config_helper.py       ✅ 수기 config용 find / scaffold / audit

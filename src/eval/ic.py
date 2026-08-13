@@ -260,7 +260,7 @@ def quantile_spread(pairs: pd.DataFrame, *, quantile: float = QUANTILE) -> dict[
 
     tops, bottoms = [], []
     for _, group in pairs.groupby("date", observed=True):
-        size = max(1, int(np.ceil(len(group) * quantile)))
+        size = bucket_size(len(group), quantile)
         if len(group) < 2 * size:
             continue
         ordered = group.sort_values("score")
@@ -272,6 +272,18 @@ def quantile_spread(pairs: pd.DataFrame, *, quantile: float = QUANTILE) -> dict[
 
     top, bottom = float(np.mean(tops)), float(np.mean(bottoms))
     return {"spread": top - bottom, "top": top, "bottom": bottom, "n": len(tops)}
+
+
+def bucket_size(n: int, quantile: float = QUANTILE) -> int:
+    """How many names a ``quantile`` bucket holds out of ``n``, rounded up.
+
+    One function rather than the rule written twice, because §8.4's quantile
+    spread and §8.5's shadow portfolio both select "the top 20%" and would
+    otherwise be free to disagree about what that means. At the live universe of
+    31 tickers it is ``ceil(6.2)`` = **7** — PREREGISTRATION §8.5's table said 6
+    beside the same formula until the slip was caught and logged in §R.
+    """
+    return max(1, int(np.ceil(n * quantile)))
 
 
 def _cell(value: float | None, digits: int = 3) -> str:

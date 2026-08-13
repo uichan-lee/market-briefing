@@ -63,7 +63,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | LLM adapter + scoring bake-off | ✅ Done | `src/llm/adapter.py` + `src/eval/bakeoff.py`, 3,195 calls logged in `data/bakeoff/attempts.jsonl`. **`gpt-5.1` selected 2026-08-12, replaced by `gpt-5.4` 2026-08-13** — see below |
 | Embedding pipeline (dedup + relevance) | ⬜ Not started | SPEC §12 step 6, dependency resolved 2026-08-12. Not blocking `news_polarity` — see caveat below |
 | `news_polarity`, `rev_4w` features | ⬜ Not started | Both carry live weight in `config/rating.yaml` — see the caveat below |
-| `src/eval/ic.py`, `shadow_portfolio.py` | 🟡 In progress | The 3-month gate (§8.5). **Its criteria were pinned 2026-08-13**, before the code — window 2026-08-13 → 2026-11-13, 62 KR sessions |
+| `src/eval/ic.py`, `shadow_portfolio.py` | ✅ Done | The 3-month gate (§8.5). **Criteria pinned 2026-08-13, before the code** — window 2026-08-13 → 2026-11-13, 62 KR sessions. Reports "not enough sessions" until November, which is the correct answer |
 | `us_filings`, `kr_filings` | ⬜ Not started | SEC EDGAR and DART |
 
 **The pipeline runs end to end today.** Collectors → features → computed rating → rendered briefing → email, twice a day, unattended. What is missing is the *news* half of the score: the LLM stage (SPEC §12 steps 6–8) is not built, so `news_polarity` produces nothing.
@@ -265,7 +265,8 @@ market-briefing/
 │   ├── notify/                ✅ vault, email adapters
 │   └── eval/
 │       └── bakeoff.py         ✅ SPEC §7.4 bake-off harness
-│       # ic.py, shadow_portfolio.py ⬜ — needed for the 3-month gate, not started
+│       ├── ic.py             ✅ IC / ICIR / quantile spread (§8.4)
+│       └── shadow_portfolio.py ✅ §8.5 vs KODEX 200
 │
 ├── scripts/
 │   ├── config_helper.py       ✅ find / scaffold / audit for the hand-written config
