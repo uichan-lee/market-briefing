@@ -11,6 +11,7 @@ report that as general performance.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 import pytest
@@ -823,6 +824,131 @@ def test_disagreement_between_the_two_passes_is_reported(tmp_path, monkeypatch, 
     assert "재라벨링 일치도" in capsys.readouterr().out
     assert not ok
     assert any("두 회차" in problem for problem in problems)
+
+
+def test_the_per_dimension_gaps_are_reported_not_just_the_aggregate(tmp_path, monkeypatch, capsys):
+    """PREREGISTRATION §8.3's floors are per dimension; the aggregate hides which
+    one carries the disagreement.
+
+    On 2026-08-10 the aggregate read 0.16 while `forwardness` alone sat at 0.13
+    and the other four at 0.03–0.07 — and those five numbers had to be computed
+    by hand, because nothing printed them. MANUAL-TASKS §4 recorded that as a v2
+    gap. Here `polarity` carries all of it and the other four must read 0.000.
+    """
+    import scripts.golden as mod
+
+    monkeypatch.setattr(mod, "LABELS", tmp_path / "v1.jsonl")
+    monkeypatch.setattr(mod, "RECHECK", tmp_path / "recheck.jsonl")
+    _write(mod.LABELS, full_set())
+    _write(
+        mod.RECHECK,
+        [
+            dict(row, polarity=row["polarity"] - 0.2, labeled_at="2026-08-09T00:00:00+00:00")
+            for row in full_set()[:10]
+        ],
+    )
+
+    mod.verify()
+    out = capsys.readouterr().out
+    assert "차원별 평균 차이" in out
+    assert "polarity     0.200" in out
+    assert "forwardness  0.000" in out
+
+
+def test_a_recheck_older_than_the_labels_it_is_compared_against_fails(
+    tmp_path, monkeypatch, capsys
+):
+    """The second pass has to be the later one, or the gap measures the rewrite.
+
+    This is the state the repository was actually in on 2026-08-13: `--redo-all`
+    rewrote every `relevance` label on 08-12, after the 08-10 recheck answered,
+    so `verify` was quietly reporting the correction as disagreement.
+    PREREGISTRATION §R refused that number (0.090) rather than adopt it as a
+    noise floor — and nothing in the tool said so, which is what this pins.
+    """
+    import scripts.golden as mod
+
+    monkeypatch.setattr(mod, "LABELS", tmp_path / "v1.jsonl")
+    monkeypatch.setattr(mod, "RECHECK", tmp_path / "recheck.jsonl")
+    _write(mod.LABELS, [dict(row, labeled_at="2026-08-12T00:00:00+00:00") for row in full_set()])
+    _write(
+        mod.RECHECK,
+        [
+            dict(row, relevance=0.2, labeled_at="2026-08-10T00:00:00+00:00")
+            for row in full_set()[:10]
+        ],
+    )
+
+    ok, problems = mod.verify()
+    assert not ok
+    assert any("recheck --fresh" in problem for problem in problems)
+    assert "노이즈 바닥값으로 쓰지 마세요" in capsys.readouterr().out
+
+
+def test_a_recheck_answered_after_the_labels_is_not_flagged(tmp_path, monkeypatch):
+    """The ordinary case must stay quiet — the warning is about staleness, not
+    about rechecks existing."""
+    import scripts.golden as mod
+
+    monkeypatch.setattr(mod, "LABELS", tmp_path / "v1.jsonl")
+    monkeypatch.setattr(mod, "RECHECK", tmp_path / "recheck.jsonl")
+    _write(mod.LABELS, full_set())
+    _write(
+        mod.RECHECK,
+        [dict(row, labeled_at="2026-08-09T00:00:00+00:00") for row in full_set()[:10]],
+    )
+
+    ok, problems = mod.verify()
+    assert ok, problems
+
+
+def test_a_fresh_recheck_retires_the_previous_one_rather_than_reusing_it(tmp_path, monkeypatch):
+    """Without `--fresh` a re-run silently keeps whatever is already answered.
+
+    `recheck` has no `--redo`, and `run_label` builds its `done` set from the
+    progress file, so a second run asks only for what is missing and writes a
+    `recheck.jsonl` mixing two passes taken under different definitions. Nothing
+    in the output says so. Rotated, not deleted: the superseded measurement is
+    the record of what was once believed.
+    """
+    import scripts.golden as mod
+
+    monkeypatch.setattr(mod, "LABELS", tmp_path / "v1.jsonl")
+    monkeypatch.setattr(mod, "RECHECK", tmp_path / "recheck.jsonl")
+    monkeypatch.setattr(mod, "TRIAGE", tmp_path / "triage.jsonl")
+    _write(mod.LABELS, full_set())
+    _write(mod.RECHECK, full_set()[:10])
+    progress = tmp_path / "recheck-scores.jsonl"
+    _write(progress, [{"article_id": "a", "ticker": "005930", "dimension": "polarity"}])
+
+    # No triage rows, so run_label stops immediately — the rotation is what is
+    # under test, not the labelling that follows it.
+    mod.run_recheck(fresh=True)
+
+    assert not mod.RECHECK.exists()
+    assert not progress.exists()
+    assert (tmp_path / f"recheck-{dt.datetime.now(dt.UTC).date().isoformat()}.jsonl").exists()
+    assert (
+        tmp_path / f"recheck-scores-{dt.datetime.now(dt.UTC).date().isoformat()}.jsonl"
+    ).exists()
+
+
+def test_a_label_touched_today_blocks_the_recheck(tmp_path, monkeypatch, capsys):
+    """The guard reads the *latest* label, not the earliest.
+
+    One score edited today is enough to make this a memory test rather than a
+    test of the standard, and MANUAL-TASKS §4 has always described it that way.
+    `min` let a set through when a single row had been re-scored that morning.
+    """
+    import scripts.golden as mod
+
+    monkeypatch.setattr(mod, "LABELS", tmp_path / "v1.jsonl")
+    rows = full_set()
+    rows[-1]["labeled_at"] = dt.datetime.now(dt.UTC).isoformat()
+    _write(mod.LABELS, rows)
+
+    assert mod.run_recheck() == 1
+    assert "오늘 매긴 라벨" in capsys.readouterr().out
 
 
 def test_an_out_of_range_score_fails_verification(tmp_path, monkeypatch):

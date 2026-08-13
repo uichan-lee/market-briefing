@@ -1124,24 +1124,63 @@ def run_review() -> int:
     return 0
 
 
-def run_recheck(*, size: int = RECHECK_SIZE, seed: int = 20260807) -> int:
+def _rotate(path: Path, stamp: str) -> Path | None:
+    """Move ``path`` aside under a dated name. Returns where it went, or None.
+
+    Rotated, never deleted. A superseded measurement is the record of what was
+    once believed, and this project keeps those — the same reasoning that leaves
+    the four superseded ``data/ratings/2026-08-06*`` frames on disk.
+    """
+    if not path.exists():
+        return None
+    retired = path.with_name(f"{path.stem}-{stamp}{path.suffix}")
+    version = 2
+    while retired.exists():
+        retired = path.with_name(f"{path.stem}-{stamp}-v{version}{path.suffix}")
+        version += 1
+    path.rename(retired)
+    return retired
+
+
+def run_recheck(*, size: int = RECHECK_SIZE, seed: int = 20260807, fresh: bool = False) -> int:
     """Re-label a subset a day later, without showing the first answers.
 
     SPEC §7.3: if Ricky's two passes disagree more than the models disagree with
     each other, the schema is underdefined and the bake-off would be measuring
     noise. The first answers are deliberately not displayed — seeing them turns
     the check into a memory test.
+
+    ``fresh`` retires the previous recheck before starting, and is what makes a
+    *re*-measurement possible at all. Without it the progress file's ``done``
+    set survives: `label` has ``--redo`` to reopen scores and `recheck` has no
+    equivalent, so a second run silently re-uses whatever answers are already
+    stored and asks only for the rest. That went unnoticed because it is
+    invisible in the output — measured 2026-08-13, a plain re-run would have
+    re-asked 8 of the 10 sampled examples and kept two answers from 2026-08-10,
+    then written a `recheck.jsonl` mixing the two passes. The seeded sample is a
+    function of ``v1.jsonl``'s membership, so it moves whenever the set is
+    re-triaged, which is exactly when a re-measurement is wanted.
     """
     labelled = read_jsonl(LABELS)
     if len(labelled) < size:
         print(f"채점이 {len(labelled)}건뿐입니다. {size}건 이상 끝난 뒤 실행하세요.")
         return 1
 
-    first_day = min(str(row.get("labeled_at", ""))[:10] for row in labelled)
+    # `max`, not `min`: one score touched today is enough to make this a memory
+    # test rather than a test of the standard, and MANUAL-TASKS §4 describes the
+    # guard that way. `min` let a set with one fresh edit through.
+    last_day = max(str(row.get("labeled_at", ""))[:10] for row in labelled)
     today = dt.datetime.now(dt.UTC).date().isoformat()
-    if first_day == today:
+    if last_day == today:
         print("⚠ 오늘 매긴 라벨입니다. 하루 지난 뒤에 실행하세요 (기억이 아니라 기준을 재는 검사).")
         return 1
+
+    if fresh:
+        stamp = today
+        for path in (RECHECK, RECHECK.with_name(RECHECK.stem + "-scores.jsonl")):
+            moved = _rotate(path, stamp)
+            if moved is not None:
+                print(f"이전 재라벨링을 {moved.name}으로 옮겼습니다 (삭제하지 않음).")
 
     triaged = {key_of(row): row for row in read_jsonl(TRIAGE)}
     rng = random.Random(seed)
@@ -1278,17 +1317,51 @@ def verify() -> tuple[bool, list[str]]:
     if recheck:
         first = {key_of(row): row for row in labelled}
         gaps = []
+        per_dimension: dict[str, list[float]] = {name: [] for name, _, _, _, _ in DIMENSIONS}
+        stale = []
         for row in recheck:
             other = first.get(key_of(row))
             if not other:
                 continue
+            for name, _, _, _, _ in DIMENSIONS:
+                per_dimension[name].append(abs(float(row[name]) - float(other[name])))
             gaps.append(
                 max(abs(float(row[name]) - float(other[name])) for name, _, _, _, _ in DIMENSIONS)
             )
+            # The second pass has to be the later one. If the first-pass label
+            # was rewritten after this recheck answered, the difference measures
+            # the rewrite, not disagreement — PREREGISTRATION §R, 2026-08-12,
+            # which refuses a number computed exactly this way.
+            if str(other.get("labeled_at", "")) > str(row.get("labeled_at", "")):
+                stale.append(key_of(row))
+
         if gaps:
             worst = max(gaps)
             mean = sum(gaps) / len(gaps)
             print(f"재라벨링 일치도: 평균 차이 {mean:.2f}, 최대 {worst:.2f} ({len(gaps)}건)")
+            # PREREGISTRATION §8.3's floors are per dimension, and the aggregate
+            # above hides which one carries the disagreement: on 2026-08-10 it
+            # read 0.16 while `forwardness` alone sat at 0.13 and the other four
+            # at 0.03–0.07. Until now those five numbers were computed by hand,
+            # which is why §8.3's table could not be refreshed by running
+            # anything. MANUAL-TASKS §4 recorded that as a v2 gap; this closes it.
+            print("  차원별 평균 차이 — PREREGISTRATION §8.3의 노이즈 바닥값:")
+            for name, _, _, _, _ in DIMENSIONS:
+                values = per_dimension[name]
+                print(f"    {name:<12} {sum(values) / len(values):.3f}")
+
+            if stale:
+                print(
+                    f"\n⚠ {len(stale)}건은 1회차 라벨이 재라벨링보다 나중에 쓰였습니다. "
+                    "이 비교는 두 회차의 불일치가 아니라 라벨 수정분을 재고 있습니다 — "
+                    "위 숫자를 노이즈 바닥값으로 쓰지 마세요.\n"
+                    "  고치려면: uv run python -m scripts.golden recheck --fresh"
+                )
+                problems.append(
+                    f"재라벨링 {len(stale)}건이 1회차 라벨보다 오래됐습니다 — "
+                    "`recheck --fresh`로 다시 재야 §8.3 바닥값이 나옵니다"
+                )
+
             if mean > 0.25:
                 problems.append(
                     f"두 회차 평균 차이 {mean:.2f} — 스키마가 덜 정의됐을 수 있습니다 (SPEC §7.3)"
@@ -1341,7 +1414,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="`--redo`의 차원을 규칙 판정 없이 전체(100건) 다시 매긴다 — --redo와 함께 써야 함",
     )
-    sub.add_parser("recheck", help="하루 뒤 재라벨링 검사")
+    rechecker = sub.add_parser("recheck", help="하루 뒤 재라벨링 검사")
+    rechecker.add_argument(
+        "--fresh",
+        action="store_true",
+        help="이전 재라벨링을 날짜 붙여 옮기고 처음부터 다시 잰다 (삭제하지 않음)",
+    )
     sub.add_parser("verify", help="완성된 골든셋을 검사한다")
 
     args = parser.parse_args(argv)
@@ -1357,7 +1435,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--redo-all은 --redo <차원>과 함께 써야 합니다")
         return run_label(redo=args.redo, redo_all=args.redo_all)
     if args.command == "recheck":
-        return run_recheck()
+        return run_recheck(fresh=args.fresh)
 
     ok, problems = verify()
     if ok:
