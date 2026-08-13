@@ -19,8 +19,14 @@ appears in the report header, not only in logs.
 frame; :func:`load_inputs` does the reading. The two failure modes — "the
 numbers are wrong" and "the page is unreadable" — are then testable apart.
 
-Four of the nine sections ship complete (①⑨⑥ and the header), three ship
-partial (②③⑦), and three are absent (④⑤⑧). The header says so every day.
+Five of the nine sections ship complete (①⑨⑥⑦ and the header), two ship
+partial (②③), and three are absent (④⑤⑧). The header says so every day.
+
+⑦ moved from partial to complete on 2026-08-13, when
+:mod:`src.eval.shadow_portfolio` gave it PREREGISTRATION §8.5's construction.
+It still prints an explanation rather than numbers until the measurement window
+has a session with both a rating and its next-day return — which is the section
+working, not the section missing.
 """
 
 from __future__ import annotations
