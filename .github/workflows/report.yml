@@ -160,8 +160,14 @@ jobs:
       # Backstop for the case render's own failure notice cannot cover: the
       # step above dying before Python starts (sync failure, OOM). CLAUDE.md:
       # a run that produces no report sends a failure notice, never nothing.
+      #
+      # `cancelled()` alongside `failure()` since 2026-08-13: `timeout-minutes:
+      # 30` cancels rather than fails the job, and `if: failure()` alone never
+      # fires on a cancellation — a run that overran its budget (a cold
+      # dependency sync, say) published nothing and mailed nothing. Both are
+      # "no report went out" from CLAUDE.md's point of view.
       - name: Failure notice
-        if: failure()
+        if: failure() || cancelled()
         run: |
           uv run python - <<'EOF' || true
           import datetime as dt
