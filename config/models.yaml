@@ -56,17 +56,22 @@ scoring:
   # not in the program at all, because inside the free cap the sticker price is
   # moot for both.
   #
-  # ⚠ **The sharing setting has not been confirmed on.** Ricky read the
-  # eligibility list off the dashboard and agreed to enrol; whether the toggle
-  # itself is on has not been checked since, and nothing in this repository can
-  # check it — see the closing note below. This matters more than it looks:
-  # on sticker price gpt-5.4 is **4.4× dearer** than gpt-5.1 ($0.0448 vs
-  # $0.0101 per valid signal, $0.00421 vs $0.00120 per call over the stored
-  # attempts), and MANUAL-TASKS §5's rule takes the cheapest passing candidate.
-  # The whole case for 5.4 over 5.1 is that inside the free pool both cost $0,
-  # so **if sharing is off, the rule selects gpt-5.1.** MANUAL-TASKS lists the
-  # check as a waiting item; do not treat this decision as settled until it
-  # comes back.
+  # ✅ **Sharing confirmed on, 2026-08-13.** Ricky read the Data Controls
+  # screen directly: "Share inputs and outputs with OpenAI" is set to
+  # `Enabled for all projects`, with `You're enrolled for complimentary daily
+  # tokens.` shown alongside it. Nothing in this repository can check this —
+  # it is an account setting, so a human reading the screen was the only
+  # route. This mattered more than it looks: on sticker price gpt-5.4 is
+  # **4.4× dearer** than gpt-5.1 ($0.0448 vs $0.0101 per valid signal,
+  # $0.00421 vs $0.00120 per call over the stored attempts), and
+  # MANUAL-TASKS §5's rule takes the cheapest passing candidate. The whole
+  # case for 5.4 over 5.1 is that inside the free pool both cost $0, so **had
+  # sharing been off, the rule would have selected gpt-5.1.**
+  #
+  # The setting can be turned off again at any time and this repository will
+  # not notice. If scoring cost starts appearing on the OpenAI bill, that is
+  # the signal the free pool is gone and §5's rule should be re-run — which
+  # would point back at gpt-5.1.
   #
   # Measured full-sample token use: gpt-5.1 averages 1,388 tokens/call
   # (1,310 in + 78 out, n=505), gpt-5.4 averages 1,374 (1,312 in + 62 out,
