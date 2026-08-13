@@ -88,9 +88,22 @@
       두산그룹,
       두산베어스,
       두산 베어스,
+      두산위브더제니스,
+      두산위브,
+      두산에너빌,
+      두산건설,
     ]
   ambiguous_parents: []
   # exclude above is mandatory: 9 listing(s) contain '두산' as a substring.
+  #
+  # 두산위브더제니스/두산위브 (apartment brand), 두산에너빌 (034020's own alias,
+  # abbreviated), 두산건설 are not listings but corrupt 000150's news the same
+  # way: 8 matches over 2026-08-06..12 measured, of which 4 were these classes
+  # (apartment presales, 034020's consortium bid) and 0 were baseball — the
+  # 2026-08-05 feed-source fix already ended that. Added 2026-08-13 by Claude,
+  # verified against the corpus rather than guessed: excluding these four drops
+  # 8 matches to 4, and all 4 remaining are genuine 000150 coverage (SK
+  # Siltron acquisition, PEF restructuring, an earnout item).
 
 "034020":
   canonical: 두산에너빌리티
