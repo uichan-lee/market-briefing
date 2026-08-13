@@ -70,12 +70,34 @@ MIN_SCHEMA_COMPLIANCE = 0.99
 
 # PREREGISTRATION §8.3, measured 2026-08-10. A per-dimension difference smaller
 # than this is inside the golden set's disagreement with itself.
-NOISE_FLOOR = {
+#
+# ``None`` means **withdrawn, not zero** — the floor for that dimension is
+# currently unknown and no difference along it can be read as evidence. Two are:
+#
+#   relevance    Withdrawn by PREREGISTRATION §R, 2026-08-12. The ±0.07 was
+#                measured against labels that `golden label --redo-all` has
+#                since rewritten for all 100 examples. §R also refuses the
+#                freshly-computable 0.090 as a substitute, because that number
+#                compares re-labelled first-pass answers against a second pass
+#                taken under the previous reading of the definition — it
+#                measures the correction as if it were disagreement.
+#   forwardness  Withdrawn 2026-08-13, on the same reasoning. §R had named only
+#                relevance, but the ±0.13 came from the same 2026-08-10 recheck
+#                against the same superseded labels, so it is no better founded.
+#                It was the largest floor of the five and the one §8.3 singled
+#                out, which is precisely why leaving it standing was the more
+#                misleading option.
+#
+# Restoring either takes a fresh `golden recheck` against the corrected labels,
+# recorded in §R. `scripts/golden.py verify` prints the per-dimension gaps that
+# measurement produces; nothing here reads them, so the values below are updated
+# by hand and only against a §R row.
+NOISE_FLOOR: dict[str, float | None] = {
     "uncertainty": 0.03,
-    "relevance": 0.07,
+    "relevance": None,
     "polarity": 0.07,
     "intensity": 0.07,
-    "forwardness": 0.13,
+    "forwardness": None,
 }
 
 # SPEC §7.4: cost per valid signal counts articles the model itself called
@@ -673,13 +695,25 @@ def report(attempts: list[Attempt]) -> str:
         + " | ".join(f"> {BARS[n]}" if n in BARS else "—" for n, *_ in DIMENSIONS)
         + " |",
         "| **noise floor** | "
-        + " | ".join(f"±{NOISE_FLOOR[n]:.2f}" for n, *_ in DIMENSIONS)
+        + " | ".join(
+            "—" if NOISE_FLOOR[n] is None else f"±{NOISE_FLOOR[n]:.2f}" for n, *_ in DIMENSIONS
+        )
         + " |",
         "",
         "The noise floor is the golden set's disagreement with itself "
         "(PREREGISTRATION §8.3, measured 2026-08-10). **A difference between two models "
-        "smaller than the floor for that dimension is not evidence** — `forwardness` "
-        "especially, at ±0.13.",
+        "smaller than the floor for that dimension is not evidence.**",
+        "",
+        "**`relevance` and `forwardness` have no floor right now, and `—` means withdrawn "
+        "rather than zero.** Both were measured on 2026-08-10 against labels that "
+        "`golden label --redo-all` rewrote on 2026-08-12, so neither is validly measured "
+        "any longer — PREREGISTRATION §R withdrew `relevance` that day and `forwardness` "
+        "on 2026-08-13. **Until a fresh `golden recheck` is run against the corrected "
+        "labels, no difference between two models along those two dimensions can be read "
+        "as evidence in either direction** — including differences that look large. §R "
+        "also declines to substitute the freshly-computable numbers, because they compare "
+        "re-labelled first-pass answers against a second pass taken under the previous "
+        "reading of the definition, which scores the correction itself as disagreement.",
         "",
         "## Self-consistency (mean σ across repeated runs)",
         "",

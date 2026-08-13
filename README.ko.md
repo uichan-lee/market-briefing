@@ -59,7 +59,7 @@ English: [README.md](README.md)
 | 피처 계산 (`src/features/compute.py`) | ✅ 완료 | 가중치 7개 중 5개. 종목별 252거래일 롤링 z-score. `short_ratio`는 2026-08-13부터 KRX의 ~3세션 공시 랙을 반영한다 — 그 전에는 발행된 등급에 한 번도 들어간 적이 없다 |
 | 리포트 렌더러 + 전달 (`src/report/`, `src/notify/`) | ✅ 완료 | SPEC §2 섹션, `vault` + `email`. HTML 메일 + `text/plain` 대체본 |
 | GitHub Actions 워크플로우 | ✅ 완료 | `collect-news.yml` 시간당, `report.yml` 아침 3회 + 저녁. 2026-08-03부터 가동 |
-| 골든셋 (100건 직접 라벨링) | ✅ 완료 | 100건 × 5차원. `relevance`는 2026-08-12에 정의 변경 후 전량 재라벨링, `verify` 모순 0건. `forwardness` 바닥값 ±0.13([PREREGISTRATION §8.3](PREREGISTRATION.md))은 재라벨링 이전 값이라 재측정 필요 |
+| 골든셋 (100건 직접 라벨링) | ✅ 완료 | 100건 × 5차원. `relevance`는 2026-08-12에 정의 변경 후 전량 재라벨링, `verify` 모순 0건. `relevance`·`forwardness` 노이즈 바닥값은 **철회됨** — 둘 다 재라벨링 이전 값이고([PREREGISTRATION §R](PREREGISTRATION.md) 2026-08-12·08-13), `golden recheck` 재실행이 복구 조건 |
 | LLM 어댑터 + 스코어링 베이크오프 | ✅ 완료 | `src/llm/adapter.py` + `src/eval/bakeoff.py`, `data/bakeoff/attempts.jsonl`에 3,195콜 기록. **2026-08-12 `gpt-5.1` 선택, 2026-08-13 `gpt-5.4`로 교체** — 아래 참고 |
 | 임베딩 파이프라인 (중복 제거 + 관련성) | ⬜ 미착수 | SPEC §12 6단계, 의존성은 2026-08-12에 해결됨. `news_polarity`를 막고 있지 않음 — 아래 설명 참고 |
 | `news_polarity`, `rev_4w` 피처 | ⬜ 미착수 | 둘 다 `config/rating.yaml`에서 가중치가 살아 있다 — 아래 경고 참고 |
@@ -103,6 +103,9 @@ English: [README.md](README.md)
 **골든셋이 완성됐고 베이크오프가 풀렸다 (2026-08-10).** `golden recheck`가 10건을 하루 뒤 첫 답 없이 다시 매겼고, `verify`가 평균 차이 0.16으로(임계 0.25) 통과한다. 분리력도 좋다 — `|polarity| ≥ 0.5`가 100건 중 50건으로 `verify`가 요구하는 하한의 두 배이고, polarity 평균 +0.04로 긍정 쪽 쏠림이 없다.
 
 재라벨링이 함께 보여준 것은 불일치가 고르게 퍼져 있지 않다는 사실이다. **`forwardness` 하나가 거의 전부를 만든다** — 평균 차이 0.13으로 나머지 네 차원(0.03~0.07)의 두 배이고, ±0.25짜리 이탈이 전부 여기서 나왔으며, 흩어진 게 아니라 방향이 있다(움직인 6건 중 5건이 아래로). 가장 크게 내려간 세 건은 전부 확정됐지만 처음 알려진 사실인데, 이건 그 차원의 힌트 문장이 정확히 반대로 지시하는 경우다. 스키마는 일부러 고치지 않았다 — 완성된 라벨이 보이는 상태에서 정의를 고치는 것은 [PREREGISTRATION §R](PREREGISTRATION.md)이 이미 한 번 선언해야 했던 오염이기 때문이다. 대신 바닥값을 그쪽에 사전 기록했다. 두 모델의 `forwardness` 차이가 0.13보다 작으면 증거가 아니고, 앵커는 라벨을 쓰기 전에 v2 세트에서 고친다.
+
+> [!warning]
+> **위 두 숫자는 모두 폐기됐고 어느 바닥값도 유효하지 않다 (2026-08-13).** 이 문단은 2026-08-10 재라벨링이 측정한 바를 기록한 것이고 그 사실 자체는 그대로다 — 다만 그 측정의 기준이 된 라벨을 2026-08-12에 `golden label --redo-all`이 다시 썼다. `relevance` 바닥값은 그날, `forwardness`는 2026-08-13에 [PREREGISTRATION §R](PREREGISTRATION.md)에서 철회됐고, `src/eval/bakeoff.py`는 이제 이 둘에 숫자 대신 `—`를 찍는다. **보정된 라벨로 `golden recheck`를 다시 돌리기 전까지, `relevance`·`forwardness`의 모델 간 차이는 아무리 커 보여도 어느 방향으로도 증거가 아니다.** `polarity`(±0.07)·`intensity`(±0.07)·`uncertainty`(±0.03)는 영향 없고, §8.5 게이트가 걸려 있는 건 `polarity` 쪽이다.
 
 ---
 

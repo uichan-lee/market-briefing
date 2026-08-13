@@ -250,16 +250,37 @@ def test_attempts_survive_a_round_trip(tmp_path, labels):
 
 def test_the_report_states_the_noise_floor_and_the_disclosure(labels):
     """Both are obligations, not decoration: PREREGISTRATION §8.3 forbids
-    reading a forwardness difference below 0.13 as evidence, and §R requires
-    saying that Claude helped word two of the definitions."""
+    reading a difference below the floor as evidence, and §R requires saying
+    that Claude helped word two of the definitions."""
     attempts = bakeoff.run(CANDIDATE, repeats=2, limit=20, scorer=mirror(labels))
     text = bakeoff.report(attempts)
 
-    assert "±0.13" in text
+    assert "±0.07" in text
     assert "noise floor" in text
     assert "Claude helped word" in text
     assert "does not choose" in text
     assert "unflagged subset" in text
+
+
+def test_the_report_never_prints_a_withdrawn_noise_floor_as_a_number(labels):
+    """PREREGISTRATION §R withdrew `relevance`'s floor on 2026-08-12 and
+    `forwardness`'s on 2026-08-13: both were measured against labels that
+    `--redo-all` has since rewritten.
+
+    The table used to print them anyway, over a caption citing §8.3 and the
+    date they were measured — so a reader comparing two models along either
+    dimension would have taken a retracted number for a current one. `—` is the
+    only honest cell until a fresh recheck exists, and it has to read as
+    withdrawn rather than as a floor of zero.
+    """
+    attempts = bakeoff.run(CANDIDATE, repeats=2, limit=20, scorer=mirror(labels))
+    text = bakeoff.report(attempts)
+
+    assert bakeoff.NOISE_FLOOR["relevance"] is None
+    assert bakeoff.NOISE_FLOOR["forwardness"] is None
+    assert "±0.13" not in text
+    assert "withdrawn rather than zero" in text
+    assert "fresh `golden recheck`" in text
 
 
 def test_the_report_renders_without_a_single_valid_score():
