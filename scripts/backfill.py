@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.collectors import kr_flow, kr_price, macro, us_price, us_price_alpaca
+from src.collectors import kr_flow, kr_index, kr_price, macro, us_price, us_price_alpaca
 from src.util.config import load_watchlist
 from src.util.krx import KrxSessionError
 from src.util.session import trading_days
@@ -51,6 +51,9 @@ RAW = ROOT / "data" / "raw"
 PATHS = {
     "kr_price": RAW / "kr" / "price",
     "kr_flow": RAW / "kr" / "investor_flow",
+    # PREREGISTRATION §8.5's benchmark, kept apart from kr_price because it is
+    # evaluation input rather than pipeline input — see src/collectors/kr_index.py.
+    "kr_index": RAW / "kr" / "benchmark",
     "us_price": RAW / "us" / "price",
     "macro": RAW / "macro",
 }
@@ -172,11 +175,28 @@ def backfill_kr_flow(start: dt.date, end: dt.date, *, revise: bool) -> str:
     return _backfill_kr("kr_flow", kr_flow.fetch, start, end, revise=revise)
 
 
+def backfill_kr_index(start: dt.date, end: dt.date, *, revise: bool) -> str:
+    """The KODEX 200 benchmark. One ticker, so the watchlist argument is dropped.
+
+    Routed through `_backfill_kr` anyway rather than given its own loop: the
+    chunking, the KRX-refusal stop, and the `-vN` write are all behaviour this
+    source needs and none of it is specific to a ticker list.
+    """
+    return _backfill_kr(
+        "kr_index",
+        lambda _tickers, chunk_start, chunk_end: kr_index.fetch(chunk_start, chunk_end),
+        start,
+        end,
+        revise=revise,
+    )
+
+
 SOURCES = {
     "macro": backfill_macro,
     "us_price": backfill_us_price,
     "kr_price": backfill_kr_price,
     "kr_flow": backfill_kr_flow,
+    "kr_index": backfill_kr_index,
 }
 
 

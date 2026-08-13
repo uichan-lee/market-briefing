@@ -45,7 +45,15 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.collectors import kr_flow, kr_news, kr_price, macro, us_price, us_price_alpaca
+from src.collectors import (
+    kr_flow,
+    kr_index,
+    kr_news,
+    kr_price,
+    macro,
+    us_price,
+    us_price_alpaca,
+)
 from src.collectors.validate import ValidationReport
 from src.util.config import load_news_feeds, load_watchlist
 from src.util.session import now_utc
@@ -98,6 +106,7 @@ MACRO_WINDOW_DAYS = 30
 PATHS = {
     "kr_price": RAW / "kr" / "price",
     "kr_flow": RAW / "kr" / "investor_flow",
+    "kr_index": RAW / "kr" / "benchmark",
     "us_price": RAW / "us" / "price",
     "us_price_preview": RAW / "us" / "price_preview",
     "macro": RAW / "macro",
@@ -107,6 +116,7 @@ PATHS = {
 KEYS = {
     "kr_price": ["date", "ticker"],
     "kr_flow": ["date", "ticker"],
+    "kr_index": ["date", "ticker"],
     "us_price": ["date", "ticker"],
     "us_price_preview": ["date", "ticker"],
     "macro": ["date", "series"],
@@ -246,6 +256,24 @@ def collect_kr_flow(start: dt.date, end: dt.date) -> tuple[str, ValidationReport
     return f"{len(df)} rows, {new} new / {revised} revised", report
 
 
+def collect_kr_index(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
+    """The KODEX 200 benchmark. PREREGISTRATION §8.5's 3-month gate reads it.
+
+    Evening only, alongside the other KRX sources. One ticker is one request,
+    which is nothing against the ~250-request block `kr_flow`'s 124 sit under,
+    so this adds no scheduling constraint.
+
+    Nothing downstream of the pipeline consumes it — it is not a feature, not a
+    rating input, and not in the watchlist. It is collected daily anyway because
+    a benchmark fetched only at gate-reading time would be a benchmark nobody
+    had ever validated.
+    """
+    end = min(end, kr_end(now_utc()))
+    df, report = kr_index.fetch(start, end)
+    new, revised = write_daily("kr_index", df)
+    return f"{len(df)} rows, {new} new / {revised} revised", report
+
+
 def collect_us_price(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
     """Canonical US prices — Alpaca, evening only.
 
@@ -310,6 +338,7 @@ RUNS: dict[str, dict[str, Collector]] = {
         "macro": collect_macro,
         "kr_price": collect_kr_price,
         "kr_flow": collect_kr_flow,
+        "kr_index": collect_kr_index,
         "us_price": collect_us_price,
     },
 }
