@@ -347,11 +347,10 @@ cp .env.example .env             # 자격증명 입력 (API-KEYS.md 참조)
 
 | # | 할 일 | 막는 것 |
 |---|---|---|
-| 1 | `BRIEFING_EMAIL_TO`를 `.env`와 Actions secret에 등록 | 이메일 전달 — 저장소 공개 전환으로 새로 생긴 항목 |
-| 2 | 1회성 ~$4.44 게이트 측정 비용 승인 | PREREGISTRATION §8.5 2주 게이트의 4번 기준 — [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
-| 3 | `rev_4w` 데이터 소스 결정 | `news_polarity` 외에 소스가 없는 유일한 등급 피처 |
-| 4 | `config/rating.yaml` 캘리브레이션 | 신뢰할 수 있는 등급 — 2주 게이트 **이후에** 할 것 |
-| 5 | KIS 신청 | 실시간 시세만. 오늘 아무것도 막지 않음 |
+| 1 | 1회성 ~$4.44 게이트 측정 비용 승인 | PREREGISTRATION §8.5 2주 게이트의 4번 기준 — [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
+| 2 | `rev_4w` 데이터 소스 결정 | `news_polarity` 외에 소스가 없는 유일한 등급 피처 |
+| 3 | `config/rating.yaml` 캘리브레이션 | 신뢰할 수 있는 등급 — 2주 게이트 **이후에** 할 것 |
+| 4 | KIS 신청 | 실시간 시세만. 오늘 아무것도 막지 않음 |
 
 **6단계를 막는 것은 더 이상 없고, 6단계도 더 이상 아무것도 막지 않는다** — `src/entity/resolve.py`만으로도 이미 하루 92~148개의 (기사, 종목) 쌍이 나오고, 이는 SPEC §6.1이 스스로 정한 60~100 목표 구간 안이다.
 

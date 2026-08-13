@@ -29,17 +29,19 @@ Claude가 대신할 수 없는 작업. Ricky가 직접 하는 것들이고, 이 
 | ~~15~~ | ~~`golden recheck --fresh` 10건 재라벨링 — 다시~~ | ✅ **완료 2026-08-13 — 단 `verify` 실패(0.30 > 0.25)** | [§4](#4단계--재라벨링-검사-하루-뒤-5분) |
 | ~~16~~ | ~~OpenAI Data Controls → Sharing이 실제 켜져 있는지 확인~~ | ✅ **완료 2026-08-13 — `Enabled for all projects`** | [§5](#5-모델-베이크오프-결정) |
 | ~~13~~ | ~~LLM 키 3개 발급~~                       | ✅ **완료 2026-08-11** | [API-KEYS §8](API-KEYS.md) |
-| **17** | **`BRIEFING_EMAIL_TO`를 `.env`와 Actions secret에 등록** | **3분 · 안 하면 이메일 배달이 멈춤** | [§1](#1-계정과-인증-정보) |
+| ~~17~~ | ~~`BRIEFING_EMAIL_TO`를 `.env`와 Actions secret에 등록~~ | ✅ **완료 2026-08-13 (Claude 대행)** | [§1](#1-계정과-인증-정보) |
 | 12    | KIS 신청 시작 (승인 대기가 며칠 걸림)     | 15분                   | [§1](#1-계정과-인증-정보)     |
 
-**⚠ 17번이 새로 열렸다 — 저장소를 공개로 바꾸면서 생긴 유일한 작업이고, 안 하면 브리핑 이메일이 안 온다 (2026-08-13).** `config/delivery.yaml`에 Ricky의 개인 gmail이 그대로 적혀 있었는데, 공개 저장소의 추적되는 파일에 개인 수신함을 적어 둘 이유가 없어서 `to_env: BRIEFING_EMAIL_TO`로 바꿨다. 두 곳에 넣어야 한다:
-
-```bash
-echo 'BRIEFING_EMAIL_TO=<받을 주소>' >> .env    # 로컬 실행용
-gh secret set BRIEFING_EMAIL_TO                  # Actions 실행용, 값은 프롬프트로 입력
-```
+**17번은 저장소 공개 전환에서 생긴 항목이고 같은 날 닫혔다 (2026-08-13).** `config/delivery.yaml`에 Ricky의 개인 gmail이 그대로 적혀 있었는데, 공개 저장소의 추적되는 파일에 개인 수신함을 적어 둘 이유가 없어서 `to_env: BRIEFING_EMAIL_TO`로 바꿨다. 값은 `.env`와 Actions secret 양쪽에 들어갔고, 두 채널이 실제로 생성되는지까지 확인했다 — `unavailable_channels()`가 빈 리스트를 반환하고 `vault`·`email` 둘 다 빌드된다.
 
 **비밀값은 아니다** — 그냥 공개 파일에 적기 싫은 개인정보다. `from` 주소(`marketbriefing.0803@gmail.com`)는 발신 계정을 식별하는 값이라 그대로 남겨 뒀다. 값이 비어 있으면 채널 생성 시점에 변수 이름을 대며 실패하므로(`src/notify/base.py::_recipient`), 조용히 아무 데도 안 보내는 일은 없다. 히스토리에 남은 과거 주소는 Ricky 판단으로 스크럽하지 않았다.
+
+> **수신 주소를 바꿀 때는 두 곳을 같이 바꿔야 한다.** `.env`만 고치면 로컬 실행만 따라오고 스케줄 실행은 옛 주소로 계속 간다. 한쪽만 지우면 그쪽 실행이 실패한다 — 조용히 틀린 곳으로 보내지는 않지만, 그건 실패지 성공이 아니다.
+>
+> ```bash
+> sed -i '' 's/^BRIEFING_EMAIL_TO=.*/BRIEFING_EMAIL_TO=<새 주소>/' .env
+> gh secret set BRIEFING_EMAIL_TO
+> ```
 
 **16번이 끝났고, 그래서 `gpt-5.4`가 확정이다 (2026-08-13).** OpenAI 대시보드의 "Share inputs and outputs with OpenAI"가 `Enabled for all projects`이고 `You're enrolled for complimentary daily tokens.` 배너가 함께 떠 있는 것을 Ricky가 직접 확인했다. 이것이 왜 사소한 확인이 아니었나 — 정가 기준으로 `gpt-5.4`는 `gpt-5.1`보다 **4.4배 비싸고**(유효 신호당 $0.0448 대 $0.0101), MANUAL-TASKS §5의 규칙은 통과한 후보 중 가장 싼 것을 고른다. 5.4를 고를 수 있는 유일한 근거가 "무료 풀 안에서는 둘 다 $0"이었으므로, **쉐어링이 꺼져 있었다면 규칙은 `gpt-5.1`을 골랐어야 했다.** 켜져 있는 것이 확인됐으니 `config/models.yaml`의 `gpt-5.4`는 그대로 간다. (덧붙여, 무료 토큰의 대가는 스코어링 프롬프트 — 기사 제목·요약·티커 — 가 OpenAI 학습에 들어가는 것이다. 전부 이미 공개된 RSS 텍스트라 새로 나가는 정보는 없지만, 거래 조건이니 한 번은 적어 둔다. 또한 설정 화면의 문구대로 **공유는 켠 시점 이후 트래픽에만 적용된다** — 베이크오프 1,117콜 중 그 이전 것들은 공유되지 않았고, 이는 비용 계산에는 영향이 없다.)
 
