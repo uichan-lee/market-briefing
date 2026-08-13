@@ -262,25 +262,48 @@ def test_the_report_states_the_noise_floor_and_the_disclosure(labels):
     assert "unflagged subset" in text
 
 
-def test_the_report_never_prints_a_withdrawn_noise_floor_as_a_number(labels):
-    """PREREGISTRATION §R withdrew `relevance`'s floor on 2026-08-12 and
-    `forwardness`'s on 2026-08-13: both were measured against labels that
-    `--redo-all` has since rewritten.
+def test_a_withdrawn_noise_floor_never_renders_as_a_number(labels, monkeypatch):
+    """`None` in `NOISE_FLOOR` means the floor is unknown, not that it is zero.
 
-    The table used to print them anyway, over a caption citing §8.3 and the
-    date they were measured — so a reader comparing two models along either
-    dimension would have taken a retracted number for a current one. `—` is the
-    only honest cell until a fresh recheck exists, and it has to read as
-    withdrawn rather than as a floor of zero.
+    §R withdrew two floors between 2026-08-12 and 2026-08-13, and the table
+    printed them anyway over a caption citing the date they were measured — so
+    a reader comparing two models along either dimension took a retracted
+    number for a current one. All five floors were re-measured on 2026-08-13 so
+    none is withdrawn today, but the rendering contract is what the defect was
+    about and it outlives any particular set of values.
     """
+    monkeypatch.setitem(bakeoff.NOISE_FLOOR, "forwardness", None)
     attempts = bakeoff.run(CANDIDATE, repeats=2, limit=20, scorer=mirror(labels))
     text = bakeoff.report(attempts)
 
-    assert bakeoff.NOISE_FLOOR["relevance"] is None
-    assert bakeoff.NOISE_FLOOR["forwardness"] is None
-    assert "±0.13" not in text
-    assert "withdrawn rather than zero" in text
-    assert "fresh `golden recheck`" in text
+    floors = text.split("| **noise floor** |")[1].split("\n")[0]
+    assert floors.count("—") == 1
+    assert "±0.20" not in floors
+
+
+def test_the_reported_noise_floors_match_the_measured_ones(labels):
+    """PREREGISTRATION §8.3's floors are updated by hand, and nothing in the
+    code reads `golden recheck`'s output — so the only thing standing between
+    the table and a stale floor is that the numbers are pinned somewhere that
+    fails when they drift apart from the §R row they were entered against.
+
+    These are the 2026-08-13 `recheck --fresh` measurements. Changing one means
+    a new §R entry, not an edit here.
+    """
+    assert bakeoff.NOISE_FLOOR == {
+        "relevance": 0.040,
+        "polarity": 0.095,
+        "intensity": 0.140,
+        "uncertainty": 0.070,
+        "forwardness": 0.205,
+    }
+
+    text = bakeoff.report(bakeoff.run(CANDIDATE, repeats=2, limit=20, scorer=mirror(labels)))
+    assert "re-measured 2026-08-13" in text
+    # The set failed `verify` on this measurement and `forwardness` alone caused
+    # it. A reader who takes a forwardness ranking off this table has been
+    # misled by it, so the caption saying so is part of the report's contract.
+    assert "`forwardness` cannot be ranked at all" in text
 
 
 def test_the_report_renders_without_a_single_valid_score():

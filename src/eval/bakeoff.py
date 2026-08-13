@@ -68,36 +68,43 @@ BARS = {"relevance": 0.7, "polarity": 0.6}
 MAX_POLARITY_SIGMA = 0.1
 MIN_SCHEMA_COMPLIANCE = 0.99
 
-# PREREGISTRATION §8.3, measured 2026-08-10. A per-dimension difference smaller
-# than this is inside the golden set's disagreement with itself.
+# PREREGISTRATION §8.3, **re-measured 2026-08-13**. A per-dimension difference
+# smaller than this is inside the golden set's disagreement with itself.
 #
-# ``None`` means **withdrawn, not zero** — the floor for that dimension is
-# currently unknown and no difference along it can be read as evidence. Two are:
+# All five values were replaced at once, superseding the 2026-08-10 set. Two of
+# those (relevance, forwardness) had already been withdrawn to ``None`` by §R;
+# the other three were never withdrawn but came from the same superseded recheck,
+# so keeping them while replacing only the withdrawn pair would have left the row
+# a mixture of two measurements against two different label sets. The 2026-08-13
+# `golden recheck --fresh` answers all five against the corrected labels, in the
+# right order (first pass 2026-08-12, second 2026-08-13 — `verify` raised no
+# staleness warning), so it replaces the row entire.
 #
-#   relevance    Withdrawn by PREREGISTRATION §R, 2026-08-12. The ±0.07 was
-#                measured against labels that `golden label --redo-all` has
-#                since rewritten for all 100 examples. §R also refuses the
-#                freshly-computable 0.090 as a substitute, because that number
-#                compares re-labelled first-pass answers against a second pass
-#                taken under the previous reading of the definition — it
-#                measures the correction as if it were disagreement.
-#   forwardness  Withdrawn 2026-08-13, on the same reasoning. §R had named only
-#                relevance, but the ±0.13 came from the same 2026-08-10 recheck
-#                against the same superseded labels, so it is no better founded.
-#                It was the largest floor of the five and the one §8.3 singled
-#                out, which is precisely why leaving it standing was the more
-#                misleading option.
+# Three of the five got **worse**, which is the point of re-measuring rather than
+# assuming: polarity 0.07 → 0.095, intensity 0.07 → 0.140, forwardness 0.13 →
+# 0.205. Only relevance improved (0.07 → 0.040), and that one is flattered by its
+# gap: `--redo-all` rewrote relevance on 2026-08-12, one day before the recheck,
+# while the other four dimensions' first-pass answers date from 2026-08-07/08.
+# MANUAL-TASKS §4 is explicit that a short gap measures memory rather than
+# standard, so 0.040 should be read as a lower bound, not a tight floor.
 #
-# Restoring either takes a fresh `golden recheck` against the corrected labels,
-# recorded in §R. `scripts/golden.py verify` prints the per-dimension gaps that
-# measurement produces; nothing here reads them, so the values below are updated
-# by hand and only against a §R row.
+# **The set failed `verify` at this measurement** — mean per-article worst-
+# dimension gap 0.30 against the 0.25 threshold, up from 0.16 — and `forwardness`
+# alone caused it: excluding that one dimension the same statistic is 0.195, a
+# pass. The floors below are still the honest measure of how far the standard
+# disagrees with itself, and a failing set makes them more necessary rather than
+# less; what the failure forbids is reading any `forwardness` ranking at all. See
+# §R, 2026-08-13, for why the schema was not revised to fix it.
+#
+# `scripts/golden.py verify` prints the per-dimension gaps that measurement
+# produces; nothing here reads them, so the values below are updated by hand and
+# only against a §R row.
 NOISE_FLOOR: dict[str, float | None] = {
-    "uncertainty": 0.03,
-    "relevance": None,
-    "polarity": 0.07,
-    "intensity": 0.07,
-    "forwardness": None,
+    "uncertainty": 0.070,
+    "relevance": 0.040,
+    "polarity": 0.095,
+    "intensity": 0.140,
+    "forwardness": 0.205,
 }
 
 # SPEC §7.4: cost per valid signal counts articles the model itself called
@@ -701,19 +708,26 @@ def report(attempts: list[Attempt]) -> str:
         + " |",
         "",
         "The noise floor is the golden set's disagreement with itself "
-        "(PREREGISTRATION §8.3, measured 2026-08-10). **A difference between two models "
+        "(PREREGISTRATION §8.3, re-measured 2026-08-13). **A difference between two models "
         "smaller than the floor for that dimension is not evidence.**",
         "",
-        "**`relevance` and `forwardness` have no floor right now, and `—` means withdrawn "
-        "rather than zero.** Both were measured on 2026-08-10 against labels that "
-        "`golden label --redo-all` rewrote on 2026-08-12, so neither is validly measured "
-        "any longer — PREREGISTRATION §R withdrew `relevance` that day and `forwardness` "
-        "on 2026-08-13. **Until a fresh `golden recheck` is run against the corrected "
-        "labels, no difference between two models along those two dimensions can be read "
-        "as evidence in either direction** — including differences that look large. §R "
-        "also declines to substitute the freshly-computable numbers, because they compare "
-        "re-labelled first-pass answers against a second pass taken under the previous "
-        "reading of the definition, which scores the correction itself as disagreement.",
+        "**All five floors were replaced on 2026-08-13** by a `golden recheck --fresh` run "
+        "against the corrected labels, superseding the 2026-08-10 set that `golden label "
+        "--redo-all` had invalidated. Three got worse: `polarity` 0.07 → 0.095, `intensity` "
+        "0.07 → 0.140, `forwardness` 0.13 → 0.205. Differences that cleared the old floors "
+        "may not clear these, so any ranking argued from the earlier numbers has to be "
+        "re-read against this row rather than carried forward.",
+        "",
+        "**`forwardness` cannot be ranked at all.** Its ±0.205 floor is wide enough to "
+        "swallow essentially any difference this bake-off can produce, and it is also why "
+        "the golden set *failed* `verify` at this measurement (mean per-article worst-"
+        "dimension gap 0.30 against a 0.25 threshold; 0.195 — a pass — with `forwardness` "
+        "excluded). The schema defect behind it is known and deferred to a v2 set, because "
+        "rewording a definition while its finished labels are visible is the contamination "
+        "§R has already had to declare once. `relevance`'s 0.040 is a lower bound rather "
+        "than a tight floor: it was re-labelled one day before the recheck while the other "
+        "four dimensions' first-pass answers are five days older, and a short gap measures "
+        "memory rather than standard.",
         "",
         "## Self-consistency (mean σ across repeated runs)",
         "",
