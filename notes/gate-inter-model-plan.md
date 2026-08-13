@@ -75,11 +75,17 @@ recording) is reused unchanged.
 
 §8.3's own words: "a few hundred articles." Target **200–300**. At
 measured per-call rates (`config/models.yaml`'s bake-off decision comment):
-`gpt-5.1` ~$0.0012/call, `gemini-3.5-flash` ~$0.006/call, `claude-sonnet-5`
-~$0.0046/call. **300 articles × 3 models ≈ $3.60, one-time** — not a
+`gpt-5.4` ~$0.0042/call, `gemini-3.5-flash` ~$0.006/call, `claude-sonnet-5`
+~$0.0046/call. **300 articles × 3 models ≈ $4.44, one-time** — not a
 recurring monthly cost, which is the distinction that matters against
-Ricky's stated tolerance (a bounded ~$4 one-off is a different kind of ask
+Ricky's stated tolerance (a bounded ~$5 one-off is a different kind of ask
 than a $30/month subscription-shaped cost).
+
+> **Updated 2026-08-13**, replacing `gpt-5.1` with `gpt-5.4` above: the
+> scoring model changed the same day (`config/models.yaml`, PREREGISTRATION
+> §R 2026-08-13). This measures the models actually in play now, so it tracks
+> whichever one `scoring` names — re-check this figure if that changes again
+> before this measurement runs.
 
 Only 1 repeat per model is needed here (this measures *inter*-model
 agreement, not self-consistency — that used the bake-off's 5 repeats and is

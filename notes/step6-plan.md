@@ -36,8 +36,11 @@ wrong. Measured against the live corpus: `src/entity/resolve.py` alone already
 produces **92–148 (article, ticker) pairs/day** (mean ~108) — inside SPEC
 §6.1's own 60–100 target band without any filtering. `src/llm/score.py`
 already exists and is exercised by the bake-off. Nothing blocks running Stage
-2 today, unfiltered, at roughly $4/month (gpt-5.1, measured rate) — inside
-Ricky's stated cost tolerance.
+2 today, unfiltered, at roughly $17/month sticker price on `gpt-5.4` (the
+2026-08-13 scoring choice, superseding `gpt-5.1` — `config/models.yaml`) —
+effectively ~$0 in practice, since this volume sits inside the OpenAI
+data-sharing free-token pool `gpt-5.4` shares with `gpt-5.1`. Either way,
+inside Ricky's stated cost tolerance.
 
 So step 6 is a **cost and quality optimization on an already-runnable path**,
 not a blocker. What actually has a deadline is PREREGISTRATION §8.3's 2-week
@@ -129,7 +132,9 @@ produces a bad cut point in one direction or the other.
   no-model-touches-labels rule. But SPEC §7.3 requires the set to represent
   25 irrelevant / 25 ambiguous / 25 negative / 25 positive examples of the
   *unfiltered* corpus, and the §7.4 bake-off's correlation numbers — the ones
-  that just selected `gpt-5.1` — were measured against that unfiltered
+  behind the scoring model selection (`gpt-5.1` when this was written,
+  `gpt-5.4` as of 2026-08-13 — `config/models.yaml`) — were measured against
+  that unfiltered
   distribution. A production filter tuned to match the golden set's
   low-relevance tail would start silently removing the kind of article the
   golden set was built to represent, making the set describe a corpus

@@ -9,14 +9,17 @@ embedding:
 
 scoring:
   provider: openai            # anthropic | openai | google | naver | local
-  model: gpt-5.1
-  temperature: 0
+  model: gpt-5.4
+  temperature: null
   batch: true
-  # ── DECIDED 2026-08-12 by Ricky, on the SPEC §7.4 bake-off. ──
+  # ── DECIDED 2026-08-12 (gpt-5.1), REVISED 2026-08-13 (gpt-5.4) — both by
+  # Ricky, both on the SPEC §7.4 bake-off. The revision does not overturn the
+  # original decision rule, MANUAL-TASKS §5: among candidates passing
+  # golden-set correlation and self-consistency, take the lowest cost per
+  # valid signal. What changed is what "cost" means once OpenAI's data-sharing
+  # free-token program entered the comparison — see below.
   #
-  # MANUAL-TASKS §5's rule: among candidates passing golden-set correlation and
-  # self-consistency, take the lowest cost per valid signal. Two passed and
-  # gpt-5.1 is 8.3× cheaper.
+  # ── Round 1 (2026-08-12): gpt-5.1 over claude-sonnet-5 and gemini-3.5-flash ──
   #
   #   model              relevance  polarity  σ(pol)  compliance  $/signal
   #   claude-sonnet-5        0.83     0.87    0.036     99.4%     $0.0837
@@ -24,32 +27,96 @@ scoring:
   #   gemini-3.5-flash       0.83     0.85      —      100.0%     $0.0116
   #   bar                   > 0.7    > 0.6   < 0.1      > 99%        —
   #
-  # Both passing candidates clear every bar, so MANUAL-TASKS §5's rule selects on
-  # cost alone, and there gpt-5.1 wins by 8.3× — at ~140 (article, ticker) pairs
-  # a day, ~$5/month against ~$28 for sonnet-5 and ~$27 for gemini-3.5-flash.
+  # Both claude-sonnet-5 and gpt-5.1 cleared every bar; gpt-5.1 won on cost,
+  # 8.3× cheaper (~$5/month vs ~$28, at ~140 pairs/day). sonnet-5's 0.07
+  # relevance lead was real, not noise, and was not the basis for excluding
+  # it — the rule selects on cost among passing candidates, not on rank.
+  # gemini-3.5-flash failed on **σ unmeasured**, not price: its free tier's
+  # 20-calls/day cap forced `--repeats 1`, so self-consistency was never
+  # actually measured. It also emitted 502 output tokens against gpt-5.1's 78
+  # for the same five-number schema — reasoning billed as output at $9/1M.
   #
-  # **sonnet-5's 0.07 relevance lead is not dismissible as noise, and is not
-  # claimed to be.** An earlier version of this note called it 0.03 and "inside
-  # the ±0.07 floor"; both halves are stale. The numbers above are from after the
-  # golden set's final corrections that same day, which widened the gap to
-  # exactly the floor, and the floor itself is no longer validly measured — it
-  # came from a `golden recheck` answered 2026-08-10, before `relevance` was
-  # re-labelled, so the two passes no longer measure the same thing. Re-measuring
-  # it needs a fresh recheck against the corrected labels. What the decision rests
-  # on is unaffected: both candidates pass, and the rule says take the cheaper.
-  # What it does *not* rest on is a claim that the two score alike on relevance.
+  # ── Round 2 (2026-08-13): re-opened after Ricky read that OpenAI cut
+  # gpt-5.6-luna's price 80%. Two things followed from actually checking, not
+  # from that one headline: ──
   #
-  # gemini-3.5-flash was **not eligible**, on σ rather than on price: it was run
-  # at `--repeats 1` to fit the free tier's 20-a-day cap, so its self-consistency
-  # is unmeasured, not passed. Its per-call cost is 5× gpt-5.1's despite the
-  # similar total spend on the two — the totals look alike only because gpt-5.1
-  # bought 505 calls with them and gemini 105. Its input is *shorter* than
-  # gpt-5.1's (1,014 vs 1,310 tokens); it emits 502 output tokens against 78 for
-  # the same five-number schema, which is reasoning billed as output at $9/1M.
+  # (a) The OpenAI side of the original bake-off was never a survey. gpt-5.1
+  # was picked only because gpt-5 rejected `temperature=0` and 5.1 was the
+  # smallest bump that accepted it — nobody then checked whether a newer
+  # generation existed. By 2026-08-11 gpt-5.2, gpt-5.4, gpt-5.5 and gpt-5.6
+  # all already shipped, unexamined.
   #
-  # The scores behind these numbers are in `data/bakeoff/attempts.jsonl` and the
-  # table is regenerated with `uv run python -m src.eval.bakeoff report` — no API
-  # calls, so re-reading the decision costs nothing.
+  # (b) Ricky's OpenAI dashboard (Data Controls → Sharing, read 2026-08-13)
+  # gives daily complimentary tokens for sharing traffic — up to **250K
+  # tokens/day** shared across {gpt-5.4, gpt-5.2, gpt-5.1, gpt-5, gpt-4.1,
+  # gpt-4o, o1, o3, ...}, up to **2.5M/day** across the mini/nano tier of the
+  # same generations. Ricky opted in. **None of gpt-5.6's tiers — sol, terra,
+  # or luna — are in either list.** This inverts the earlier price comparison:
+  # a model sharing gpt-5.1's free pool is not "dominated" by a cheaper-on-
+  # paper model that is not in the program at all, because inside the free
+  # cap the sticker price is moot for both.
+  #
+  # Measured full-sample token use: gpt-5.1 averages 1,388 tokens/call
+  # (1,310 in + 78 out, n=505), gpt-5.4 averages 1,374 (1,312 in + 62 out,
+  # n=500) — almost identical. At ~140 pairs/day that's ~194K and ~192K
+  # tokens/day respectively, **~77% of the shared 250K/day free cap** either
+  # way — comfortable margin today, worth re-checking if ticker count or
+  # article volume grows. Overflow beyond the cap bills at each model's own
+  # rate ($1.25/$10 per 1M for 5.1, $2.50/$15 for 5.4) — 5.4 costs more only
+  # on the marginal overflow, which at current volume is rare and small.
+  #
+  # Full re-run results (this round added gpt-5.4, gpt-5.6, gpt-5.6-luna,
+  # gpt-5.6-terra, gpt-5-nano, gpt-5.4-nano — 3,195 calls total across 9
+  # models, `data/bakeoff/attempts.jsonl`):
+  #
+  #   model              relevance  polarity  σ(pol)  compliance  $/signal  free-tier
+  #   claude-sonnet-5        0.83     0.87    0.036     99.4%     $0.0837   no (Anthropic)
+  #   gpt-5.1                0.76     0.82    0.033    100.0%     $0.0101   yes
+  #   gpt-5.4                0.78     0.86    0.041    100.0%     $0.0448   yes
+  #   gpt-5.6 (sol)           0.83     0.87    0.054    100.0%     $0.0577   no
+  #   gpt-5.6-luna            0.82     0.85    0.088    100.0%     $0.0022   no
+  #   gemini-3.5-flash       0.83     0.85      —      100.0%     $0.0116   n/a
+  #   bar                   > 0.7    > 0.6   < 0.1      > 99%        —
+  #
+  # `gpt-5.4` beats `gpt-5.1` on relevance (0.78 vs 0.76), polarity (0.86 vs
+  # 0.82), and **uncertainty** (0.55 vs 0.43 — real, well above that
+  # dimension's ±0.03 noise floor), at effectively the same free-pool cost.
+  # `gpt-5.6-luna` is the cheapest passer on sticker price ($0.0022) but is
+  # not in the free program at all, so its real cost is *higher* than 5.4's
+  # under current volume ($0 for 5.4 vs ~$1/month for luna) — the 80% price
+  # cut that started this round of testing turned out not to be the actual
+  # deciding factor. `gpt-5.6` (sol) passes but is neither free-tier eligible
+  # nor cheaper than 5.4, so it has no case over it.
+  #
+  # ── Rejected, tested this round: ──
+  #   gpt-5-nano    relevance 0.47 (bar 0.7) — fails outright. Also 17.4s/call
+  #                 mean latency (vs 1-5s for every other candidate) — a
+  #                 hidden-reasoning tax (confirmed via response `thinking`
+  #                 content on the Anthropic side of this same investigation;
+  #                 not directly inspectable on the OpenAI side, but the
+  #                 latency and the $/token-vs-$/call mismatch match the
+  #                 pattern). Would blow the report workflow's 30-minute
+  #                 budget on its own before quality is even considered.
+  #   gpt-5.4-nano  relevance 0.48, σ(pol) 0.113 (bar 0.1) — fails both.
+  #                 Free-tier eligible and fast (0.95s/call) but not accurate
+  #                 enough for this task regardless.
+  #   gpt-5.6-terra Stopped by Ricky before its full run (10 dry-run calls
+  #                 only, in `data/bakeoff/attempts.jsonl`) — priced between
+  #                 luna and sol with no distinct role once luna is cheapest-
+  #                 on-paper and sol is the quality-first alternative, and not
+  #                 free-tier eligible either way.
+  #
+  # `uv run python -m src.eval.bakeoff report` regenerates this table from
+  # stored attempts — no API calls, so re-reading the decision costs nothing.
+  #
+  # ── Not yet done: enabling the free-tier credit is an OpenAI account
+  # setting (Data Controls → Sharing), not a code change — nothing in this
+  # repo reads or depends on it. If usage grows past the ~77% mark and starts
+  # spilling into paid overflow regularly, revisit whether a same-day
+  # cheaper-model fallback (e.g. gpt-5.6-luna) is worth the added routing
+  # complexity — deferred because scoring is not wired into
+  # `scripts/collect_daily.py` yet (SPEC §12 steps 6-8), so there is no
+  # running system to attach that logic to today.
 
 # The models the SPEC §7.4 bake-off compares. Read only by src/eval/bakeoff.py,
 # never by the pipeline — these are alternatives under test, not the configured
@@ -143,12 +210,55 @@ candidates:
   - provider: anthropic
     model: claude-sonnet-5
     temperature: null       # Anthropic: 400, "`temperature` is deprecated for this model"
-  - provider: openai
-    model: gpt-5.1
-    temperature: 0          # verified live 2026-08-11
   - provider: gemini
     model: gemini-3.5-flash
     temperature: 0          # verified live 2026-08-11; deprecation warned
+
+  # gpt-5.1: the original (2026-08-12) winner, kept live as the reference
+  # point the scoring decision above compares everything against. gpt-5.4
+  # superseded it 2026-08-13 — see that comment for the full account,
+  # including why the OpenAI side needed a second look at all (gpt-5.2/5.4/
+  # 5.5/5.6 all shipped before the original bake-off and none were checked),
+  # and the free-tier-eligibility finding that decided it.
+  - provider: openai
+    model: gpt-5.1
+    temperature: 0          # verified live 2026-08-11
+  - provider: openai
+    model: gpt-5.4
+    temperature: null       # verified live 2026-08-13: rejects 0, default only
+
+  # gpt-5.6's sol/luna: both pass §7.4's bars (scoring comment above has the
+  # full table) but neither is in OpenAI's free-tier program the way 5.1/5.4
+  # are, so both cost more in practice despite sol/luna's sticker price
+  # looking competitive or cheaper. Kept live as the fallback pair if a
+  # future re-check finds 5.4 no longer wins: luna on raw price, sol on
+  # quality headroom over the whole gpt-5.x line tested so far.
+  - provider: openai
+    model: gpt-5.6-luna
+    temperature: null       # verified live 2026-08-13: rejects 0, default only
+  - provider: openai
+    model: gpt-5.6
+    temperature: null       # verified live 2026-08-13: rejects 0, default only
+
+  # ── Tested 2026-08-13 and NOT kept live — re-adding costs money to
+  # re-confirm a result already on record in `data/bakeoff/attempts.jsonl`.
+  # Full numbers are in the scoring comment above.
+  #
+  #   gpt-5-nano     relevance 0.47 (bar 0.7) — fails. Also 17.4s/call mean
+  #                  latency, ~10x every other candidate — a hidden-reasoning
+  #                  cost that would threaten the report workflow's own
+  #                  30-minute budget on its own, separately from accuracy.
+  #   gpt-5.4-nano   relevance 0.48, σ(pol) 0.113 (bars 0.7 / 0.1) — fails
+  #                  both, despite being fast and free-tier eligible.
+  #   gpt-5.6-terra  Never finished a full run — Ricky stopped it after 10
+  #                  dry-run calls once luna (cheapest) and sol (quality
+  #                  fallback) covered the range terra would have sat in.
+  #
+  # If re-testing any of these, `uv run python -m src.eval.bakeoff run
+  # --model <name> --limit 5 --repeats 1` first — gpt-5-nano and gpt-5.4-nano
+  # both need `temperature: null` (0 was never tried for either; null worked
+  # on the first attempt), matching the pattern every gpt-5.x-and-later
+  # OpenAI model has shown so far.
 
 synthesis:
   provider: anthropic

@@ -268,7 +268,11 @@ def test_a_stage_missing_its_provider_is_rejected(tmp_path):
 def test_committed_models_names_all_three_stages():
     models = load_models()
     assert {"embedding", "scoring", "synthesis"} <= models.keys()
-    assert models["scoring"]["temperature"] == 0
+    # None means "send no temperature at all" (config/models.yaml's own
+    # convention) rather than "send zero". gpt-5.4 (2026-08-13, superseding
+    # gpt-5.1) rejects an explicit 0 the same way every gpt-5.x-and-later
+    # OpenAI model tested so far has.
+    assert models["scoring"]["temperature"] is None
 
 
 # --- sector mapping -------------------------------------------------------
