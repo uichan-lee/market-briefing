@@ -49,12 +49,54 @@ def test_webhook_stays_unbuilt_and_says_so():
         channel_for({"type": "webhook"})
 
 
-def test_the_committed_delivery_config_builds_every_channel():
+def test_the_committed_delivery_config_builds_every_channel(monkeypatch):
     """The regression this pins: email was 'declared but not built' for one
-    step, and the header had to carry it as a failure. Now both build."""
+    step, and the header had to carry it as a failure. Now both build.
+
+    The committed config names `to_env` rather than an address, so the variable
+    has to exist for the channel to build — which is the point of the next two
+    tests, and the reason this one sets it explicitly instead of depending on
+    whatever the developer happens to have exported.
+    """
     from src.util.config import load_delivery
 
+    monkeypatch.setenv("BRIEFING_EMAIL_TO", "reader@example.com")
     assert unavailable_channels(load_delivery().get("channels", [])) == []
+
+
+def test_the_recipient_can_come_from_the_environment(monkeypatch):
+    """The repository is public, so the committed config names a variable
+    instead of a personal inbox."""
+    monkeypatch.setenv("BRIEFING_EMAIL_TO", "reader@example.com")
+    channel = channel_for({**EMAIL_CONFIG, "to": None, "to_env": "BRIEFING_EMAIL_TO"})
+
+    assert isinstance(channel, EmailChannel)
+    assert channel.to == "reader@example.com"
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_an_unset_recipient_variable_refuses_to_build_the_channel(monkeypatch, value):
+    """The failure mode worth preventing: `to_env` names a variable nobody set
+    in Actions, the channel builds with an empty recipient, and the run reports
+    a delivery that reached no one. CLAUDE.md puts a loud error first.
+    """
+    if value is None:
+        monkeypatch.delenv("BRIEFING_EMAIL_TO", raising=False)
+    else:
+        monkeypatch.setenv("BRIEFING_EMAIL_TO", value)
+
+    with pytest.raises(UnknownChannel, match="BRIEFING_EMAIL_TO"):
+        channel_for({**EMAIL_CONFIG, "to": None, "to_env": "BRIEFING_EMAIL_TO"})
+
+
+def test_a_literal_recipient_still_works_and_wins(monkeypatch):
+    """A fork whose recipient is not private should not need a variable to say
+    so, and an explicitly written address should never be overridden by a
+    leftover export."""
+    monkeypatch.setenv("BRIEFING_EMAIL_TO", "wrong@example.com")
+    channel = channel_for({**EMAIL_CONFIG, "to_env": "BRIEFING_EMAIL_TO"})
+
+    assert channel.to == "reader@example.com"
 
 
 # --- email -----------------------------------------------------------------

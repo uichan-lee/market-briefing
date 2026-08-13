@@ -14,6 +14,7 @@ fetch is recorded and the pipeline continues.
 from __future__ import annotations
 
 import datetime as dt
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,7 +87,7 @@ def channel_for(config: Mapping[str, Any], *, root: Path | None = None) -> Chann
     if kind == "email":
         try:
             return EmailChannel(
-                to=config["to"],
+                to=_recipient(config),
                 sender=config["from"],
                 host=config["host"],
                 port=int(config["port"]),
@@ -100,6 +101,37 @@ def channel_for(config: Mapping[str, Any], *, root: Path | None = None) -> Chann
     if kind == "webhook":
         raise UnknownChannel("channel 'webhook' is declared in delivery.yaml but not built yet")
     raise UnknownChannel(f"unknown channel type {kind!r}")
+
+
+def _recipient(config: dict) -> str:
+    """Resolve the email channel's ``to``, from config or the environment.
+
+    The repository is public, so the address a personal briefing is delivered
+    to does not belong in a tracked file. ``to_env`` names an environment
+    variable holding it — the same indirection ``smtp_secret`` already uses for
+    the password, rather than a second mechanism doing the same job.
+
+    A literal ``to`` still works and takes precedence, because a fork whose
+    recipient is not private has no reason to carry an environment variable to
+    say so. What is not allowed is naming a variable that is empty or unset:
+    that is a misconfigured channel, and CLAUDE.md's failure rules put a loud
+    build-time error ahead of a run that reports success and delivers nowhere.
+    """
+    if config.get("to"):
+        return str(config["to"])
+
+    name = config.get("to_env")
+    if not name:
+        raise KeyError("to")
+
+    value = os.environ.get(str(name), "").strip()
+    if not value:
+        raise UnknownChannel(
+            f"email channel names to_env: {name}, but {name} is unset or empty. "
+            f"Set it in .env for a local run and in the repository's Actions "
+            f"secrets for the scheduled one."
+        )
+    return value
 
 
 def unavailable_channels(channels: list[Mapping[str, Any]]) -> list[str]:

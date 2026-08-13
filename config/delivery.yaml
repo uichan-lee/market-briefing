@@ -12,14 +12,23 @@ channels:
 
   # Mobile reading. Two different addresses, and conflating them is exactly the
   # mistake MANUAL-TASKS.md §1 warns about:
-  #   `to`   — where Ricky reads mail. A personal address is correct here.
-  #   `from` — the dedicated account SMTP_PASSWORD authenticates as. Never a
-  #            primary address: this credential goes into a GitHub Actions
-  #            secret, and a CI secret must not grant access to a personal
-  #            mailbox.
-  # Neither address is a secret. The password lives in SMTP_PASSWORD, never here.
+  #   `to_env` — names the variable holding where Ricky reads mail. A personal
+  #              address is correct there, which is why it is not written here:
+  #              this repository is public. Neither address is a *secret*, but a
+  #              personal inbox is not something a public file should advertise.
+  #              A literal `to:` still works for a fork with nothing to hide.
+  #   `from`   — the dedicated account SMTP_PASSWORD authenticates as. Never a
+  #              primary address: this credential goes into a GitHub Actions
+  #              secret, and a CI secret must not grant access to a personal
+  #              mailbox. It stays literal because it identifies the sending
+  #              account, not a reader.
+  # The password lives in SMTP_PASSWORD, never here.
+  #
+  # BRIEFING_EMAIL_TO must be set in .env *and* in the repository's Actions
+  # secrets. An unset value fails at channel-build time with a named error
+  # rather than delivering nowhere quietly — src/notify/base.py::_recipient.
   - type: email
-    to: "rickylee7185@gmail.com"
+    to_env: BRIEFING_EMAIL_TO
     from: "marketbriefing.0803@gmail.com" # dedicated account, created 2026-08-03
     # Host and port are config, not code defaults: a wrong value here is
     # reviewable in a diff, the same assumption buried in the adapter is not.

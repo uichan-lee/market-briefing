@@ -67,6 +67,10 @@ jobs:
       ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
       TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      # Not a secret in the credential sense — a personal inbox kept out of a
+      # public tracked file. config/delivery.yaml names it via `to_env`, and an
+      # unset value fails at channel-build time rather than delivering nowhere.
+      BRIEFING_EMAIL_TO: ${{ secrets.BRIEFING_EMAIL_TO }}
 
     steps:
       - uses: actions/checkout@v4
