@@ -8,12 +8,17 @@ good rather than that the arithmetic was wrong.
 
 from __future__ import annotations
 
+import datetime as dt
+import gzip
+import json
+
 import pytest
 
 from scripts.golden import DIMENSIONS, LABELS, key_of, read_jsonl
 from src.eval import bakeoff
 from src.eval.bakeoff import Attempt, spearman
 from src.llm.adapter import Completion, SchemaError
+from src.util.config import AliasEntry, WatchlistEntry
 
 NAMES = [name for name, *_ in DIMENSIONS]
 
@@ -661,3 +666,182 @@ def test_resume_keeps_each_model_in_its_own_run(tmp_path, monkeypatch, labels):
     assert run_ats["fast"] == "2026-06-01T00:00:00+00:00"
     # The global max would have given `slow` June, merging it into `fast`'s run.
     assert max(a.run_at for a in mine) != run_ats["slow"]
+
+
+# --- PREREGISTRATION §8.3's gate measurement --------------------------------
+
+
+def test_run_scores_source_rows_instead_of_examples():
+    """`source` is how the gate measurement (live articles, no label) and the
+    golden-set bake-off share every line of `run` below the row selection."""
+    rows = [
+        {
+            "article_id": "z1",
+            "ticker": "999999",
+            "name": "테스트기업",
+            "title": "t",
+            "description": "d",
+        }
+    ]
+    attempts = bakeoff.run(CANDIDATE, repeats=1, source=rows, scorer=constant)
+    assert [a.article_id for a in attempts] == ["z1"]
+    assert [a.ticker for a in attempts] == ["999999"]
+    # "999999" is not a real golden-set ticker — the only way this attempt
+    # exists is that `source` was actually used instead of `examples()`.
+
+
+def _write_news_day(root, day: str, articles: list[dict]) -> None:
+    directory = root / "data" / "raw" / "kr" / "news" / day
+    directory.mkdir(parents=True, exist_ok=True)
+    with gzip.open(directory / "0000.jsonl.gz", "wt", encoding="utf-8") as handle:
+        for article in articles:
+            handle.write(json.dumps(article, ensure_ascii=False) + "\n")
+
+
+def _alias_entries():
+    return {
+        "005930": AliasEntry(
+            ticker="005930",
+            canonical="삼성전자",
+            aliases=("삼성전자",),
+            exclude=(),
+            ambiguous_parents=(),
+        )
+    }
+
+
+def _watchlist_entries():
+    return [WatchlistEntry(ticker="005930", name="삼성전자", sector="tech", held=True, market="KR")]
+
+
+@pytest.fixture
+def live_corpus(tmp_path, monkeypatch):
+    """A minimal `data/raw/kr/news/` tree plus fake aliases/watchlist, wired
+    the same way `live_examples` reads the real ones — no real config or
+    collected corpus touched."""
+    monkeypatch.setattr(bakeoff, "ROOT", tmp_path)
+    monkeypatch.setattr("src.util.config.load_aliases", lambda *a, **k: _alias_entries())
+    monkeypatch.setattr("src.util.config.load_watchlist", lambda *a, **k: _watchlist_entries())
+    return tmp_path
+
+
+def test_live_examples_only_reads_articles_inside_the_window(live_corpus):
+    """PREREGISTRATION §8.5 measures "the same window's articles" — an article
+    collected the day before the window opened must not sneak in just because
+    it is sitting in the same `data/raw/kr/news/` tree."""
+    _write_news_day(
+        live_corpus,
+        "2026-08-11",
+        [{"article_id": "before", "title": "삼성전자 실적", "description": ""}],
+    )
+    _write_news_day(
+        live_corpus,
+        "2026-08-12",
+        [{"article_id": "in1", "title": "삼성전자 신제품", "description": ""}],
+    )
+    _write_news_day(
+        live_corpus,
+        "2026-08-14",
+        [{"article_id": "in2", "title": "삼성전자 투자", "description": ""}],
+    )
+    _write_news_day(
+        live_corpus,
+        "2026-08-15",
+        [{"article_id": "after", "title": "삼성전자 배당", "description": ""}],
+    )
+
+    rows = bakeoff.live_examples(dt.date(2026, 8, 12), dt.date(2026, 8, 14), sample_size=10)
+    assert {r["article_id"] for r in rows} == {"in1", "in2"}
+
+
+def test_live_examples_row_shape_matches_what_score_article_reads(live_corpus):
+    _write_news_day(
+        live_corpus,
+        "2026-08-12",
+        [{"article_id": "in1", "title": "삼성전자 신제품", "description": "설명"}],
+    )
+    rows = bakeoff.live_examples(dt.date(2026, 8, 12), dt.date(2026, 8, 12), sample_size=10)
+    assert rows == [
+        {
+            "article_id": "in1",
+            "ticker": "005930",
+            "name": "삼성전자",
+            "title": "삼성전자 신제품",
+            "description": "설명",
+        }
+    ]
+    # No `label` key, unlike `examples()` — `inter_model` never reads one.
+    assert "label" not in rows[0]
+
+
+def test_live_examples_is_empty_when_nothing_in_the_window_resolves(live_corpus):
+    _write_news_day(
+        live_corpus,
+        "2026-08-12",
+        [{"article_id": "unrelated", "title": "오늘의 날씨", "description": ""}],
+    )
+    rows = bakeoff.live_examples(dt.date(2026, 8, 12), dt.date(2026, 8, 12), sample_size=10)
+    assert rows == []
+
+
+def test_live_examples_is_empty_when_the_window_has_no_files(live_corpus):
+    rows = bakeoff.live_examples(dt.date(2026, 8, 12), dt.date(2026, 8, 12), sample_size=10)
+    assert rows == []
+
+
+def test_gate_report_fails_a_pair_below_the_polarity_bar():
+    """PREREGISTRATION §8.5's fourth criterion, applied per pair."""
+    rows = [
+        {
+            "article_id": f"a{i}",
+            "ticker": "005930",
+            "name": "삼성전자",
+            "title": "t",
+            "description": "d",
+        }
+        for i in range(6)
+    ]
+
+    def diverge(article, *, prompt, model, provider, **_):
+        i = int(article["article_id"][1:])
+        polarity = i / 5 if model == "up" else 1 - i / 5
+        return completion({n: polarity if n == "polarity" else 0.5 for n in NAMES}, model=model)
+
+    up = {"provider": "anthropic", "model": "up"}
+    down = {"provider": "openai", "model": "down"}
+    attempts = bakeoff.run([up, down], repeats=1, source=rows, scorer=diverge)
+
+    text = bakeoff.gate_report(attempts, dt.date(2026, 8, 12), dt.date(2026, 8, 14))
+    assert "6 shared" in text
+    assert "FAILS" in text
+    assert "polarity" in text
+
+
+def test_gate_report_passes_when_every_pair_clears_the_bar():
+    rows = [
+        {
+            "article_id": f"a{i}",
+            "ticker": "005930",
+            "name": "삼성전자",
+            "title": "t",
+            "description": "d",
+        }
+        for i in range(6)
+    ]
+
+    def agree(article, *, prompt, model, provider, **_):
+        i = int(article["article_id"][1:])
+        return completion({n: i / 5 if n == "polarity" else 0.5 for n in NAMES}, model=model)
+
+    up = {"provider": "anthropic", "model": "up"}
+    also_up = {"provider": "openai", "model": "also_up"}
+    attempts = bakeoff.run([up, also_up], repeats=1, source=rows, scorer=agree)
+
+    text = bakeoff.gate_report(attempts, dt.date(2026, 8, 12), dt.date(2026, 8, 14))
+    assert "FAILS" not in text
+    assert "Every pair passes" in text
+
+
+def test_gate_report_names_fewer_than_two_models():
+    text = bakeoff.gate_report([], dt.date(2026, 8, 12), dt.date(2026, 8, 14))
+    assert "nothing to compare" in text

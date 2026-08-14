@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import glob
+import gzip
 import json
 import os
 import statistics
@@ -50,6 +52,7 @@ from scripts.golden import (
     key_of,
     read_jsonl,
     select_for_labelling,
+    stratified_sample,
 )
 from src.llm.adapter import AdapterError, SchemaError, is_rate_limit
 from src.llm.score import load_prompt, out_of_range, score_article
@@ -58,6 +61,12 @@ from src.util.config import load_models
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "data" / "bakeoff"
 ATTEMPTS = RESULTS / "attempts.jsonl"
+# PREREGISTRATION §8.3's inter-model gate measurement, kept apart from the
+# golden-set bake-off's own attempts.jsonl. The two runs answer different
+# questions (agreement between models on live articles vs. agreement with
+# Ricky's labels) and neither's `latest_run`/`--resume` bookkeeping should
+# see the other's calls.
+GATE_ATTEMPTS = RESULTS / "gate_attempts.jsonl"
 
 # SPEC §7.4 self-consistency is measured across repeated runs of the same
 # article. Five is what §9.1 prices the bake-off at (100 × 3 × 5 = 1,500 calls).
@@ -67,6 +76,13 @@ REPEATS = 5
 BARS = {"relevance": 0.7, "polarity": 0.6}
 MAX_POLARITY_SIGMA = 0.1
 MIN_SCHEMA_COMPLIANCE = 0.99
+
+# PREREGISTRATION §8.5's fourth 2-week gate criterion: inter-model polarity
+# correlation on the live window, separate from and looser than §7.4's own
+# BARS["polarity"] (0.6) used to pick a model in the first place. §8.5 asks
+# only whether the chosen model's live-article agreement with the runner-up
+# candidates holds up outside the golden set, not whether it wins a ranking.
+GATE_POLARITY_BAR = 0.5
 
 # PREREGISTRATION §8.3, **re-measured 2026-08-13**. A per-dimension difference
 # smaller than this is inside the golden set's disagreement with itself.
@@ -250,6 +266,78 @@ def examples() -> list[dict[str, Any]]:
     return joined
 
 
+def live_examples(
+    window_start: dt.date,
+    window_end: dt.date,
+    *,
+    sample_size: int = 300,
+    seed: int = 20260815,
+) -> list[dict[str, Any]]:
+    """A sample of live (article, ticker) pairs for PREREGISTRATION §8.3's gate.
+
+    Distinct from :func:`examples`, which returns the 100 golden-set rows —
+    this reads whatever ``kr_news`` has actually collected in
+    ``[window_start, window_end]`` and needs no label at all, since
+    :func:`inter_model` only compares candidates against each other. No new
+    fetch happens: ``data/raw/kr/news/`` is already committed hourly by the
+    news workflow, independent of this measurement, so scoring it days after
+    collection gives the identical result scoring it same-day would have
+    (`notes/gate-inter-model-plan.md`).
+
+    Windowed by the collection directory's own date (``data/raw/kr/news/
+    <YYYY-MM-DD>/``, KST — the same date the collector's filenames are
+    stamped in), not by re-parsing each article's ``published_at``, since
+    that is exactly the boundary PREREGISTRATION §8.5 names ("the same
+    window's articles").
+
+    Sampling reuses ``scripts.golden.stratified_sample`` rather than a fresh
+    RNG call — spreading across tickers is what stops one busy day (or one
+    heavily-covered stock) from being most of the sample here exactly as it
+    would for the golden set, and reusing the same function means both places
+    can only drift by an explicit code change, never by two independent
+    scatter routines quietly disagreeing.
+
+    Rows carry no ``label`` key, unlike :func:`examples` — the fields
+    returned are exactly what ``score_article``/``render_user`` read
+    (``article_id``, ``ticker``, ``name``, ``title``, ``description``),
+    matching ``scripts.golden.write_candidates``'s row shape minus the
+    fields score.py never touches (``outlet``, ``link``, ``published_at``).
+    """
+    from src.entity.resolve import resolve
+    from src.util.config import load_aliases, load_watchlist
+
+    articles: dict[str, dict] = {}
+    for path in sorted(glob.glob(str(ROOT / "data" / "raw" / "kr" / "news" / "*" / "*.jsonl.gz"))):
+        day = dt.date.fromisoformat(Path(path).parent.name)
+        if not (window_start <= day <= window_end):
+            continue
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            for line in handle:
+                row = json.loads(line)
+                articles.setdefault(row["article_id"], row)
+
+    if not articles:
+        return []
+
+    matches, _ = resolve(articles.values(), load_aliases())
+    if matches.empty:
+        return []
+    pairs = [(str(row.article_id), str(row.ticker)) for row in matches.itertuples()]
+    chosen = stratified_sample(pairs, articles, size=sample_size, seed=seed)
+
+    names = {entry.ticker: entry.name for entry in load_watchlist(market="KR")}
+    return [
+        {
+            "article_id": article_id,
+            "ticker": ticker,
+            "name": names.get(ticker, ""),
+            "title": articles[article_id].get("title", ""),
+            "description": articles[article_id].get("description", ""),
+        }
+        for article_id, ticker in chosen
+    ]
+
+
 def flagged_keys() -> set[tuple[str, str]]:
     """Examples a rule sent back for a second look (`review.jsonl`).
 
@@ -332,8 +420,16 @@ def run(
     stage: dict[str, Any] | None = None,
     sink=None,
     done: Collection[tuple[str, str, str, int, str]] = (),
+    source: list[dict[str, Any]] | None = None,
 ) -> list[Attempt]:
     """Score every example with every candidate, ``repeats`` times each.
+
+    ``source`` overrides the row set. Defaults to :func:`examples`, the
+    100-row golden set SPEC §7.4's bake-off scores; PREREGISTRATION §8.3's
+    gate measurement passes :func:`live_examples` instead — same pacing,
+    retry, and per-call recording, over a different set of rows that carry
+    no ``label``. Everything below this point does not know or care which
+    one it got.
 
     Failures are recorded rather than raised: SPEC §7.4 measures the share of
     calls that comply, so a model that returns garbage on 3% of articles has to
@@ -360,7 +456,7 @@ def run(
     improve the compliance rate SPEC §7.4 measures.
     """
     prompt = load_prompt(prompt_version)
-    rows = examples()[:limit]
+    rows = (source if source is not None else examples())[:limit]
     attempts: list[Attempt] = []
     pacer = pacer if pacer is not None else Pacer()
     stage = stage if stage is not None else load_models()["scoring"]
@@ -638,6 +734,74 @@ def inter_model(attempts: list[Attempt], left: str, right: str) -> dict[str, flo
     }
 
 
+def gate_report(attempts: list[Attempt], window_start: dt.date, window_end: dt.date) -> str:
+    """PREREGISTRATION §8.3's table: every candidate pair's live-window agreement.
+
+    Distinct from :func:`report` in what it can and cannot say. There is no
+    label for a live article, so no golden-set correlation column and no
+    cost-per-valid-signal ranking — this does not re-run SPEC §7.4's
+    model-selection bake-off, which MANUAL-TASKS §5 already decided. It
+    answers one narrower question: does the model `config/models.yaml`
+    actually names for `scoring` still agree with the runner-up candidates
+    once it is asked about articles the golden set never covered.
+
+    Named per pair rather than per model because §8.5's criterion is
+    symmetric between whichever two (or three) candidates were measured —
+    nothing here assumes one of them is "the" model, on purpose: that
+    assumption is exactly what would make this measurement quietly re-decide
+    SPEC §7.4's choice instead of checking it.
+    """
+    models = sorted({a.model for a in attempts})
+    lines = [
+        "# Inter-model agreement — PREREGISTRATION §8.3 gate measurement",
+        "",
+        f"Live window {window_start} to {window_end}. {len(attempts)} calls across "
+        f"{len(models)} model(s).",
+        "",
+        "> **§8.5's fourth 2-week gate criterion**: inter-model `polarity` correlation "
+        f"> {GATE_POLARITY_BAR} for every pair. This table measures it; it does not repeat "
+        "SPEC §7.4's model-selection bake-off (MANUAL-TASKS §5 already decided that).",
+        "",
+    ]
+    all_pass = True
+    any_pair = False
+    for i, left in enumerate(models):
+        for right in models[i + 1 :]:
+            any_pair = True
+            corr = inter_model(attempts, left, right)
+            shared = len(set(_first_pass(attempts, left)) & set(_first_pass(attempts, right)))
+            polarity = corr.get("polarity")
+            pair_pass = polarity is not None and polarity > GATE_POLARITY_BAR
+            all_pass = all_pass and pair_pass
+            lines += [
+                f"## `{left}` vs `{right}` — {shared} shared (article, ticker) pairs",
+                "",
+                "| " + " | ".join(name for name, *_ in DIMENSIONS) + " |",
+                "|" + "---|" * len(DIMENSIONS),
+                "| " + " | ".join(_cell(corr[n]) for n, *_ in DIMENSIONS) + " |",
+                "| "
+                + " | ".join(
+                    "—" if NOISE_FLOOR[n] is None else f"±{NOISE_FLOOR[n]:.2f}"
+                    for n, *_ in DIMENSIONS
+                )
+                + " |",
+                "",
+                f"`polarity` {_cell(polarity)} {'>' if pair_pass else '≤'} {GATE_POLARITY_BAR} "
+                f"→ {'passes' if pair_pass else 'FAILS'} §8.5's criterion for this pair.",
+                "",
+            ]
+    if not any_pair:
+        lines.append("Fewer than two models were measured — nothing to compare.")
+    else:
+        lines.append(
+            "**Every pair passes §8.5's polarity criterion.**"
+            if all_pass
+            else "**At least one pair FAILS §8.5's polarity criterion — halt signal work, "
+            "repair the measurement layer (§8.5).**"
+        )
+    return "\n".join(lines)
+
+
 def passes(
     correlation: dict[str, float | None],
     consistency: dict[str, float | None],
@@ -873,6 +1037,29 @@ def main(argv: list[str] | None = None) -> int:
         help="include superseded runs; by default each model's newest run is used",
     )
 
+    p_gate = sub.add_parser(
+        "gate",
+        help="PREREGISTRATION §8.3: score a live-window sample once per candidate "
+        "and report inter-model agreement",
+    )
+    p_gate.add_argument("--start", required=True, type=dt.date.fromisoformat, metavar="YYYY-MM-DD")
+    p_gate.add_argument("--end", required=True, type=dt.date.fromisoformat, metavar="YYYY-MM-DD")
+    p_gate.add_argument(
+        "--sample-size",
+        type=int,
+        default=300,
+        help="target row count, spread across tickers (notes/gate-inter-model-plan.md: "
+        "200-300 for ~$4.44 across 3 candidates at 1 repeat each)",
+    )
+    p_gate.add_argument(
+        "--limit", type=int, default=None, help="fewer rows, for a dry run before spending"
+    )
+    p_gate.add_argument(
+        "--resume",
+        action="store_true",
+        help="continue the newest stored gate run instead of starting one",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "run":
@@ -931,6 +1118,62 @@ def main(argv: list[str] | None = None) -> int:
             return 130
         failed = len([a for a in attempts if not a.ok])
         print(f"{len(attempts)} calls, {failed} failed → {ATTEMPTS}")
+        return 0
+
+    if args.command == "gate":
+        from src.util.config import load_models
+
+        candidates = load_models().get("candidates")
+        if not candidates:
+            raise SystemExit("config/models.yaml has no `candidates:` list to bake off")
+        if len(candidates) < 2:
+            raise SystemExit("need at least 2 candidates to measure inter-model agreement")
+
+        rows = live_examples(args.start, args.end, sample_size=args.sample_size)
+        if not rows:
+            raise SystemExit(
+                f"no resolved (article, ticker) pairs in data/raw/kr/news/ for "
+                f"{args.start}..{args.end} — nothing to score"
+            )
+        print(f"{len(rows)} live rows sampled from {args.start} to {args.end}")
+
+        targets = {c["model"] for c in candidates}
+        stored = load(GATE_ATTEMPTS) if GATE_ATTEMPTS.exists() else []
+        fresh = dt.datetime.now(dt.UTC).isoformat()
+        run_ats = dict.fromkeys(targets, fresh)
+        done: set[tuple[str, str, str, int, str]] = set()
+        if args.resume:
+            mine = [a for a in latest_run(stored) if a.model in targets] if stored else []
+            if not mine:
+                raise SystemExit(f"nothing to resume for {sorted(targets)} in {GATE_ATTEMPTS}")
+            for model in targets:
+                previous = [a.run_at for a in mine if a.model == model]
+                if previous:
+                    run_ats[model] = max(previous)
+            done = answered_keys(mine)
+            print(f"resuming {len(run_ats)} model(s) — {len(done)} calls already paid for")
+
+        def flush(attempt: Attempt) -> None:
+            store([attempt], path=GATE_ATTEMPTS, run_at=run_ats[attempt.model])
+
+        try:
+            attempts = run(
+                candidates,
+                repeats=1,  # inter-model agreement, not self-consistency
+                limit=args.limit,
+                source=rows,
+                sink=flush,
+                done=done,
+            )
+        except KeyboardInterrupt:
+            print(
+                f"\ninterrupted — every completed call is in {GATE_ATTEMPTS}. "
+                f"Continue with:  bakeoff gate --start {args.start} --end {args.end} --resume"
+            )
+            return 130
+        failed = len([a for a in attempts if not a.ok])
+        print(f"{len(attempts)} calls, {failed} failed → {GATE_ATTEMPTS}\n")
+        print(gate_report(latest_run(load(GATE_ATTEMPTS)), args.start, args.end))
         return 0
 
     attempts = load()
