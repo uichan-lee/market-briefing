@@ -65,6 +65,16 @@ _WEEKDAY_KO = ("월", "화", "수", "목", "금", "토", "일")
 # Sections with no implementation, and the reason each one gives the reader.
 # Written as data rather than inline prose so that the header's "미구현 섹션"
 # line and the section bodies can never disagree about what is missing.
+#
+# Removing "⑧" is a two-file change, not one. src/report/consistency.py
+# (the guard that compares every rating label in the LLM's prose against ⑥'s
+# computed rating, CLAUDE.md rule 3's "checked before publication" property)
+# already exists and is tested, but nothing calls it yet — grep confirms
+# render() is not among its callers. Wiring real ⑧ content into render()
+# without wiring consistency.py's check in the same change reopens CLAUDE.md
+# rule 3: an LLM-authored paragraph could publish already contradicting ⑥
+# with nothing to catch it. Found by /project-review on 2026-08-14; do both
+# halves together.
 ABSENT_SECTIONS: dict[str, tuple[str, str]] = {
     "⑤": ("반증 (red team)", "LLM 단계입니다 — SPEC §12 6~8단계 완료 후 켜집니다"),
     "⑧": ("AI 총평", "LLM 단계입니다 — SPEC §12 6~8단계 완료 후 켜집니다"),
