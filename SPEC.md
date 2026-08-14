@@ -133,7 +133,7 @@ Aggregates the individual scores from the §6 schema per ticker. Displayed field
 
 **④ Calendar**
 
-Same-day/next-day earnings releases, FOMC/CPI/employment data, options expiration, KR ex-dividend dates and IPO schedules.
+Same-day/next-day earnings releases, FOMC/CPI/employment data, options expiration, KR ex-dividend dates and IPO schedules. **CPI/employment/FOMC dates and options expiration are built; US individual-company earnings and KR ex-dividend/IPO dates are not, decided 2026-08-14** — `notes/calendar-collector-plan.md` has the source verification and the reasoning for what's deferred and why. The section names both gaps inline rather than staying fully absent.
 
 **⑤ Red team section**
 
@@ -141,7 +141,7 @@ Has the LLM generate **counterarguments only** against the conclusions from ①�
 
 **⑥ Directional rating**
 
-Every watchlist ticker gets a rating on a seven-point scale, with the evidence that produced it.
+Every **KR** watchlist ticker gets a rating on a seven-point scale, with the evidence that produced it. **US tickers are out of scope for this section, decided 2026-08-14** — `notes/us-rating-plan.md` has the reasoning and the plan for adding them. Their exposure in the briefing today is §2.2① only.
 
 | Rating | Korean | Composite score |
 |---|---|---|

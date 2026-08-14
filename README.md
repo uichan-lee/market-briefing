@@ -285,7 +285,7 @@ Tests that hit the network are marked `@pytest.mark.network` and excluded by def
 
 ## Project status
 
-**Running stage.** The deterministic pipeline collects, resolves, computes, rates, renders and delivers twice a day without supervision, and has done so since 2026-08-03. `data/raw/` holds a 3-year backfill plus a live news record. The golden set and the model bake-off are finished. What is missing is the embedding pipeline, without which `news_polarity` has nothing to score.
+**Running stage.** The deterministic pipeline collects, resolves, computes, rates, renders and delivers twice a day without supervision, and has done so since 2026-08-03. `data/raw/` holds a 3-year backfill plus a live news record. The golden set and the model bake-off are finished. What is missing is the embedding pipeline, without which `news_polarity` has nothing to score. §2.2④ (calendar) went from fully absent to partial on 2026-08-14 — CPI/employment/FOMC release dates and options expiration are now real collected data; US individual-company earnings and KR ex-dividend/IPO dates stay named-absent, and §2.2⑥'s directional rating stays scoped to the 31 KR tickers only, both by deliberate decision rather than oversight — see [notes/calendar-collector-plan.md](notes/calendar-collector-plan.md) and [notes/us-rating-plan.md](notes/us-rating-plan.md).
 
 Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it can be checked against the repository rather than taken on trust.
 
@@ -331,9 +331,13 @@ With the history in place the features stopped being `NaN` — counts measured t
 
 ### Two decisions parked
 
-**`rev_4w` has no data source.** [SPEC §5](SPEC.md) defines it as the 4-week change in *consensus* EPS — forward analyst estimates. pykrx's `EPS` is trailing, and substituting it would produce a number that looks like the feature and is not. Doing it properly needs an estimates vendor (FnGuide, QuantiWise). Weight 0.15; absent, and `rate()` renormalizes.
+**`rev_4w` has no data source.** [SPEC §5](SPEC.md) defines it as the 4-week change in *consensus* EPS — forward analyst estimates. pykrx's `EPS` is trailing, and substituting it would produce a number that looks like the feature and is not. Doing it properly needs an estimates vendor. Weight 0.15; absent, and `rate()` renormalizes. Vendor research is done as of 2026-08-14 — FnGuide/QuantiWise are enterprise-only with no published individual tier, a sweep of 9 sites found every free consensus page structurally closed to scraping (robots.txt or explicit anti-scraping terms), and a university-affiliated path (WRDS/FactSet/Capital IQ Pro) is pending a reply from the Haas library on license fit and data lag — see [notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md).
 
 **`valuation_band` will turn itself on, and a four-year backfill only buys time.** It is a 756-session PBR percentile; the stored window held 732 sessions as of 2026-08-07 and grows by one per KRX session, so it crosses 756 on **2026-09-11** for 30 tickers with no backfill at all. Extending the backfill by a year turns it on about four weeks earlier, for 124 KRX requests. Weight 0.05 — which is what makes waiting the obvious default.
+
+### One decision made: US tickers are out of scope for §2.2⑥, for now
+
+SPEC §2.2⑥ read "every watchlist ticker gets a rating," but `render.py`'s rating path has always been hardcoded to the 31 KR tickers — the 40 US tickers have only ever surfaced in §2.2① (index/sector-level transmission). Found and settled 2026-08-14: extending `rate()` to US tickers today would push every one of them below `min_weight_coverage` (the active weights are Korean investor-flow data with no US equivalent computed) and force a manufactured 관망 across the board, which is worse than the honest gap. US individual-ticker ratings need their own feature set and are deferred until the KR pipeline clears its 2-week and 3-month gates. [notes/us-rating-plan.md](notes/us-rating-plan.md) has the full reasoning.
 
 ### Why step 9 came before steps 6–8, and step 10 before them too
 
@@ -343,14 +347,14 @@ The [2026-08-06 review](notes/review-2026-08-06.md) extended the same reasoning 
 
 ### What is blocking
 
-Open items are tracked in [MANUAL-TASKS.md](MANUAL-TASKS.md), ordered by what they block. As of 2026-08-13:
+Open items are tracked in [MANUAL-TASKS.md](MANUAL-TASKS.md), ordered by what they block. As of 2026-08-14:
 
 | # | Task | Blocks |
 |---|---|---|
-| 1 | Sign off on the one-time ~$4.44 gate-measurement spend | PREREGISTRATION §8.5's 4th 2-week-gate criterion — [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
-| 2 | `rev_4w` data source decision | The one rating feature besides `news_polarity` with no source |
-| 3 | `config/rating.yaml` calibration | Trustworthy ratings — do it *after* the 2-week gate |
-| 4 | KIS application | Real-time quotes only; blocks nothing today |
+| 1 | ~~One-time ~$4.44 gate-measurement spend~~ | ✅ approved, scheduled to run 2026-08-15 — [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
+| 2 | `rev_4w` data source decision | The one rating feature besides `news_polarity` with no source — vendor research done, [notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md) |
+| 3 | `config/rating.yaml` calibration | Trustworthy ratings — planned for 2026-08-23, ~11 days of real distributions by then |
+| 4 | ~~KIS application~~ | ✅ done 2026-08-05; keys held, nothing consumes them yet |
 
 **Nothing blocks step 6 any more, and step 6 no longer blocks anything either** — `src/entity/resolve.py` alone already produces 92–148 (article, ticker) pairs/day, inside SPEC §6.1's own 60–100 target band.
 
