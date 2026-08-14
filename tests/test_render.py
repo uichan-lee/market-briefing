@@ -27,6 +27,7 @@ from src.report.render import (
     load_rating_history,
     ratings_frame,
     render,
+    render_calendar,
     render_header,
     render_ratings,
     render_scan,
@@ -281,6 +282,54 @@ def test_volatility_z_needs_a_full_window():
         }
     )
     assert volatility_z(prices, dates[-1].date()) == {}
+
+
+# --- ④ calendar -------------------------------------------------------------
+
+
+def calendar_frame(*rows: tuple[dt.date, str, str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [{"date": pd.Timestamp(d), "event": event, "label": label} for d, event, label in rows]
+    )
+
+
+def test_calendar_with_no_data_says_so():
+    page = render_calendar(inputs())
+    assert "캘린더 데이터가 없어" in page
+
+
+def test_calendar_with_data_but_nothing_today_or_tomorrow_says_so():
+    page = render_calendar(
+        inputs(calendar=calendar_frame((dt.date(2026, 9, 1), "cpi", "CPI 발표")))
+    )
+    assert "오늘·내일 예정된 이벤트가 없습니다" in page
+
+
+def test_calendar_shows_todays_and_tomorrows_events_only():
+    frame = calendar_frame(
+        (DAY, "cpi", "CPI 발표"),
+        (DAY + dt.timedelta(days=1), "fomc", "FOMC 회의 (08/04~08/05)"),
+        (DAY + dt.timedelta(days=2), "employment_situation", "고용지표 발표"),  # outside the window
+    )
+    page = render_calendar(inputs(calendar=frame))
+    assert "CPI 발표" in page
+    assert "(오늘)" in page
+    assert "FOMC 회의" in page
+    assert "(내일)" in page
+    assert "고용지표 발표" not in page
+
+
+def test_calendar_names_the_two_sub_sources_still_absent():
+    """The section is no longer in ABSENT_SECTIONS once built, so the two
+    remaining gaps have to be named inline — the same shape ② and ③ already
+    use for their own unbuilt pieces."""
+    page = render_calendar(inputs(calendar=calendar_frame((DAY, "cpi", "CPI 발표"))))
+    assert "US 개별 종목 실적 발표일" in page
+    assert "KR 배당락·IPO 일정" in page
+
+
+def test_calendar_is_not_in_absent_sections_once_built():
+    assert "④" not in ABSENT_SECTIONS
 
 
 # --- ⑥ ratings ------------------------------------------------------------

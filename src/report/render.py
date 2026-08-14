@@ -66,7 +66,6 @@ _WEEKDAY_KO = ("월", "화", "수", "목", "금", "토", "일")
 # Written as data rather than inline prose so that the header's "미구현 섹션"
 # line and the section bodies can never disagree about what is missing.
 ABSENT_SECTIONS: dict[str, tuple[str, str]] = {
-    "④": ("캘린더", "실적·FOMC·IPO 일정 수집기가 아직 없습니다 (SPEC §12 미착수)"),
     "⑤": ("반증 (red team)", "LLM 단계입니다 — SPEC §12 6~8단계 완료 후 켜집니다"),
     "⑧": ("AI 총평", "LLM 단계입니다 — SPEC §12 6~8단계 완료 후 켜집니다"),
 }
@@ -88,6 +87,7 @@ class ReportInputs:
     kr_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
     us_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
     macro: pd.DataFrame = field(default_factory=pd.DataFrame)
+    calendar: pd.DataFrame = field(default_factory=pd.DataFrame)
     sector_mapping: Sequence[Mapping[str, object]] = ()
     rating_config: Mapping[str, object] = field(default_factory=dict)
     news_counts: Mapping[str, int] = field(default_factory=dict)
@@ -624,6 +624,52 @@ def render_news(inputs: ReportInputs) -> str:
     return "\n".join(lines)
 
 
+# --- ④ calendar -------------------------------------------------------------
+
+
+def render_calendar(inputs: ReportInputs) -> str:
+    """SPEC §2.2④, partial. CPI/employment/FOMC/options expiry are built;
+    US 개별 종목 실적 발표일 and KR 배당락·IPO are named absent inline, the
+    way ②'s four unbuilt flags and ③'s missing score dimensions already name
+    their own remaining gaps — this section is no longer in ABSENT_SECTIONS,
+    so hiding nothing here is what keeps CLAUDE.md's "state what's missing"
+    rule intact for the two sub-sources still not built
+    (notes/calendar-collector-plan.md).
+    """
+    lines = ["## ④ 캘린더", ""]
+    if inputs.calendar.empty:
+        lines.append("> 캘린더 데이터가 없어 이 섹션을 만들 수 없습니다.")
+    else:
+        today = pd.Timestamp(inputs.day)
+        # Positional form with an explicit unit, not the days= keyword: the
+        # keyword form builds a NumPy timedelta with no unit, which NumPy has
+        # deprecated (src/collectors/macro.py's _parse has the same note).
+        tomorrow = today + pd.Timedelta(1, "D")
+        window = inputs.calendar[
+            pd.to_datetime(inputs.calendar["date"]).isin([today, tomorrow])
+        ].sort_values("date")
+        if window.empty:
+            lines.append("> 오늘·내일 예정된 이벤트가 없습니다.")
+        else:
+            lines += ["| 날짜 | 이벤트 | 설명 |", "|---|---|---|"]
+            for row in window.itertuples():
+                when = "오늘" if row.date.date() == inputs.day else "내일"
+                lines.append(f"| {row.date:%Y-%m-%d} ({when}) | {row.event} | {row.label} |")
+
+    lines += [
+        "",
+        "> SPEC §2.2④의 5개 항목 중 CPI·고용지표·FOMC·옵션 만기 4개가 구현됐습니다. "
+        "**US 개별 종목 실적 발표일: 아직 없음** — 무료 소스를 못 찾았습니다 "
+        "(Alpaca corporate-actions API는 배당·분할·합병만 제공하고 실적 캘린더가 "
+        "없습니다; notes/us-rating-plan.md가 미국 개별 종목을 §2.2⑥ 범위 밖으로 "
+        "둔 것과 같은 이유로 우선순위도 낮습니다). "
+        "**KR 배당락·IPO 일정: 아직 없음** — pykrx 공개 함수 90개를 전수 확인한 "
+        "결과 해당 기능이 없고, DART API 문서는 아직 검토 전입니다.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 # --- ⑥ directional rating -------------------------------------------------
 
 
@@ -835,7 +881,7 @@ def render(inputs: ReportInputs, *, rating_history: pd.DataFrame | None = None) 
         render_regime(inputs),
         render_scan(inputs),
         render_news(inputs),
-        _absent("④"),
+        render_calendar(inputs),
         render_ratings(inputs, results),
         _absent("⑤"),
         render_shadow(inputs, rating_history),
@@ -987,6 +1033,7 @@ def load_inputs(
     kr_prices = read("kr/price")
     us_prices = read("us/price")
     macro = read("macro", key=("date", "series"))
+    calendar = read("calendar", key=("event", "date"))
 
     # The Tiingo preview extends the *display* series past the Alpaca recency
     # boundary. Features never see it: `compute()` reads only KR frames, and
@@ -1016,6 +1063,7 @@ def load_inputs(
         kr_prices=kr_prices,
         us_prices=us_prices,
         macro=macro,
+        calendar=calendar,
         sector_mapping=load_sector_mapping(),
         rating_config=load_rating(),
         news_counts=counts,

@@ -14,9 +14,12 @@ differ (notes/step11-plan.md):
   ``data/raw/us/price_preview/`` — a display-only path the feature pipeline
   never reads — plus a ``macro`` refresh.
 
-Both runs also collect ``kr_news``: the hourly workflow already covers the
-clock, but an extra poll costs nothing (dedup drops what is already stored) and
-it is what produces a *fresh* feed-continuity check for the report header.
+Both runs also collect ``kr_news`` and ``calendar``: the hourly workflow
+already covers the news clock, but an extra poll costs nothing (dedup drops
+what is already stored) and it is what produces a *fresh* feed-continuity
+check for the report header. ``calendar`` (SPEC §2.2④, partial — macro
+release dates and options expiry) has no KRX dependency and nothing that
+favors one run over the other, so it runs in both, same as ``macro``.
 
 **The whole catch-up window is re-fetched every run, deliberately.** Some of
 this data publishes late — KRX short-sale balance lags the session by two days,
@@ -45,6 +48,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.collectors import (
+    calendar as calendar_events,
+)
 from src.collectors import (
     kr_flow,
     kr_index,
@@ -103,6 +109,16 @@ WINDOW_DAYS = 8
 # 30 gave all six series at 100% with stale tails of 1–5 trading days.
 MACRO_WINDOW_DAYS = 30
 
+# calendar_events isn't compensating for a slow publisher the way
+# MACRO_WINDOW_DAYS is — CPI/employment/FOMC dates are announced months
+# ahead, and options expiry is computed with no lag at all. This sizes how
+# far forward the §2.2④ section needs to see, not how far back a fetch has
+# to reach to catch a late publisher. 30 days back is a short trailing
+# history for check_event_continuity; 120 days ahead covers a full quarter
+# of scheduled releases and meetings (notes/calendar-collector-plan.md).
+CALENDAR_LOOKBACK_DAYS = 30
+CALENDAR_LOOKAHEAD_DAYS = 120
+
 PATHS = {
     "kr_price": RAW / "kr" / "price",
     "kr_flow": RAW / "kr" / "investor_flow",
@@ -110,6 +126,7 @@ PATHS = {
     "us_price": RAW / "us" / "price",
     "us_price_preview": RAW / "us" / "price_preview",
     "macro": RAW / "macro",
+    "calendar": RAW / "calendar",
 }
 
 # Row identity per source, for the changed-content comparison.
@@ -120,6 +137,7 @@ KEYS = {
     "us_price": ["date", "ticker"],
     "us_price_preview": ["date", "ticker"],
     "macro": ["date", "series"],
+    "calendar": ["event", "date"],
 }
 
 
@@ -312,6 +330,18 @@ def collect_macro(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
     return f"{len(df)} rows, {new} new / {revised} revised", report
 
 
+def collect_calendar(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
+    # The driver's window answers a different question than this collector
+    # needs — see CALENDAR_LOOKBACK_DAYS/CALENDAR_LOOKAHEAD_DAYS above.
+    del start
+    df, report = calendar_events.fetch(
+        end - dt.timedelta(days=CALENDAR_LOOKBACK_DAYS),
+        end + dt.timedelta(days=CALENDAR_LOOKAHEAD_DAYS),
+    )
+    new, revised = write_daily("calendar", df)
+    return f"{len(df)} rows, {new} new / {revised} revised", report
+
+
 def collect_news(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
     del start, end  # news has no date range; the buffer is whatever it is now
     now = now_utc()
@@ -331,11 +361,13 @@ RUNS: dict[str, dict[str, Collector]] = {
     "morning": {
         "kr_news": collect_news,
         "macro": collect_macro,
+        "calendar": collect_calendar,
         "us_price_preview": collect_us_preview,
     },
     "evening": {
         "kr_news": collect_news,
         "macro": collect_macro,
+        "calendar": collect_calendar,
         "kr_price": collect_kr_price,
         "kr_flow": collect_kr_flow,
         "kr_index": collect_kr_index,

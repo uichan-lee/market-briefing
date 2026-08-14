@@ -81,6 +81,37 @@ def test_both_runs_collect_news():
     assert "kr_news" in RUNS["evening"]
 
 
+def test_both_runs_collect_calendar():
+    """calendar (SPEC §2.2④, partial) has no KRX dependency and nothing that
+    favors one run over the other, same as macro."""
+    assert "calendar" in RUNS["morning"]
+    assert "calendar" in RUNS["evening"]
+
+
+def test_calendar_looks_ahead_further_than_the_driver_window(monkeypatch):
+    """calendar isn't compensating for a slow publisher the way macro is —
+    it's sizing how far forward §2.2④ needs to see. CPI/FOMC dates are known
+    months ahead, so a short window would make the section go quiet with no
+    error, the same failure shape MACRO_WINDOW_DAYS's own regression guards
+    against."""
+    import scripts.collect_daily as mod
+
+    seen = {}
+
+    def spy(start, end, **kwargs):
+        seen["start"], seen["end"] = start, end
+        return pd.DataFrame(), ValidationReport("calendar")
+
+    monkeypatch.setattr(mod.calendar_events, "fetch", spy)
+    monkeypatch.setattr(mod, "write_daily", lambda name, df: (0, 0))
+
+    end = dt.date(2026, 8, 9)
+    mod.collect_calendar(end - dt.timedelta(days=mod.WINDOW_DAYS), end)
+
+    assert seen["end"] == end + dt.timedelta(days=mod.CALENDAR_LOOKAHEAD_DAYS)
+    assert seen["start"] == end - dt.timedelta(days=mod.CALENDAR_LOOKBACK_DAYS)
+
+
 def test_a_quiet_driver_run_still_records_that_it_ran(tmp_path, monkeypatch):
     """The 2026-08-08 defect, in the second caller. `kr_news.main()` was fixed
     to write a zero-row file when nothing new arrived — see its sibling
