@@ -30,6 +30,116 @@ and options expiration dates.
   per-company. Needs a DART OpenAPI docs read that hasn't happened yet.
   DART is one of the sources CLAUDE.md flags as requiring verification
   before writing calls, so this isn't a quick add-on to the current pass.
+  **Update 2026-08-14: that read happened — see "DART OpenAPI verification"
+  below. Ex-dividend closes the same way US earnings did (named absent, not
+  pursued). IPO does not close, but its scope turned out to be different
+  from what this bullet assumed — read the update before treating "IPO
+  schedule" as still meaning what it means above.**
+
+## DART OpenAPI verification, 2026-08-14 — research only, no code
+
+Follow-up pass, done after the collector above shipped, to close the "needs
+a DART OpenAPI docs read that hasn't happened yet" gap left by the bullet
+above. Scope was explicitly research: read opendart.fss.or.kr's actual
+endpoint documentation and confirm what structured fields exist, the same
+live-verification discipline this file already applied to FRED/
+federalreserve.gov. No code was written in this pass; this section exists
+so the next person (Claude or Ricky) does not redo the same docs read.
+
+### Ex-dividend date: closes as absent, same shape as US earnings
+
+Checked DART's DS002 (정기보고서 주요정보) group, the "배당에 관한 사항"
+endpoint (`apiGrpCd=DS002&apiId=2019005`) — the only DART endpoint whose
+name suggests dividend data. Its response fields, confirmed by fetching a
+real response:
+
+`rcept_no`, `corp_cls`, `corp_code`, `corp_name`, `se`, `stock_knd`,
+`thstrm`(당기), `frmtrm`(전기), `lwfr`(전전기), `stlm_dt`.
+
+`thstrm`/`frmtrm`/`lwfr` are **already-paid dividend amounts for the current
+and two prior settlement periods**, disclosed retrospectively inside a
+periodic report (사업보고서/분기보고서) — the same shape as "how much did
+this company pay last year," not "when is the next ex-dividend date."
+There is no forward-looking date field anywhere in this response — no
+배당기준일 (record date), no 배당락일 (ex-dividend date), nothing a
+calendar could key on. This is a disclosure-of-fact endpoint, not a
+schedule endpoint.
+
+No other DART endpoint name (across the six API groups: DS001 공시정보,
+DS002 정기보고서 주요정보, DS003 정기보고서 재무정보, DS004 지분공시 종합
+정보, DS005 주요사항보고서 주요정보, DS006 증권신고서 주요정보) suggests
+dividend *scheduling* data. **Conclusion: DART has no structured
+ex-dividend-date field. This closes exactly like US individual-company
+earnings dates — named absent above, with a documented reason, not pursued
+further.** No other free KR source was checked in this pass (pykrx was
+already ruled out for this in the original plan); if this is revisited
+later, KRX's own disclosure system (KIND, kind.krx.co.kr) is the next
+candidate to check, not attempted here.
+
+### IPO schedule: does not close, but the framing above was wrong
+
+Checked DS006 (증권신고서 주요정보), the 지분증권 (equity securities)
+endpoint (`apiGrpCd=DS006&apiId=2020054`). This one has genuine structured
+schedule fields, confirmed by fetching a real response:
+
+`sbd` (청약기일 — subscription period), `pymd` (납입기일 — payment date),
+`sband` (청약공고일 — subscription announcement date), `asand` (배정공고일
+— allotment announcement date), `asstd` (배정기준일 — allotment record
+date). No separate field for "상장예정일" (expected first-trading date)
+was found in this endpoint's documented response — the schedule stops at
+payment/allotment, not at the listing itself.
+
+**But the more important correction is about scope, not field coverage.**
+The bullet above frames this as "IPO schedule," implicitly meaning: track
+upcoming new listings so the report can flag them. That framing doesn't fit
+this project. `config/watchlist.yaml` is confirmed to be a fixed,
+hand-maintained list of already-listed tickers (`MANUAL-TASKS.md §2`) —
+this project does not scan the whole market for new listings, and a brand
+new company's IPO date is irrelevant to a report scoped to
+`config/watchlist.yaml` entries, because that company isn't a watchlist
+entry until Ricky manually adds it (and by construction, a company gets
+added to the watchlist after it's tradeable, not before). Checking KRX's
+own 신규상장 (new-listing) notices — which is what "IPO schedule" would
+actually require if taken literally — was considered and rejected for this
+reason; it would answer a question this project doesn't ask.
+
+What DS006's 지분증권 endpoint is actually useful for: **증권신고서
+(securities registration statements) cover every public equity issuance by
+a company that already has a `corp_code`, including a follow-on/rights
+offering (유상증자) by a company already on the watchlist** — not only
+brand-new IPOs. Filed by the issuing company itself, so it can be queried
+filtered to exactly the watchlist's own `corp_code` set (the same
+`corp_code` mapping `kr_filings` already resolves per `API-KEYS.md §3`),
+with no market-wide scan and no KRX cross-reference needed. If a watchlist
+company announces a rights offering, this endpoint's `sbd`/`pymd` fields
+are exactly the subscription/payment schedule a holder needs — genuinely
+calendar-worthy, and genuinely in scope, unlike a stranger company's IPO.
+
+**Conclusion: this is a real, buildable feature, but it should be renamed
+and rescoped before anyone builds it** — from "KR IPO schedule" to
+something like "watchlist rights-offering/secondary-offering schedule."
+SPEC §2.2④'s current wording ("KR ex-dividend dates and IPO schedules")
+should be corrected to reflect this the next time SPEC is touched for this
+section; not done in this pass since it changes what the section promises
+and Ricky should see the wording before it's committed.
+
+**Not implemented in this pass — research only, per scope.** If Ricky
+wants this built, it needs its own short design pass (own schema, since
+this doesn't fit the existing `calendar.py` `event`/`date`/`label` shape
+cleanly — a rights-offering row is tied to a specific ticker, unlike every
+row `calendar.py` currently produces, so it likely wants a `ticker` column
+and probably belongs closer to `kr_filings` than to `calendar.py`), sized
+the same way the macro-events half was, and validation written before the
+fetch logic per CLAUDE.md's collector rule. Concretely still unverified,
+flagged for whoever picks this up: whether DART's filing-search endpoint
+(the one `kr_filings` already calls) can be filtered by `corp_code` **and**
+by filing-type (증권신고서/지분증권 specifically) in one call, or whether
+it needs a full-text-search-then-filter approach; and whether payment date
+(`pymd`) is a close enough proxy for "shares become tradeable" for the
+report's purposes, or whether a real "trading starts" date needs a further
+cross-check against KRX (not the same question as "new-listing scan" above
+— this would be confirming one already-known event's date, not discovering
+unknown events).
 
 ## Source verification (all live, none assumed)
 
