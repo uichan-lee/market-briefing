@@ -4,7 +4,7 @@
 
 This system does not execute trades. It produces a document a human reads and acts on.
 
-[![tests](https://img.shields.io/badge/tests-672%20offline%20%2B%2010%20network-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-711%20offline%20%2B%2012%20network-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3.13-blue)](pyproject.toml)
 [![evaluation](https://img.shields.io/badge/evaluation-preregistered%202026--08--02-orange)](PREREGISTRATION.md)
 
@@ -232,7 +232,7 @@ market-briefing/
 ├── src/
 │   ├── util/session.py        UTC/KST, trading days, look-ahead boundary
 │   ├── util/config.py         config loading + hand-editing safeguards
-│   ├── collectors/            validate.py + 6 collectors (KR/US price, flow, news, macro)
+│   ├── collectors/            validate.py + 7 collectors (KR/US price, flow, index, news, macro, calendar)
 │   ├── entity/resolve.py      alias-driven ticker matching + ambiguous bucket
 │   ├── embed/                 dedup + relevance — SPEC §12 step 6, not started
 │   ├── features/              compute.py (5 of 7 features) + normalize.py (z-scores)
@@ -243,7 +243,7 @@ market-briefing/
 │
 ├── scripts/                   config_helper · backfill · collect_daily · golden
 ├── reports/                   rendered briefings, committed daily
-├── tests/                     672 offline, 10 network
+├── tests/                     711 offline, 12 network
 └── data/                      raw/ · ratings/ · bakeoff/ · golden/ committed — see .gitignore for why each
 ```
 
@@ -271,7 +271,7 @@ market-briefing/
 
 ```bash
 uv sync                          # install dependencies
-uv run pytest -m "not network"   # the default test run — 672 tests
+uv run pytest -m "not network"   # the default test run — 711 tests
 uv run ruff check . && uv run ruff format .
 
 cp .env.example .env             # then fill in credentials (see API-KEYS.md)
@@ -293,7 +293,7 @@ Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it ca
 |---|---|---|
 | 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
-| 3 | Collectors + validation tests | ✅ 6 collectors, 672 offline tests, 10 network |
+| 3 | Collectors + validation tests | ✅ 7 collectors, 711 offline tests, 12 network |
 | 4 | 3-year backfill into `data/raw/` | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
 | 5 | Entity resolution + ambiguous ratio | ✅ ambiguous 8.8% of 2,432 articles (threshold 30%) |
 | 6 | Embedding pipeline (dedup + relevance) | ⬜ not started — [notes/step6-plan.md](notes/step6-plan.md). Not blocking anything |
