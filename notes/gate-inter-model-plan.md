@@ -1,5 +1,35 @@
 # PREREGISTRATION §8.3 gate measurement: plan
 
+**Status (2026-08-14): implemented, not yet run.** `live_examples()`, the
+`source` parameter on `run()`, `gate_report()`, and the `bakeoff gate` CLI
+command described below all exist now in `src/eval/bakeoff.py`, ahead of the
+2026-08-15 to 17 window this plan named for having enough live articles.
+Everything under "What's needed" is done exactly as scoped — nothing beyond
+it (`data/scores/`, `collect_daily.py` wiring, `news_polarity`) was touched,
+per this plan's own scope boundary.
+
+**To run it** (spends the real ~$4.44 once enough of the window has
+accumulated — dry-run first with `--limit`):
+
+```bash
+uv run python -m src.eval.bakeoff gate --start 2026-08-12 --end 2026-08-26 \
+  --limit 5   # dry run, ~15 calls, confirms keys/schema before the real spend
+uv run python -m src.eval.bakeoff gate --start 2026-08-12 --end 2026-08-26
+```
+
+Verified 2026-08-14 with `--limit 0` (zero model calls, free): sampling 300
+rows from the real `data/raw/kr/news/` window, the CLI, and `gate_report`'s
+formatting all run end-to-end without error. `uv run pytest -m "not network"`
+covers `live_examples` (window filtering, row shape, empty-corpus cases) and
+`gate_report` (pass/fail against `GATE_POLARITY_BAR`) with synthetic data —
+no real spend in the test suite.
+
+`--end` above uses the window's actual close (2026-08-26) rather than
+whatever the run date happens to be — nothing requires stopping at "today,"
+and a wider end date simply includes fewer future rows until they exist.
+
+---
+
 Written before implementation, 2026-08-13. Not a SPEC §12 numbered step —
 this is the measurement PREREGISTRATION §8.5's 2-week gate names as its
 fourth criterion (inter-model polarity correlation > 0.5), separate from and

@@ -22,7 +22,7 @@ Claude가 대신할 수 없는 작업. Ricky가 직접 하는 것들이고, 이 
 | ~~6~~ | ~~`config/aliases.yaml` 작성~~            | ✅ **완료 2026-08-05** | [§3](#3-별칭-사전--완료)      |
 | **7** | **`rev_4w` 데이터 소스 결정**             | **판단**               | [§11](#11-rev_4w-소스-결정--백필-확장) |
 | **8** | **`valuation_band`용 백필 4년 확장 여부** | **판단**               | [§11](#11-rev_4w-소스-결정--백필-확장) |
-| **14** | **1회성 게이트 측정 비용(~$4.44) 승인** | **판단** | [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
+| ~~14~~ | ~~1회성 게이트 측정 비용(~$4.44) 승인~~ | ✅ **승인 완료 2026-08-14 — 8/15 실행 예정** | [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
 | ~~9~~ | ~~폰에서 브리핑 이메일 확인~~              | ✅ **완료 2026-08-06** | [§13](#13-이제-매일-오는-것) |
 | ~~10~~ | ~~골든셋 100건 라벨링~~                   | ✅ **완료 2026-08-08** | [§4](#4-골든셋--모델-선택을-막는-항목) |
 | ~~11~~ | ~~`golden recheck` — 하루 뒤 10건 재라벨링~~ | ✅ **완료 2026-08-10** — 단 그 결과는 폐기됨, 15번 참조 | [§4](#4단계--재라벨링-검사-하루-뒤-5분) |
@@ -1015,7 +1015,9 @@ Claude가 베이크오프(SPEC §7.4)를 돌려 비교표를 만든다. **결정
 
 **미국 개별 종목 등급(§2.2⑥)은 범위 밖으로 확정됐다** — 2026-08-14, [notes/us-rating-plan.md](notes/us-rating-plan.md). KR 게이트를 통과할 때까지 §2.2⑥은 KR 31종목 전용이고, 미국 40종목은 §2.2①(미국→한국 전이)로만 노출된다. 이건 Ricky의 개인 할 일이 아니라 엔지니어링 스코프 결정이라, 상세는 이 문서가 아니라 위 노트 파일에 있다.
 
-**6단계(임베딩 파이프라인, [notes/step6-plan.md](notes/step6-plan.md))가 다음이 아니다 — 2026-08-13 재검토에서 순서를 바꿨다.** entity resolution만으로 이미 하루 92~148쌍이 나오고 SPEC §6.1의 60~100 목표 구간 안이라, 6단계는 지금 아무것도 막고 있지 않다. **Claude의 다음 대기열은 PREREGISTRATION §8.5 2주 게이트의 4번 기준(모델간 polarity 상관) 측정이다**([notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md)) — 1회성 ~$4.44, Ricky 승인 필요(위 표 14번). 200~300쌍이 쌓이는 2026-08-15~17경 실행 예정이고, 6단계는 그 뒤로 간다.
+**6단계(임베딩 파이프라인, [notes/step6-plan.md](notes/step6-plan.md))가 다음이 아니다 — 2026-08-13 재검토에서 순서를 바꿨다.** entity resolution만으로 이미 하루 92~148쌍이 나오고 SPEC §6.1의 60~100 목표 구간 안이라, 6단계는 지금 아무것도 막고 있지 않다. **Claude의 다음 대기열은 PREREGISTRATION §8.5 2주 게이트의 4번 기준(모델간 polarity 상관) 측정이다**([notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md)) — 1회성 ~$4.44, 2026-08-14에 승인됨(위 표 14번). 200~300쌍이 쌓이는 2026-08-15~17경 실행 예정이고, 6단계는 그 뒤로 간다.
+
+**측정 코드는 2026-08-14에 미리 만들어졌다 — 8/15엔 그냥 돌리기만 하면 된다.** `src/eval/bakeoff.py`에 `live_examples()`(라이브 윈도우에서 샘플링, 라벨 불필요), `run()`의 `source` 파라미터, `gate_report()`, `bakeoff gate` CLI가 다 들어갔다. `--limit 0`으로 실제 API 호출 없이 종단간 확인 완료. 실행 방법은 [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) 상단 "Status" 참조.
 
 > ⚠ **§2.2⑧(AI 총평)을 켜는 작업의 첫 서브태스크는 코드가 아니라 배선이다.** `src/report/consistency.py`는 이미 존재하고 테스트도 있지만, `grep -n consistency src/report/render.py`가 매치 없음을 반환한다 — 즉 실제 리포트 렌더링 경로에서 한 번도 호출된 적이 없다. rule 3("LLM이 등급을 만들지 않는다")을 지키는 세 가지 성질 중 "발행 전 검사받는다"는 이 배선이 있어야 성립하므로, ⑧을 켜기 *전에* 먼저 연결하고 실제 LLM 출력으로 한 번 통과시켜 확인한다.
 >
