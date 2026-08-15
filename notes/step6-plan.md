@@ -1,5 +1,29 @@
 # Step 6 — embedding pipeline: plan
 
+**Status (2026-08-15): half shipped.** The dedup half (`src/embed/encode.py`,
+`src/embed/dedup.py`) is built, calibrated, and tested — see the module
+docstrings for the numbers, not repeated here. Both of this plan's flagged
+open questions for that half are now resolved by measurement rather than
+guessed: **title-only** embedding (title+description performed far worse —
+59 of 527 contrast pairs above the lowest known duplicate, vs. 2 for
+title-only, both of which turned out on inspection to be duplicates the
+cheap ground-truth heuristic missed) and **threshold 0.85**, not SPEC's
+placeholder 0.92 (which would have missed 2 of 5 real cross-outlet
+duplicates). `bge-m3`'s revision is pinned
+(`5617a9f61b028005a4858fdac845db406aefb181`, read live off the HF Hub).
+
+**The topicality half (`src/embed/topicality.py`) is not built.** This
+plan's own design section says why it can't be calibrated the same way:
+Stage 1 topicality and the golden set's `relevance` measure different,
+sometimes-opposite constructs, so it needs "a *new*, small, purpose-built
+topicality label set — not `v1.jsonl`" that does not exist yet, and no
+per-ticker "profile sentence" format was ever specified below either. Both
+are Ricky's call, not something to guess and ship quietly — flagged for the
+next session rather than built on an unverified threshold.
+
+Not wired into `scripts/collect_daily.py` or anything else that runs daily —
+out of scope per this plan's own boundary, unchanged.
+
 Written before implementation, on 2026-08-12, revised 2026-08-13 after a
 `/project-review` pass found three of the original version's load-bearing
 claims did not hold up against the repo. This version corrects them rather

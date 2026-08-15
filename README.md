@@ -4,7 +4,7 @@
 
 This system does not execute trades. It produces a document a human reads and acts on.
 
-[![tests](https://img.shields.io/badge/tests-719%20offline%20%2B%2012%20network-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-732%20offline%20%2B%2016%20network-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3.13-blue)](pyproject.toml)
 [![evaluation](https://img.shields.io/badge/evaluation-preregistered%202026--08--02-orange)](PREREGISTRATION.md)
 
@@ -111,7 +111,7 @@ Five rules shape every decision in the repository.
 flowchart TD
     A["Collectors<br/>pykrx · DART · outlet RSS · SEC · FRED · Alpaca"] --> B["data/raw/<br/>immutable, never overwritten"]
     B --> C["Entity resolution<br/>alias-driven; ambiguous cases DROPPED, never guessed"]
-    C --> D["Embeddings, local<br/>dedup cos&gt;0.92 · relevance filter<br/>1,000–2,000 articles → 60–100"]
+    C --> D["Embeddings, local<br/>dedup cos&gt;0.85 (calibrated) · topicality filter TBD<br/>1,000–2,000 articles → 60–100"]
     D --> E["LLM scoring<br/>5 dimensions per article<br/>the only step that costs money"]
     E --> F["Feature computation<br/>252-day rolling z-score per ticker"]
     F --> G["Rating — deterministic<br/>weighted sum → 7-point scale<br/>no LLM involved"]
@@ -243,7 +243,7 @@ market-briefing/
 │
 ├── scripts/                   config_helper · backfill · collect_daily · golden
 ├── reports/                   rendered briefings, committed daily
-├── tests/                     719 offline, 12 network
+├── tests/                     732 offline, 16 network
 └── data/                      raw/ · ratings/ · bakeoff/ · golden/ committed — see .gitignore for why each
 ```
 
@@ -271,7 +271,7 @@ market-briefing/
 
 ```bash
 uv sync                          # install dependencies
-uv run pytest -m "not network"   # the default test run — 719 tests
+uv run pytest -m "not network"   # the default test run — 732 tests
 uv run ruff check . && uv run ruff format .
 
 cp .env.example .env             # then fill in credentials (see API-KEYS.md)
@@ -293,10 +293,10 @@ Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it ca
 |---|---|---|
 | 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
-| 3 | Collectors + validation tests | ✅ 7 collectors, 719 offline tests, 12 network |
+| 3 | Collectors + validation tests | ✅ 7 collectors, 732 offline tests, 16 network |
 | 4 | 3-year backfill into `data/raw/` | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
 | 5 | Entity resolution + ambiguous ratio | ✅ ambiguous 8.8% of 2,432 articles (threshold 30%) |
-| 6 | Embedding pipeline (dedup + relevance) | ⬜ not started — [notes/step6-plan.md](notes/step6-plan.md). Not blocking anything |
+| 6 | Embedding pipeline (dedup + relevance) | 🟡 dedup half built + calibrated 2026-08-15 (title-only, cos>0.85); topicality half needs a new label set — [notes/step6-plan.md](notes/step6-plan.md). Not blocking anything |
 | 7 | Golden set — 100 hand-labelled articles | ✅ done; `relevance` fully re-labelled 2026-08-12 after a mid-run definition change |
 | 8 | Model adapter + bake-off | ✅ done 2026-08-13 — `gpt-5.4` selected |
 | 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |
