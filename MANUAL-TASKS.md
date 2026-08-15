@@ -31,6 +31,7 @@ Claude가 대신할 수 없는 작업. Ricky가 직접 하는 것들이고, 이 
 | ~~13~~ | ~~LLM 키 3개 발급~~                       | ✅ **완료 2026-08-11** | [API-KEYS §8](API-KEYS.md) |
 | ~~17~~ | ~~`BRIEFING_EMAIL_TO`를 `.env`와 Actions secret에 등록~~ | ✅ **완료 2026-08-13 (Claude 대행)** | [§1](#1-계정과-인증-정보) |
 | ~~12~~ | ~~KIS 신청 시작 (승인 대기가 며칠 걸림)~~ | ✅ **완료 2026-08-05** | [§1](#1-계정과-인증-정보)     |
+| **18** | **관련성(topicality) 라벨 ~150건** | **~15분** | [notes/step6-plan.md](notes/step6-plan.md) |
 
 **17번은 저장소 공개 전환에서 생긴 항목이고 같은 날 닫혔다 (2026-08-13).** `config/delivery.yaml`에 Ricky의 개인 gmail이 그대로 적혀 있었는데, 공개 저장소의 추적되는 파일에 개인 수신함을 적어 둘 이유가 없어서 `to_env: BRIEFING_EMAIL_TO`로 바꿨다. 값은 `.env`와 Actions secret 양쪽에 들어갔고, 두 채널이 실제로 생성되는지까지 확인했다 — `unavailable_channels()`가 빈 리스트를 반환하고 `vault`·`email` 둘 다 빌드된다.
 
@@ -70,6 +71,15 @@ Claude가 대신할 수 없는 작업. Ricky가 직접 하는 것들이고, 이 
 **10·11번이 끝났고, 골든셋의 라벨은 완성이다 — 단 자기일관성 검사는 실패 상태다.** 100건 × 5차원이 2026-08-07~08에 채워졌고, `relevance`는 정의 변경 후 2026-08-12에 전량 재라벨링했다. `forwardness` 한 차원이 나머지보다 크게 자기 자신과 어긋난다는 것은 2026-08-10 검사가 찾아냈고, 2026-08-13 재측정에서 ±0.13 → ±0.205로 **더 벌어졌다**. 모델을 줄 세우기 전에 [PREREGISTRATION §8.3](PREREGISTRATION.md)의 바닥값을 먼저 읽을 것 — 특히 `forwardness`로는 어떤 순위도 읽으면 안 된다. 12번은 아무것도 막지 않는다.
 
 > 6번은 Ricky가 초안을 직접 편집하고, Claude가 수집된 기사로 감사해서 네 곳을 고쳤다. `한국`·`대한`을 `ambiguous_parents`에서 빼자 모호 비율이 26.8% → 10.9%로 떨어졌는데 매칭 기사 수는 274건 그대로였다 — 두 단어가 코퍼스의 16%를 이유 없이 보류함에 넣고 있었다는 뜻이다.
+
+**18번은 6단계(임베딩 파이프라인)의 관련성(topicality) 절반을 실제로 쓸 수 있게 만드는 마지막 조각이다 — BLOCKING 아님.** 골든셋 `v1.jsonl`의 `relevance`(손익 관련성)와는 다른 질문이라 새 라벨셋이 필요했고, 그 도구가 2026-08-16에 만들어졌다:
+
+```bash
+uv run python -m scripts.topicality_labels sample   # 이미 실행됨 — 150건 후보, data/golden/topicality_candidates.jsonl
+uv run python -m scripts.topicality_labels label     # 이걸 실행할 것
+```
+
+각 기사를 읽고 "이 종목에 관한 기사인가?"만 y/n으로 답하면 된다 — 실적과의 관련성이 아니라 주제 자체를 묻는다 (동명이인, 스쳐가는 언급, 실은 다른 회사 얘기 → n). `golden.py`의 라벨링 도구와 같은 append-only 방식이라 언제든 중단하고 이어서 할 수 있다. 끝나면 그 결과(`data/golden/topicality_v1.jsonl`)로 `src/embed/topicality.py`의 임계값과 어떤 텍스트를 임베딩할지(제목만 vs 제목+본문)를 실측으로 정하는 후속 작업이 이어진다 — dedup 절반을 실측으로 캘리브레이션한 것과 같은 방식.
 
 ---
 

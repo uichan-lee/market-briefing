@@ -12,14 +12,27 @@ placeholder 0.92 (which would have missed 2 of 5 real cross-outlet
 duplicates). `bge-m3`'s revision is pinned
 (`5617a9f61b028005a4858fdac845db406aefb181`, read live off the HF Hub).
 
-**The topicality half (`src/embed/topicality.py`) is not built.** This
-plan's own design section says why it can't be calibrated the same way:
-Stage 1 topicality and the golden set's `relevance` measure different,
-sometimes-opposite constructs, so it needs "a *new*, small, purpose-built
-topicality label set — not `v1.jsonl`" that does not exist yet, and no
-per-ticker "profile sentence" format was ever specified below either. Both
-are Ricky's call, not something to guess and ship quietly — flagged for the
-next session rather than built on an unverified threshold.
+**Status (2026-08-16): the topicality half's mechanism is built; its
+threshold is not.** `src/embed/topicality.py` now exists —
+`build_profile_sentence()` derives a per-ticker profile sentence from
+`config/watchlist.yaml`'s `name`/`sector` alone (no new hand-maintained
+file), and `filter_topicality()` mirrors `dedup.py`'s shape exactly
+(injectable `embed`, per-ticker grouping, a `TopicalityReport`). Two things
+are deliberately still open, both left as parameters rather than guessed:
+what text gets embedded on the article side (`article_text`, default
+title+description, swappable once real labels exist — dedup's title-only
+finding does not automatically transfer here) and the threshold itself,
+which `filter_topicality` requires as an explicit keyword argument with no
+default. `scripts/topicality_labels.py` is the tool that produces the label
+set this plan said was needed — reuses `scripts/golden.py`'s
+`load_articles`/`matched_pairs`/`stratified_sample` rather than duplicating
+them, samples 150 candidates into `data/golden/topicality_candidates.jsonl`
+(committed, sampled 2026-08-16), and a `label` subcommand records a binary
+y/n judgment per article into `data/golden/topicality_v1.jsonl` — a
+separate file from `v1.jsonl`, per this plan's own instruction not to reuse
+it. **What's still Ricky's to do: run `label` (~15 min for ~150 articles),
+then a follow-up pass calibrates the threshold and the article-text choice
+against real labels, the same way dedup's calibration worked.**
 
 Not wired into `scripts/collect_daily.py` or anything else that runs daily —
 out of scope per this plan's own boundary, unchanged.

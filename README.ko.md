@@ -4,7 +4,7 @@
 
 이 시스템은 매매를 실행하지 않는다. 사람이 읽고 판단하는 문서를 만든다.
 
-[![tests](https://img.shields.io/badge/tests-732%20offline%20%2B%2016%20network-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-750%20offline%20%2B%2016%20network-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3.13-blue)](pyproject.toml)
 [![evaluation](https://img.shields.io/badge/evaluation-preregistered%202026--08--02-orange)](PREREGISTRATION.md)
 
@@ -111,7 +111,7 @@ English: **[README.md](README.md)**
 flowchart TD
     A["수집기<br/>pykrx · DART · 언론사 RSS · SEC · FRED · Alpaca"] --> B["data/raw/<br/>불변, 덮어쓰지 않음"]
     B --> C["엔티티 해석<br/>별칭 기반; 모호하면 추측 대신 DROP"]
-    C --> D["임베딩 (로컬)<br/>중복 제거 cos&gt;0.85 (실측) · 관련성 필터 미정<br/>기사 1,000~2,000건 → 60~100건"]
+    C --> D["임베딩 (로컬)<br/>중복 제거 cos&gt;0.85 (실측) · 관련성(topicality) 필터 (기준값 미정)<br/>기사 1,000~2,000건 → 60~100건"]
     D --> E["LLM 스코어링<br/>기사당 5개 차원<br/>돈이 드는 유일한 단계"]
     E --> F["피처 계산<br/>종목별 252일 롤링 z-score"]
     F --> G["등급 — 결정론적<br/>가중합 → 7단계<br/>LLM 개입 없음"]
@@ -234,7 +234,7 @@ market-briefing/
 │   ├── util/config.py         설정 로딩 + 손편집 안전장치
 │   ├── collectors/            validate.py + 수집기 7개
 │   ├── entity/resolve.py      별칭 기반 종목 매칭 + 모호 버킷
-│   ├── embed/                 중복 제거 + 관련성 — SPEC §12 6단계, 미착수
+│   ├── embed/                 중복 제거(실측 완료) + 관련성(topicality, 구조는 완성, 기준값 미정)
 │   ├── features/              compute.py (7개 중 5개) + normalize.py (z-score)
 │   ├── llm/                   adapter.py (벤더 중립), score.py, prompts/
 │   ├── report/                rating.py · consistency.py · render.py
@@ -243,7 +243,7 @@ market-briefing/
 │
 ├── scripts/                   config_helper · backfill · collect_daily · golden
 ├── reports/                   렌더된 브리핑, 매일 커밋
-├── tests/                     오프라인 732, 네트워크 12
+├── tests/                     오프라인 750, 네트워크 16
 └── data/                      raw/ · ratings/ · bakeoff/ · golden/ 커밋 — 각각의 이유는 .gitignore에
 ```
 
@@ -271,7 +271,7 @@ market-briefing/
 
 ```bash
 uv sync                          # 의존성 설치
-uv run pytest -m "not network"   # 기본 테스트 실행 — 732개
+uv run pytest -m "not network"   # 기본 테스트 실행 — 750개
 uv run ruff check . && uv run ruff format .
 
 cp .env.example .env             # 자격증명 입력 (API-KEYS.md 참조)
@@ -293,10 +293,10 @@ cp .env.example .env             # 자격증명 입력 (API-KEYS.md 참조)
 |---|---|---|
 | 1 | 저장소 + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ KR 31 + US 40 종목, 별칭 31개 |
-| 3 | 수집기 + 검증 테스트 | ✅ 수집기 7개, 오프라인 732 / 네트워크 12 |
+| 3 | 수집기 + 검증 테스트 | ✅ 수집기 7개, 오프라인 750 / 네트워크 16 |
 | 4 | `data/raw/`로 3년 백필 | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
 | 5 | 엔티티 해석 + 모호 비율 | ✅ 기사 2,432건 중 모호 8.8% (임계 30%) |
-| 6 | 임베딩 파이프라인 (중복 제거 + 관련성) | 🟡 중복 제거 절반은 2026-08-15에 구축·실측 완료(title-only, cos>0.85); 관련성(topicality) 절반은 새 라벨셋 필요 — [notes/step6-plan.md](notes/step6-plan.md). 아무것도 막지 않음 |
+| 6 | 임베딩 파이프라인 (중복 제거 + 관련성) | 🟡 중복 제거 절반은 2026-08-15에 구축·실측 완료(title-only, cos>0.85); 관련성(topicality) 절반은 2026-08-16에 구조와 라벨링 도구까지 구축(`src/embed/topicality.py`, `scripts/topicality_labels.py`), 기준값은 Ricky의 ~150건 라벨링 대기 — [notes/step6-plan.md](notes/step6-plan.md). 아무것도 막지 않음 |
 | 7 | 골든셋 — 손수 라벨링한 기사 100건 | ✅ 완료. `relevance`는 정의 변경 후 2026-08-12에 전량 재라벨링 |
 | 8 | 모델 어댑터 + 베이크오프 | ✅ 2026-08-13 완료 — `gpt-5.4` 선택 |
 | 9 | 피처 계산 | ✅ 등급 피처 7개 중 5개, 가중치 1.10 중 0.75 |
