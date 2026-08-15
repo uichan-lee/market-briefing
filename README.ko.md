@@ -303,7 +303,7 @@ cp .env.example .env             # 자격증명 입력 (API-KEYS.md 참조)
 | 10 | 리포트 렌더러 + 전달 | ✅ vault + 이메일 가동, 브리핑 12건 렌더 |
 | 11 | 일일 수집 + 리포트 워크플로 | ✅ 2026-08-06 클라우드 왕복 완주 |
 | 12 | 스케줄 번인 | 🟡 진행 중 — cron이 무인으로 발사 중 |
-| 13 | 2주 게이트 | ⬜ 2026-08-12 시계 시작, 2026-08-26 판독 |
+| 13 | 2주 게이트 | 🟡 4번 기준(모델간 polarity 상관)은 2026-08-15에 측정, **통과**(0.5 기준 대비 0.81~0.88) — [PREREGISTRATION §R](PREREGISTRATION.md). 1~3번 기준은 2026-08-25에 판독 |
 
 <details>
 <summary><b>상세: 백필, 보류된 결정, 진행을 막는 것</b></summary>
@@ -347,11 +347,11 @@ SPEC §2.2⑥은 "모든 워치리스트 종목이 등급을 받는다"고 적�
 
 ### 진행을 막는 것
 
-미결 항목은 [MANUAL-TASKS.md](MANUAL-TASKS.md)에 무엇을 막는지 순서로 추적된다. 2026-08-14 기준:
+미결 항목은 [MANUAL-TASKS.md](MANUAL-TASKS.md)에 무엇을 막는지 순서로 추적된다. 2026-08-15 기준:
 
 | # | 할 일 | 막는 것 |
 |---|---|---|
-| 1 | ~~1회성 ~$4.44 게이트 측정 비용 승인~~ | ✅ 승인됨, 2026-08-15 실행 예정 — [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
+| 1 | ~~1회성 ~$4.44 게이트 측정 비용 승인~~ | ✅ 2026-08-15 실행, **통과** (실비 $5.04) — [PREREGISTRATION §R](PREREGISTRATION.md) |
 | 2 | `rev_4w` 데이터 소스 결정 | `news_polarity` 외에 소스가 없는 유일한 등급 피처 — 벤더 조사 완료, [notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md) |
 | 3 | `config/rating.yaml` 캘리브레이션 | 신뢰할 수 있는 등급 — 2026-08-23 예정, 그때까지 실제 분포 약 11일치 확보 |
 | 4 | ~~KIS 신청~~ | ✅ 2026-08-05 완료; 키는 있고 아직 쓰는 코드는 없음 |

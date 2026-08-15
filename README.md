@@ -303,7 +303,7 @@ Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it ca
 | 10 | Report renderer + delivery | ✅ vault + email live; 12 briefings rendered |
 | 11 | Daily collection + report workflow | ✅ full cloud round trip 2026-08-06 |
 | 12 | Schedule burn-in | 🟡 in progress — cron fires unattended |
-| 13 | Two-week gate | ⬜ clock started 2026-08-12, read 2026-08-26 |
+| 13 | Two-week gate | 🟡 criterion 4 (inter-model polarity correlation) measured 2026-08-15, **passed** (0.81–0.88 vs. a 0.5 bar) — [PREREGISTRATION §R](PREREGISTRATION.md). Criteria 1–3 read 2026-08-25 |
 
 <details>
 <summary><b>Detail: the backfill, the parked decisions, and what is blocking</b></summary>
@@ -347,11 +347,11 @@ The [2026-08-06 review](notes/review-2026-08-06.md) extended the same reasoning 
 
 ### What is blocking
 
-Open items are tracked in [MANUAL-TASKS.md](MANUAL-TASKS.md), ordered by what they block. As of 2026-08-14:
+Open items are tracked in [MANUAL-TASKS.md](MANUAL-TASKS.md), ordered by what they block. As of 2026-08-15:
 
 | # | Task | Blocks |
 |---|---|---|
-| 1 | ~~One-time ~$4.44 gate-measurement spend~~ | ✅ approved, scheduled to run 2026-08-15 — [notes/gate-inter-model-plan.md](notes/gate-inter-model-plan.md) |
+| 1 | ~~One-time ~$4.44 gate-measurement spend~~ | ✅ run 2026-08-15, **passed** at real cost $5.04 — [PREREGISTRATION §R](PREREGISTRATION.md) |
 | 2 | `rev_4w` data source decision | The one rating feature besides `news_polarity` with no source — vendor research done, [notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md) |
 | 3 | `config/rating.yaml` calibration | Trustworthy ratings — planned for 2026-08-23, ~11 days of real distributions by then |
 | 4 | ~~KIS application~~ | ✅ done 2026-08-05; keys held, nothing consumes them yet |

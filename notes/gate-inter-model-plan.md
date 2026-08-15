@@ -1,32 +1,21 @@
 # PREREGISTRATION §8.3 gate measurement: plan
 
-**Status (2026-08-14): implemented, not yet run.** `live_examples()`, the
-`source` parameter on `run()`, `gate_report()`, and the `bakeoff gate` CLI
-command described below all exist now in `src/eval/bakeoff.py`, ahead of the
-2026-08-15 to 17 window this plan named for having enough live articles.
-Everything under "What's needed" is done exactly as scoped — nothing beyond
-it (`data/scores/`, `collect_daily.py` wiring, `news_polarity`) was touched,
-per this plan's own scope boundary.
+**Status (2026-08-15): run, and passed.** Full result, cost, and reasoning
+are in [PREREGISTRATION §R, 2026-08-15](../PREREGISTRATION.md) — that is now
+the canonical record, not this file. Summary: 300 rows from
+`data/raw/kr/news/2026-08-12` through `08-14`, scored once each by
+`gpt-5.4`/`gemini-3.5-flash`/`claude-sonnet-5` (the `--model` filter added
+the same day, once `config/models.yaml`'s `candidates:` list turned out to
+hold six live entries rather than the three this plan costed). Every pair's
+`polarity` correlation cleared the 0.5 bar by a wide margin (0.85 / 0.88 /
+0.81). Real cost $5.0351 against this plan's ~$4.44 estimate — still
+comfortably inside Ricky's approved spend. A 30-row dry run went first,
+which is also how a stale `RATE_LIMITS["gemini"]` (still paced at the free
+tier's 5 RPM two days after billing was enabled) got caught and fixed to the
+paid tier's real 1,000 RPM before the full run.
 
-**To run it** (spends the real ~$4.44 once enough of the window has
-accumulated — dry-run first with `--limit`):
-
-```bash
-uv run python -m src.eval.bakeoff gate --start 2026-08-12 --end 2026-08-26 \
-  --limit 5   # dry run, ~15 calls, confirms keys/schema before the real spend
-uv run python -m src.eval.bakeoff gate --start 2026-08-12 --end 2026-08-26
-```
-
-Verified 2026-08-14 with `--limit 0` (zero model calls, free): sampling 300
-rows from the real `data/raw/kr/news/` window, the CLI, and `gate_report`'s
-formatting all run end-to-end without error. `uv run pytest -m "not network"`
-covers `live_examples` (window filtering, row shape, empty-corpus cases) and
-`gate_report` (pass/fail against `GATE_POLARITY_BAR`) with synthetic data —
-no real spend in the test suite.
-
-`--end` above uses the window's actual close (2026-08-26) rather than
-whatever the run date happens to be — nothing requires stopping at "today,"
-and a wider end date simply includes fewer future rows until they exist.
+Kept below as the implementation record — the code it describes is what
+actually ran, unchanged except for the `--model` filter and the rate fix.
 
 ---
 
