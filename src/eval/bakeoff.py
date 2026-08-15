@@ -130,22 +130,29 @@ VALID_SIGNAL_RELEVANCE = 0.5
 # Calls per minute to hold each provider to. Only providers that need pacing
 # appear; anything absent runs unthrottled.
 #
-# 2026-08-11's 8 was a trial-and-error guess from hitting the API directly —
-# it was wrong. Google AI Studio's dashboard (aistudio.google.com/rate-limit,
-# Market Briefing project) states the free tier's actual quota for
-# `gemini-3.5-flash` outright: **5 RPM, 20 RPD**. Its own 28-day peak-usage
-# view shows prior runs at 9/5 RPM and 31/20 RPD — both limits breached, which
-# is why runs stalled past what any backoff could clear; that stall had no
-# name until this screenshot (2026-08-12). Enabling billing raises the real
-# limit and this number can go with it; it is not a property of the model.
-RATE_LIMITS = {"gemini": 5}
+# **Superseded 2026-08-15.** The 5 below (2026-08-11 -> 2026-08-13 history:
+# an 8 that was a wrong guess, corrected to the free tier's real 5 RPM read
+# off the dashboard) was never raised after billing was enabled — the
+# comment warning about exactly that ("enabling billing raises the real
+# limit and this number can go with it") sat unactioned for two days and
+# throttled a paid account at free-tier speed, discovered when the §8.3 gate
+# measurement's 30-row dry run took several minutes on `gemini-3.5-flash`
+# alone. Ricky's own aistudio.google.com/rate-limit screenshot, same day:
+# **1,000 RPM, 2M TPM, 10K RPD** on the paid tier — 200x the old pacing.
+# Set to 1,000 exactly, the same "use the dashboard's number outright,
+# don't add an arbitrary margin" precedent the free-tier value already
+# established; MAX_RATE_LIMIT_RETRIES' backoff, not a shaved-down pace,
+# is what covers a transient overage.
+RATE_LIMITS = {"gemini": 1000}
 
-# The free tier's daily cap, from the same dashboard. Not enforced by the
-# Pacer — a day's remaining quota cannot be waited out, only stopped short of.
-# `bakeoff run --model gemini-3.5-flash --limit N` with N growing by this much
-# each day is how a >20-call target gets collected without burning hours on
-# backoff against a wall that will not open until midnight Pacific.
-RATE_LIMIT_DAILY = {"gemini": 20}
+# The paid tier's daily cap, from the same 2026-08-15 dashboard screenshot
+# (was 20, the free tier's RPD, until then). Not enforced by the Pacer — a
+# day's remaining quota cannot be waited out, only stopped short of. At this
+# size the distinction is close to academic for anything this project
+# actually runs (a full 500-call/candidate bake-off is 5% of 10K), unlike
+# the free tier's 20 that a `--limit`-batched multi-day workaround existed
+# for.
+RATE_LIMIT_DAILY = {"gemini": 10_000}
 
 # A 429 is retried with exponential backoff. Past this many attempts the run
 # stops asking that candidate at all.
