@@ -4,7 +4,7 @@
 
 이 시스템은 매매를 실행하지 않는다. 사람이 읽고 판단하는 문서를 만든다.
 
-[![tests](https://img.shields.io/badge/tests-750%20offline%20%2B%2016%20network-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-814%20offline%20%2B%2016%20network-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3.13-blue)](pyproject.toml)
 [![evaluation](https://img.shields.io/badge/evaluation-preregistered%202026--08--02-orange)](PREREGISTRATION.md)
 
@@ -243,7 +243,7 @@ market-briefing/
 │
 ├── scripts/                   config_helper · backfill · collect_daily · golden
 ├── reports/                   렌더된 브리핑, 매일 커밋
-├── tests/                     오프라인 750, 네트워크 16
+├── tests/                     오프라인 814, 네트워크 16
 └── data/                      raw/ · ratings/ · bakeoff/ · golden/ 커밋 — 각각의 이유는 .gitignore에
 ```
 
@@ -271,7 +271,7 @@ market-briefing/
 
 ```bash
 uv sync                          # 의존성 설치
-uv run pytest -m "not network"   # 기본 테스트 실행 — 750개
+uv run pytest -m "not network"   # 기본 테스트 실행 — 814개
 uv run ruff check . && uv run ruff format .
 
 cp .env.example .env             # 자격증명 입력 (API-KEYS.md 참조)
@@ -293,7 +293,7 @@ cp .env.example .env             # 자격증명 입력 (API-KEYS.md 참조)
 |---|---|---|
 | 1 | 저장소 + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ KR 31 + US 40 종목, 별칭 31개 |
-| 3 | 수집기 + 검증 테스트 | ✅ 수집기 7개, 오프라인 750 / 네트워크 16 |
+| 3 | 수집기 + 검증 테스트 | ✅ 수집기 7개, 오프라인 814 / 네트워크 16 |
 | 4 | `data/raw/`로 3년 백필 | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
 | 5 | 엔티티 해석 + 모호 비율 | ✅ 기사 2,432건 중 모호 8.8% (임계 30%) |
 | 6 | 임베딩 파이프라인 (중복 제거 + 관련성) | 🟡 중복 제거 절반은 2026-08-15에 구축·실측 완료(title-only, cos>0.85). 관련성(topicality) 절반은 2026-08-22에 실제 라벨 149건으로 실측 — 결과는 부정적: AUC 0.74지만 두 클래스가 너무 겹쳐서 어떤 기준값도 "전부 topical" 베이스라인(정확도 0.752)을 못 이김. **1단계 topicality 필터는 배포 보류**, `src/embed/topicality.py`는 테스트된 채로 파이프라인 미연결 상태로 남음 — [notes/step6-plan.md](notes/step6-plan.md). 아무것도 막지 않음 |

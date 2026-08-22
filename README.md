@@ -4,7 +4,7 @@
 
 This system does not execute trades. It produces a document a human reads and acts on.
 
-[![tests](https://img.shields.io/badge/tests-750%20offline%20%2B%2016%20network-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-814%20offline%20%2B%2016%20network-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3.13-blue)](pyproject.toml)
 [![evaluation](https://img.shields.io/badge/evaluation-preregistered%202026--08--02-orange)](PREREGISTRATION.md)
 
@@ -243,7 +243,7 @@ market-briefing/
 │
 ├── scripts/                   config_helper · backfill · collect_daily · golden
 ├── reports/                   rendered briefings, committed daily
-├── tests/                     750 offline, 16 network
+├── tests/                     814 offline, 16 network
 └── data/                      raw/ · ratings/ · bakeoff/ · golden/ committed — see .gitignore for why each
 ```
 
@@ -271,7 +271,7 @@ market-briefing/
 
 ```bash
 uv sync                          # install dependencies
-uv run pytest -m "not network"   # the default test run — 750 tests
+uv run pytest -m "not network"   # the default test run — 814 tests
 uv run ruff check . && uv run ruff format .
 
 cp .env.example .env             # then fill in credentials (see API-KEYS.md)
@@ -293,7 +293,7 @@ Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it ca
 |---|---|---|
 | 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
-| 3 | Collectors + validation tests | ✅ 7 collectors, 750 offline tests, 16 network |
+| 3 | Collectors + validation tests | ✅ 7 collectors, 814 offline tests, 16 network |
 | 4 | 3-year backfill into `data/raw/` | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
 | 5 | Entity resolution + ambiguous ratio | ✅ ambiguous 8.8% of 2,432 articles (threshold 30%) |
 | 6 | Embedding pipeline (dedup + relevance) | 🟡 dedup half built + calibrated 2026-08-15 (title-only, cos>0.85). Topicality half built, then calibrated 2026-08-22 against 149 real labels — negative result: AUC 0.74 but the two classes overlap too much for any threshold to beat the "everything is topical" baseline (0.752 acc), so **Stage 1 topicality deployment is held**; `src/embed/topicality.py` stays as a tested, unwired base — [notes/step6-plan.md](notes/step6-plan.md). Not blocking anything |
