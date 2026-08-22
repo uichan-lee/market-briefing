@@ -123,6 +123,17 @@ def _bucket(score: float, cut_points: Mapping[str, float]) -> Rating:
     return Rating.WEAK_BUY if positive else Rating.WEAK_SELL
 
 
+def bucket_from_score(score: float, cut_points: Mapping[str, float]) -> Rating:
+    """Public re-export of :func:`_bucket`, for tools that re-bucket an
+    already-computed ``score`` (e.g. an archived ``data/ratings/`` row) under
+    a *current* ``config/rating.yaml`` without ``rate()``'s full z-score input.
+
+    A second copy of the cut-point ladder would drift from this one silently;
+    this function exists so nothing needs to write one.
+    """
+    return _bucket(score, cut_points)
+
+
 def rate(
     ticker: str,
     z_scores: Mapping[str, float | None],

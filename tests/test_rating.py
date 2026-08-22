@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.report.rating import Rating, RatingConfigError, rate
+from src.report.rating import Rating, RatingConfigError, bucket_from_score, rate
 from src.util.config import ConfigError, load_rating
 
 # A deliberately simple config: two features, equal weight, so expected scores
@@ -342,3 +342,19 @@ def test_every_active_weight_has_a_producer():
     from src.features.compute import FEATURES
 
     assert set(load_rating()["weights"]) <= set(FEATURES)
+
+
+# --- bucket_from_score: the public re-export -------------------------------
+
+
+@pytest.mark.parametrize("score", [3.0, 2.0, 1.999, 1.0, 0.4, 0.399, 0.0, -0.4, -1.0, -2.0, -3.5])
+def test_bucket_from_score_agrees_with_rate_across_the_grid(score):
+    """The load-bearing guard against the two ever drifting apart:
+    `src.eval.rating_calibration` re-buckets archived scores through this
+    function rather than a second copy of the cut-point ladder."""
+    # CONFIG's two weights sum to 1.0 and only one is supplied, so `rate()`'s
+    # renormalized score collapses to exactly `score` — see `rate()`'s
+    # `score = raw / coverage`.
+    via_rate = rate("005930", {"foreign_flow_5d": score}, CONFIG).rating
+    via_export = bucket_from_score(score, CONFIG["cut_points"])
+    assert via_export == via_rate
