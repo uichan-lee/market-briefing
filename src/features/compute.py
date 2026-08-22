@@ -51,7 +51,7 @@ are offline and use synthetic frames.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
 import pandas as pd
@@ -78,6 +78,45 @@ FEATURES = (
 
 # valuation_band arrives already normalized; everything else gets the §5 z-score.
 _NOT_Z_SCORED = frozenset({"valuation_band"})
+
+
+# Prefix for the placeholder sector a sectorless ticker gets, chosen so it cannot
+# collide with a real `sector:` value in config/watchlist.yaml.
+#
+# **Not `\x00`**, which was the first attempt and is silently broken here even
+# though `src.entity.resolve` masks with it for good reason. pandas compares and
+# hashes object-dtype strings through a path that truncates at the NUL, so
+# `"\x00005930"` and `"\x00000660"` are one value: `Series.unique()` returns a
+# single entry and `groupby` puts both tickers in one group — re-creating the
+# exact pooling this constant exists to prevent, invisibly. Caught by
+# `test_a_sectorless_ticker_gets_a_group_of_its_own_not_a_shared_empty_one`.
+NO_SECTOR = "__no_sector__:"
+
+
+def sector_map(entries: Iterable[WatchlistEntry]) -> dict[str, str]:
+    """Ticker → sector, with a *unique* placeholder where the entry has none.
+
+    ``config/watchlist.yaml`` requires only ``ticker`` and ``name``, so
+    ``sector`` may be absent. Collapsing those onto one shared value — the
+    obvious ``e.sector or ""`` — makes every sectorless ticker a member of one
+    pseudo-sector, and two of them become each other's benchmark: the sector
+    mean of a two-member group is their average, so the excess return is a
+    comparison between two companies that have nothing to do with each other.
+    It fails silently, because the result is a plausible number rather than
+    ``NaN``.
+
+    A per-ticker placeholder instead makes each sectorless ticker a singleton,
+    which is the case both consumers already handle and document —
+    :func:`_sector_returns` yields ``NaN`` there and
+    ``src.eval.ic.excess_return`` substitutes the universe return. The
+    placeholder must be *distinct per ticker* and must survive a pandas
+    ``groupby``; see :data:`NO_SECTOR` for why the obvious sentinel does not.
+
+    Shared by this module and ``src.eval.ic`` rather than written twice, since
+    the live feature and the metric the 3-month gate reads must not disagree
+    about what a ticker's sector is.
+    """
+    return {e.ticker: (e.sector or f"{NO_SECTOR}{e.ticker}") for e in entries}
 
 
 def _visible(frame: pd.DataFrame, as_of: pd.Timestamp | None) -> pd.DataFrame:
@@ -155,7 +194,7 @@ def compute(
         flow = flow.sort_values(["ticker", "date"])
     if not prices.empty:
         prices = prices.sort_values(["ticker", "date"])
-    sectors = {e.ticker: (e.sector or "") for e in watchlist}
+    sectors = sector_map(watchlist)
 
     if flow.empty:
         return pd.DataFrame(columns=["date", "ticker", *FEATURES, *(f"{f}_z" for f in FEATURES)])

@@ -20,8 +20,10 @@ import pytest
 from src.features.compute import (
     FEATURES,
     _ratio,
+    _sector_returns,
     compute,
     load_raw,
+    sector_map,
     z_scores_for,
 )
 from src.features.normalize import rolling_percentile, rolling_z
@@ -451,3 +453,37 @@ def test_valuation_band_is_absent_until_the_window_has_enough_history():
         valuation_window=756,
     )
     assert out["valuation_band"].isna().all()
+
+
+# --- the sector map -------------------------------------------------------
+
+
+def test_a_sectorless_ticker_gets_a_group_of_its_own_not_a_shared_empty_one():
+    """`e.sector or ""` pooled every sectorless ticker into one pseudo-sector.
+
+    config/watchlist.yaml requires only `ticker` and `name`, so this is reachable
+    by adding two entries without a `sector:` key — and the result was a
+    plausible number rather than a NaN, so nothing downstream could tell that two
+    unrelated companies had become each other's benchmark.
+    """
+    entries = [
+        WatchlistEntry("111111", "Alpha", None, False, "KR"),
+        WatchlistEntry("222222", "Beta", None, False, "KR"),
+    ]
+    mapping = sector_map(entries)
+    assert mapping["111111"] != mapping["222222"]
+
+    days = sessions(40)
+    prices = price_frame(["111111", "222222"], days)
+    out = _sector_returns(prices, mapping, 20)
+    # Singletons: no sector to compare against, so NaN rather than a number.
+    assert out.isna().all()
+
+
+def test_the_sector_map_leaves_real_sectors_alone():
+    entries = [
+        WatchlistEntry("005930", "삼성전자", "전기·전자", True, "KR"),
+        WatchlistEntry("000660", "SK하이닉스", "전기·전자", False, "KR"),
+    ]
+    mapping = sector_map(entries)
+    assert mapping == {"005930": "전기·전자", "000660": "전기·전자"}
