@@ -124,12 +124,22 @@ def _tickers_in(line: str, aliases: Mapping[str, AliasEntry]) -> tuple[str, ...]
     so 삼성전자우 does not read as a mention of 삼성전자. Masking is per-entry
     rather than global because one ticker's excluded term may legitimately be
     another ticker's alias.
+
+    Masked with ``\\x00`` rather than spaces, matching
+    ``src.entity.resolve._mask_excluded`` and for the reason recorded there: the
+    replacement must not be able to *create* a match that was not in the text.
+    45 of the committed aliases contain a space (``삼성 전자``, ``SK Hynix``), so
+    a one-character exclude term blanked to one space could bridge two fragments
+    into a false mention. No exclude term is that short today — the shortest is
+    three characters — which makes this the cheap kind of fix: it closes the
+    hole before someone adds one, and the two modules stop disagreeing about a
+    question one of them had already answered.
     """
     found: list[str] = []
     for ticker, entry in aliases.items():
         masked = line
         for term in entry.exclude:
-            masked = masked.replace(term, " " * len(term))
+            masked = masked.replace(term, "\x00" * len(term))
         surfaces = (ticker, entry.canonical, *entry.aliases)
         if any(surface and surface in masked for surface in surfaces):
             found.append(ticker)
@@ -154,28 +164,61 @@ def check_commentary(
 ) -> ConsistencyReport:
     """Check LLM commentary against the computed ratings.
 
-    Attribution is per line. A line mentioning exactly one ticker is checked
-    against that ticker's rating; every label it states must be that rating. A
-    line mentioning none is a market-level statement with nothing to attribute,
-    and one mentioning several is ambiguous — both pass, the latter recorded.
+    A line mentioning exactly one ticker is checked against that ticker's
+    rating; every label it states must be that rating. A line mentioning
+    several is ambiguous and is recorded rather than guessed at, per
+    CLAUDE.md's entity rule.
+
+    **A line stating a label but naming no ticker inherits the subject of its
+    paragraph.** Attribution used to be strictly per line, which left the guard
+    open to the most ordinary shape Korean prose takes:
+
+        005930 삼성전자의 수급이 개선됐다.
+        따라서 강한 매수 의견이다.
+
+    The second line carries the label and no ticker, so it was skipped — the
+    commentary could state the exact opposite of §2.2⑥ and the report came back
+    ``ok`` with ``checked_lines`` at zero. Since this is the mechanism CLAUDE.md
+    rule 3 names as the reason §2.2⑧ is permitted at all, a hole that a
+    paragraph break walks through is not an acceptable state to wire ⑧ into.
+
+    The subject carries only while it is unambiguous, and a blank line ends the
+    paragraph and clears it. A paragraph that has named two rated tickers
+    attributes nothing to its unattributed lines — those become
+    :class:`AmbiguousLine`, which is the same "drop rather than guess" stance the
+    per-line case already took, extended one scope outward.
     """
     report = ConsistencyReport()
 
+    # The paragraph's subject: None until a line names exactly one rated ticker,
+    # and a sentinel once a paragraph has named more than one, which is not the
+    # same state as "none named yet" and must not attribute.
+    subject: str | None = None
+    contested = False
+
     for line in text.splitlines():
+        if not line.strip():
+            subject, contested = None, False
+            continue
+
+        rated = tuple(t for t in _tickers_in(line, aliases) if t in ratings)
+        if len(rated) == 1:
+            subject, contested = rated[0], False
+        elif len(rated) > 1:
+            subject, contested = None, True
+
         labels = _labels_in(line)
         if not labels:
             continue
 
-        tickers = _tickers_in(line, aliases)
-        rated = tuple(t for t in tickers if t in ratings)
-        if not rated:
-            continue
-
-        if len(rated) > 1:
+        if len(rated) > 1 or (not rated and contested):
             report.ambiguous.append(AmbiguousLine(tickers=rated, labels=labels, line=line))
             continue
 
-        ticker = rated[0]
+        ticker = rated[0] if rated else subject
+        if ticker is None:
+            continue  # market-level statement; nothing to attribute
+
         computed = ratings[ticker].rating
         report.checked_lines += 1
         for label in labels:

@@ -271,3 +271,71 @@ def test_every_label_on_the_scale_is_detectable(rating_label):
         assert report.ok
     else:
         assert not report.ok
+
+
+# --- attribution across lines ---------------------------------------------
+
+
+def test_a_label_on_the_next_line_inherits_the_paragraph_subject():
+    """The hole this guard had until 2026-08-16.
+
+    Attribution was strictly per line, so the most ordinary shape Korean prose
+    takes — subject in one sentence, verdict in the next — stated the exact
+    opposite of §2.2⑥ and came back `ok` with `checked_lines` at zero.
+    """
+    ratings = {"005930": _rated("005930", -2.5)}  # 강한 매도
+    text = "005930 삼성전자의 수급이 개선됐다.\n따라서 강한 매수 의견이다."
+
+    report = check_commentary(text, ratings, ALIASES)
+    assert not report.ok
+    assert report.contradictions[0].ticker == "005930"
+    assert report.contradictions[0].stated is Rating.STRONG_BUY
+
+
+def test_a_blank_line_ends_the_paragraph_and_clears_the_subject():
+    """Otherwise a subject would leak into a later paragraph about the market."""
+    ratings = {"005930": _rated("005930", -2.5)}  # 강한 매도
+    text = "005930 삼성전자의 수급이 개선됐다.\n\n전반적으로 강한 매수 국면이다."
+
+    report = check_commentary(text, ratings, ALIASES)
+    assert report.ok
+    assert report.checked_lines == 0
+
+
+def test_a_paragraph_naming_two_tickers_attributes_nothing_to_its_bare_lines():
+    """Same 'drop rather than guess' stance the per-line case took, one scope out."""
+    ratings = {"005930": _rated("005930", -2.5), "000660": _rated("000660", 2.5)}
+    text = "005930 삼성전자와 000660 SK하이닉스를 비교하면.\n강한 매수 의견이다."
+
+    report = check_commentary(text, ratings, ALIASES)
+    assert report.ok
+    assert report.ambiguous
+
+
+def test_a_line_naming_its_own_ticker_wins_over_the_paragraph_subject():
+    ratings = {"005930": _rated("005930", 1.5), "000660": _rated("000660", -2.5)}
+    text = "005930 삼성전자는 좋다.\n000660 SK하이닉스는 강한 매수다."
+
+    report = check_commentary(text, ratings, ALIASES)
+    assert not report.ok
+    assert report.contradictions[0].ticker == "000660"
+
+
+def test_excluded_forms_are_masked_without_bridging_an_alias():
+    """`resolve.py` masks with \\x00 so masking cannot create a match; this
+    module used spaces, and 45 committed aliases contain one.
+
+    (Masking is plain `str.replace`, so \\x00 is safe here — unlike as a pandas
+    group key, where it truncates. See `src.features.compute.NO_SECTOR`.)"""
+    entry = AliasEntry(
+        ticker="005930",
+        canonical="삼성전자",
+        aliases=("삼성 전자",),
+        exclude=("X",),
+        ambiguous_parents=(),
+    )
+    ratings = {"005930": _rated("005930", -2.5)}
+    # "삼성X전자" is not a mention; blanking X to a space would forge "삼성 전자".
+    report = check_commentary("삼성X전자 강한 매수", ratings, {"005930": entry})
+    assert report.ok
+    assert report.checked_lines == 0
