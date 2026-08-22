@@ -100,13 +100,38 @@ def test_the_shift_does_not_leak_across_tickers():
 
 
 def test_a_missing_session_shortens_the_series_rather_than_pairing_t_with_t_plus_two():
-    """The shift is positional within each ticker's own history."""
+    """`t+1` is resolved on the trading calendar, not by row position.
+
+    This test asserted the opposite until 2026-08-16: it locked in the
+    positional `shift(-1)`, which pairs session 0 with session 2 when session 1
+    is missing, under a comment claiming that was "visible rather than hidden".
+    It is not visible — 0.20 is a well-formed number indistinguishable from a
+    real return, and it would have entered the §8.4 IC as one. A `kr_price`
+    failure inside the 3-month window is all it takes.
+    """
     days = sessions(3)
     prices = price_frame({"A": [(100.0, 100.0), (100.0, 110.0), (100.0, 120.0)]}, days)
     holed = prices[prices["date"] != pd.Timestamp(days[1])]
     out = forward_return(holed)
-    # Session 0 now pairs with session 2, and that is visible rather than hidden.
-    assert out.iloc[0]["forward_return"] == pytest.approx(0.20)
+
+    # Session 0's `t+1` is session 1, which the archive does not have.
+    assert pd.isna(out[out["date"] == pd.Timestamp(days[0])].iloc[0]["forward_return"])
+    # And the pairing still works where the calendar is intact: session 1 is
+    # absent, so session 2 is the only other row and it has no `t+1` either.
+    assert pd.isna(out[out["date"] == pd.Timestamp(days[2])].iloc[0]["forward_return"])
+
+
+def test_consecutive_sessions_still_pair_after_the_calendar_join():
+    """The guard against over-correcting: a gapless series must be unaffected."""
+    days = sessions(3)
+    prices = price_frame({"A": [(100.0, 100.0), (100.0, 110.0), (100.0, 120.0)]}, days)
+    out = forward_return(prices)
+    assert out[out["date"] == pd.Timestamp(days[0])].iloc[0]["forward_return"] == pytest.approx(
+        0.10
+    )
+    assert out[out["date"] == pd.Timestamp(days[1])].iloc[0]["forward_return"] == pytest.approx(
+        0.20
+    )
 
 
 # --- the excess return ----------------------------------------------------

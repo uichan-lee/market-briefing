@@ -55,9 +55,10 @@ import numpy as np
 import pandas as pd
 
 from src.eval.bakeoff import spearman
-from src.features.compute import load_raw
+from src.features.compute import NO_SECTOR, load_raw, sector_map
 from src.report.render import load_rating_history
 from src.util.config import WatchlistEntry, load_watchlist
+from src.util.session import next_trading_day
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
@@ -89,22 +90,42 @@ def forward_return(prices: pd.DataFrame) -> pd.DataFrame:
     at that session's close. PREREGISTRATION §8.5 fixes this convention and
     records why it is not close-to-close.
 
-    The shift is by position within each ticker's own sorted history, so a
-    session missing from the price archive shortens the series rather than
-    silently pairing `t` with `t+2`. The final session has no `t+1` and is left
-    ``NaN``: absent, not approximated.
+    **The pairing is by trading calendar, not by row position.** A plain
+    ``shift(-1)`` shifts by position, so a session missing from the price
+    archive silently pairs `t` with `t+2` — row `2026-08-11` would carry the
+    `2026-08-13` return if `08-12` failed to collect, and nothing downstream
+    could tell. That is not hypothetical: a `kr_price` failure inside the
+    3-month window is exactly the condition, and the corrupted IC would not be
+    traceable to the gap that caused it. So `t+1` is resolved through
+    :func:`src.util.session.next_trading_day` and joined on the resulting date;
+    a session the archive lacks yields ``NaN`` and drops out of the pairing.
+
+    The final session has no `t+1` and is left ``NaN``: absent, not
+    approximated.
     """
     if prices.empty:
         return pd.DataFrame(columns=["date", "ticker", "forward_return"])
 
     frame = prices.sort_values(["ticker", "date"]).copy()
-    intraday = (
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame["intraday"] = (
         pd.to_numeric(frame["close"], errors="coerce")
         / pd.to_numeric(frame["open"], errors="coerce").where(lambda s: s != 0)
         - 1.0
     )
-    frame["forward_return"] = intraday.groupby(frame["ticker"], observed=True).shift(-1)
-    return frame[["date", "ticker", "forward_return"]].reset_index(drop=True)
+
+    # One calendar lookup per distinct session rather than per row: the archive
+    # holds 31 tickers against ~740 sessions, so the per-row form would repeat
+    # each lookup 31 times.
+    sessions = frame["date"].dt.date.unique()
+    following = {day: next_trading_day("KR", day) for day in sessions}
+    frame["next_date"] = pd.to_datetime(frame["date"].dt.date.map(following))
+
+    nxt = frame[["date", "ticker", "intraday"]].rename(
+        columns={"date": "next_date", "intraday": "forward_return"}
+    )
+    merged = frame.merge(nxt, on=["next_date", "ticker"], how="left")
+    return merged[["date", "ticker", "forward_return"]].reset_index(drop=True)
 
 
 def excess_return(
@@ -128,7 +149,13 @@ def excess_return(
         return pd.DataFrame(columns=["date", "ticker", "excess_return"])
 
     frame = forward.copy()
-    frame["sector"] = frame["ticker"].map(sectors).fillna("")
+    # A ticker the sector map does not know — one present in the price archive
+    # but not on the watchlist — gets a group of its own rather than sharing an
+    # empty-string group with every other unknown, for the reason
+    # `compute.sector_map` documents: pooling them makes unrelated companies
+    # each other's benchmark and the result is a plausible number, not a NaN.
+    unknown = frame["ticker"].map(lambda t: f"{NO_SECTOR}{t}")
+    frame["sector"] = frame["ticker"].map(sectors).fillna(unknown)
 
     members = frame.groupby(["date", "sector"], observed=True)["ticker"].transform("nunique")
     sector_mean = frame.groupby(["date", "sector"], observed=True)["forward_return"].transform(
@@ -295,7 +322,7 @@ def load(root: Path = DATA, watchlist: Sequence[WatchlistEntry] | None = None) -
     entries = list(watchlist) if watchlist is not None else load_watchlist(market="KR")
     prices = load_raw(root / "raw", "kr/price", key=("date", "ticker"))
     ratings = load_rating_history(root)
-    sectors = {e.ticker: (e.sector or "") for e in entries}
+    sectors = sector_map(entries)
     return paired(ratings, excess_return(forward_return(prices), sectors))
 
 
