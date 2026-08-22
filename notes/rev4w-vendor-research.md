@@ -128,7 +128,7 @@ window the project already exploited for the initial 3-year price/flow
 backfill. The live-feed problem (how does `rev_4w` get computed *after*
 graduation) stays open regardless of what the email below turns up.
 
-## Outstanding: email sent to Haas library
+## Resolved: Haas library reply, 2026-08-21 — path closed
 
 Sent 2026-08-14 to `haasref-library@berkeley.edu`, asking:
 1. Whether WRDS/FactSet/Capital IQ Pro's academic license permits standing,
@@ -140,7 +140,39 @@ Sent 2026-08-14 to `haasref-library@berkeley.edu`, asking:
 4. Whether access ends at graduation, and if so, whether a one-time bulk
    historical download is permitted before then.
 
-**Status: unresolved, waiting on a reply.** `rev_4w` stays in
-`config/rating.yaml`'s `deferred_weights` until this resolves one way or
-another — nothing here changes `MANUAL-TASKS.md §11`'s decision, which is
-still open.
+**Reply, 2026-08-21 (paraphrased):**
+1. Data retention is tied to *ongoing campus affiliation*, not to finishing
+   a bounded project — but data may not be retained indefinitely, and must
+   be deleted once the license or the user's affiliation ends. Whether a
+   personal, non-commercial software project is itself a qualifying use
+   under the academic license was not directly addressed.
+2. IBES carries a 6-month embargo — confirmed.
+3. Ambiguous: "No and Cap IQ does not have the same lag time as IBES."
+   Unclear whether "No" answers the Korean-coverage half of the question or
+   the lag-restriction half.
+4. Access ends at graduation. **Bulk downloading is generally not
+   permitted, and storing data for post-graduation use is also not
+   permitted.**
+
+**Conclusion: this closes the WRDS/FactSet/Capital IQ Pro path for this
+project, independent of how the point-3 ambiguity would resolve.** The
+plan this research file flagged as the only path with real value — bulk
+backfill 3 years of historical `rev_4w` once, before graduation, and keep
+it permanently in `data/raw/` — is barred twice over by point 4: bulk
+download itself isn't permitted, and even a trickle collected under the
+license couldn't be retained past graduation for a project that stores
+everything indefinitely (CLAUDE.md's absolute rule 1). A live-only,
+never-stored feed for the ~5 months until graduation is theoretically
+still open if Capital IQ turns out to cover Korea, but was not pursued —
+the effort-to-payoff ratio for a source that expires on its own in five
+months, on a licensing basis that was never confirmed to fit a personal
+software project in the first place, was judged not worth it. Ricky closed
+out the correspondence with a thank-you rather than chasing the point-3
+clarification.
+
+`rev_4w` stays in `config/rating.yaml`'s `deferred_weights`. `FnSpace`
+Academy (₩50,000/mo, [see above](#paid-vendors)) remains the only paid
+path this research found that isn't entangled with university affiliation
+— still the candidate if `rev_4w` becomes a priority. `MANUAL-TASKS.md
+§11`'s decision (drop `rev_4w` permanently vs. pay for a source) is still
+open and still Ricky's call.

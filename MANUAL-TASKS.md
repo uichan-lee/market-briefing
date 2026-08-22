@@ -1059,15 +1059,23 @@ pykrx의 `EPS`는 **후행 실적**이다. 둘을 바꿔치면 피처처럼 보�
 조사했다** — 결과는 [notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md)에.
 요약: FnGuide/QuantiWise는 기업 상담 전용(공개 가격 없음), 무료 페이지 스크래핑은
 9곳을 스윕한 결과 전부 robots.txt 차단이거나 명시적 약관 금지라 막힌 경로다.
-FnSpace Academy 요금제(월 5만원, 컨센서스 데이터 포함)가 유일하게 구체적인
-유료 후보이고, Berkeley 학생 신분으로 WRDS/FactSet/Capital IQ Pro 접근도 가능성이
-있어 Haas 도서관에 문의 메일을 보내둔 상태다(2026-08-14, 답변 대기). 다만 이런
-학생 신분 접근은 Ricky 졸업(약 5개월 뒤) 시점에 끊기므로, 얻더라도 상시 수집기가
-아니라 일회성 과거 백필용으로만 의미가 있을 가능성이 높다.
 
-**Ricky가 정할 것은 그대로다:** 유료 소스를 붙일지(FnSpace Academy든, 대학
-접근이 풀리든), `rev_4w`를 영구히 빼고 나머지 여섯 개로 갈지. 후자면
-`config/rating.yaml`에서 가중치를 재배분해야 한다.
+**WRDS/FactSet/Capital IQ Pro 경로는 닫혔다 (Haas 도서관 답변, 2026-08-21).**
+IBES는 6개월 엠바고가 확인됐고, 결정적으로 **대량 다운로드가 원칙적으로
+금지고 졸업 후 사용 목적의 보관도 금지**다 — 이 프로젝트가 노렸던 "졸업 전에
+한 번 백필해서 `data/raw/`에 영구 보관"이라는 시나리오 자체가 라이선스상
+막혀 있었다. Capital IQ의 한국 상장사 커버리지 여부는 답변이 애매했지만
+(No가 커버리지에 대한 답인지 지연 여부에 대한 답인지 불명), 대량 다운로드
+금지가 어느 쪽이든 결론을 바꾸지 않아 추가로 확인하지 않았다. 전말은
+[notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md)의
+"Resolved" 항목 참조.
+
+FnSpace Academy 요금제(월 5만원, 컨센서스 데이터 포함)가 대학 신분과
+무관한, 남은 유일한 구체적 유료 후보다.
+
+**Ricky가 정할 것은 그대로다:** FnSpace Academy를 붙일지, `rev_4w`를
+영구히 빼고 나머지 여섯 개로 갈지. 후자면 `config/rating.yaml`에서
+가중치를 재배분해야 한다.
 
 ### `valuation_band` — 백필 4년 확장 (가중치 0.05)
 
