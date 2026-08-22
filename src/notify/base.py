@@ -98,6 +98,13 @@ def channel_for(config: Mapping[str, Any], *, root: Path | None = None) -> Chann
             # A half-configured channel must fail loudly at build time, not
             # send to a default host nobody chose.
             raise UnknownChannel(f"email channel is missing {exc} in delivery.yaml") from exc
+        except ValueError as exc:
+            # `int(config["port"])` on a non-numeric port. Caught for the same
+            # reason as KeyError, and separately because it is what
+            # `unavailable_channels` — a pre-flight check that runs before the
+            # report exists — would otherwise propagate, killing the render over
+            # a typo in a config field it was called to report on.
+            raise UnknownChannel(f"email channel has an unusable value: {exc}") from exc
     if kind == "webhook":
         raise UnknownChannel("channel 'webhook' is declared in delivery.yaml but not built yet")
     raise UnknownChannel(f"unknown channel type {kind!r}")
@@ -185,5 +192,16 @@ def deliver(
         wants_summary = getattr(adapter, "body", "full") == "summary" and summary is not None
         content = summary if wants_summary else report
         html = summary_html if wants_summary else None
-        results.append(adapter.send(content, day=day, label=label, html=html))
+        try:
+            results.append(adapter.send(content, day=day, label=label, html=html))
+        except Exception as exc:  # noqa: BLE001 - see below
+            # The Channel protocol says `send` records failure and never raises,
+            # and every adapter tries to honour that. This is the enforcement,
+            # because an adapter that breaks the contract by accident would
+            # otherwise take the *other* channels down with it — the exact
+            # outcome the docstring above promises cannot happen, and the reason
+            # two channels are configured. Broad on purpose: the contract is
+            # "never raises", so narrowing it to the exceptions imagined today
+            # would only re-open the hole for the ones that were not.
+            results.append(DeliveryResult(kind, False, f"{type(exc).__name__}: {exc}"))
     return results

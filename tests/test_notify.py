@@ -231,3 +231,61 @@ def test_the_run_label_keeps_morning_and_evening_files_apart(tmp_path):
 
     assert (tmp_path / "reports" / "2026-08-06-morning.md").exists()
     assert (tmp_path / "reports" / "2026-08-06-evening.md").exists()
+
+
+# --- the "never raises" contract -------------------------------------------
+
+
+class _ExplodingChannel:
+    """An adapter that breaks the Channel protocol. The point is that it can."""
+
+    name = "exploding"
+    body = "full"
+
+    def send(self, report, *, day, label=None, html=None):
+        raise RuntimeError("adapter bug")
+
+
+def test_one_adapter_raising_does_not_cost_the_other_channels_their_copy(tmp_path, monkeypatch):
+    """`deliver` wrapped `channel_for` but not `send`, so an adapter that broke
+    its contract took every channel after it down with it — the exact outcome
+    two channels are configured to prevent."""
+    monkeypatch.setattr(
+        "src.notify.base.channel_for",
+        lambda config, root=None: (
+            _ExplodingChannel()
+            if config["type"] == "exploding"
+            else VaultChannel(path=tmp_path, commit=False)
+        ),
+    )
+    results = deliver(
+        "# 브리핑\n본문",
+        [{"type": "exploding"}, {"type": "vault"}],
+        day=dt.date(2026, 8, 16),
+    )
+
+    assert [r.delivered for r in results] == [False, True]
+    assert "RuntimeError" in results[0].detail
+    assert list(tmp_path.glob("*.md"))
+
+
+def test_an_empty_report_does_not_crash_the_email_subject(monkeypatch):
+    """`report.strip().splitlines()[0]` raised IndexError *before* the adapter's
+    own try block, so it escaped as an exception rather than a failed result."""
+    monkeypatch.setenv("SMTP_PASSWORD", "x")
+    monkeypatch.setattr(smtplib, "SMTP_SSL", _RecordingSMTP)
+
+    channel = EmailChannel(to="a@b.c", sender="s@b.c", host="h", port=465)
+    result = channel.send("   \n  \n", day=dt.date(2026, 8, 16))
+
+    assert result.delivered
+    assert _RecordingSMTP.last.messages[0]["Subject"] == "마켓 브리핑 2026-08-16"
+
+
+def test_a_non_numeric_port_is_a_refused_channel_not_a_crash():
+    """`unavailable_channels` runs before the report exists; a ValueError out of
+    it kills the render over a config typo it was called to report on."""
+    config = {"type": "email", "to": "a@b.c", "from": "s@b.c", "host": "h", "port": "야옹"}
+    with pytest.raises(UnknownChannel):
+        channel_for(config)
+    assert unavailable_channels([config]) == ["email"]

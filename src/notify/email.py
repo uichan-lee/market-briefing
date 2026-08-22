@@ -61,7 +61,14 @@ class EmailChannel:
         message = EmailMessage()
         # The report's own title line is the subject, so the inbox list reads
         # as dates rather than as thirty copies of the same string.
-        first_line = report.strip().splitlines()[0].lstrip("# ").strip()
+        #
+        # `next(iter(...), "")` rather than `[0]`: an empty or whitespace-only
+        # report yields no lines at all and indexing raised IndexError — before
+        # the try block below, so it escaped this adapter entirely and aborted
+        # delivery to every channel after it. `deliver` now guards that too, but
+        # a channel should not need the guard to hold its own contract.
+        lines = report.strip().splitlines()
+        first_line = next(iter(lines), "").lstrip("# ").strip()
         message["Subject"] = first_line or f"마켓 브리핑 {day.isoformat()}"
         message["From"] = self.sender
         message["To"] = self.to
