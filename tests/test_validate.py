@@ -207,6 +207,33 @@ def test_known_value_fails_when_the_selector_matches_no_rows():
     assert "matched 0 rows" in result.detail
 
 
+def test_known_value_fails_on_a_null_rather_than_passing():
+    """`nan > tolerance` is False, so the null row used to report *passed*.
+
+    This is check 4, the one CLAUDE.md requires against a collector returning
+    well-formed but wrong numbers, and a null is the wrongest number there is.
+    """
+    df = frame(WEEK)
+    df.loc[df["date"] == pd.Timestamp(dt.date(2026, 1, 6)), "close"] = float("nan")
+    result = check_known_value(
+        df, {"date": dt.date(2026, 1, 6), "ticker": "005930"}, "close", 55_000.0
+    )
+    assert not result.passed
+    assert "null" in result.detail
+
+
+def test_known_value_still_fails_on_an_infinity():
+    """The sibling case, which never regressed: inf compares greater than any
+    tolerance on its own. Pinned so the null fix cannot be written in a way that
+    accidentally forgives it."""
+    df = frame(WEEK)
+    df.loc[df["date"] == pd.Timestamp(dt.date(2026, 1, 6)), "close"] = float("inf")
+    result = check_known_value(
+        df, {"date": dt.date(2026, 1, 6), "ticker": "005930"}, "close", 55_000.0
+    )
+    assert not result.passed
+
+
 def test_known_value_fails_when_the_selector_is_ambiguous():
     df = pd.concat([frame(WEEK), frame(WEEK)], ignore_index=True)
     result = check_known_value(

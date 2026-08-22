@@ -261,6 +261,14 @@ def check_known_value(
         )
 
     actual = float(matched[column].iloc[0])
+    # NaN before the tolerance comparison, because `nan > tolerance` is False and
+    # a null at the pinned row would otherwise report *passed* — the one outcome
+    # this check exists to make impossible. `inf` needs no special case: it
+    # compares greater than any tolerance and fails on its own.
+    if pd.isna(actual):
+        return CheckResult(
+            "known_value", False, f"{column} at ({label}) is null, expected {expected}"
+        )
     delta = abs(actual - expected)
     if delta > tolerance:
         return CheckResult(
