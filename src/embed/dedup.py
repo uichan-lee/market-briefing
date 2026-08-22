@@ -153,14 +153,18 @@ def cluster_duplicates(
     kept_rows = []
     for ticker, group in matches.groupby("ticker", sort=False):
         ids = group["article_id"].tolist()
-        titles = [str(articles.get(aid, {}).get("title", "")) for aid in ids]
-        vectors = embed(titles)
 
+        # Before embedding, not after: a ticker with one matched article has
+        # nothing to cluster against, and paying a model forward pass for a
+        # vector that is immediately discarded is free at today's ~150 pairs a
+        # day and is not at ten times that.
         if len(ids) == 1:
             report.clusters[ticker] = 1
             kept_rows.append(group)
             continue
 
+        titles = [str(articles.get(aid, {}).get("title", "")) for aid in ids]
+        vectors = embed(titles)
         similarity = vectors @ vectors.T
         cluster_ids = _cluster_indices(similarity, threshold)
         report.clusters[ticker] = len(set(cluster_ids))
