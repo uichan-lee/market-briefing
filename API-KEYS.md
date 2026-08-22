@@ -13,12 +13,12 @@ Screen labels are quoted verbatim in Korean, because that is what the UI actuall
 
 ## Order of work
 
-Six collectors — `kr_price`, `kr_flow`, `kr_news`, `macro`, `us_price` (Tiingo) and `us_price_alpaca` — are built and running, and the three-year backfill they feed completed on 2026-08-06. One credential remains outstanding.
+Six collectors — `kr_price`, `kr_flow`, `kr_news`, `macro`, `us_price` (Tiingo) and `us_price_alpaca` — are built and running, and the three-year backfill they feed completed on 2026-08-06. Every credential below is now held.
 
 | Credential | Status | Unblocks |
 |---|---|---|
 | **KRX Data Marketplace** | ✅ **held, verified 2026-08-04** | `kr_flow`, short interest, market cap, fundamentals — **55% of the rating weight**, now clear |
-| **KIS** | ⬜ **outstanding** | real-time quotes (§3.1). Approval takes days, so start it early |
+| **KIS** | ✅ **held 2026-08-05** | real-time quotes (§3.1). No collector references this key yet — pykrx already supplies what the pipeline uses today |
 | ~~Naver~~ | ✖ not needed | outlet RSS replaced it — see §2 |
 | DART | ✅ held | `kr_filings` |
 | FRED | ✅ held | `macro` — already built and passing |
@@ -27,7 +27,7 @@ Six collectors — `kr_price`, `kr_flow`, `kr_news`, `macro`, `us_price` (Tiingo
 | Tiingo | ✅ held | kept as the cross-check — it is what caught the IEX discrepancy |
 | SMTP | ✅ held | email delivery |
 
-Only KIS remains, and it is the least urgent of the set: it adds real-time quotes on top of data pykrx already supplies. Start the application anyway, because its approval queue runs for days in the background.
+Nothing is outstanding. KIS was the least urgent of the set — it adds real-time quotes on top of data pykrx already supplies — and is held but unconsumed: no collector calls it yet.
 
 > [!warning] Held locally is not the same as available to CI
 > As of 2026-08-04 the repository has **no Actions secrets configured at all**. `collect-news.yml` has been running fine only because outlet RSS needs no credential. MANUAL-TASKS.md §1 has a loop that pushes every value from `.env` to `gh secret set` without printing any of them.
@@ -101,7 +101,7 @@ pykrx ≥ 1.2.8 reads these two environment variables and logs in automatically.
 
 ---
 
-## 1. KIS Open API — 한국투자증권
+## 1. KIS Open API — 한국투자증권 ✅ resolved 2026-08-05
 
 **Prerequisite:** a 한국투자증권 account. Ricky has this as of 2026-08-03.
 

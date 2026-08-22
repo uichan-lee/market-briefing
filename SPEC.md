@@ -616,20 +616,22 @@ market-briefing/
       session.py              # UTC/KST, trading days, look-ahead boundary
       config.py               # config loading + hand-editing safeguards
     collectors/
-      validate.py             # the four checks every collector must pass
-      kr_price.py             # pykrx OHLCV
-      kr_flow.py              # investor flows, short interest, cap, fundamentals
-      kr_news.py              # outlet RSS, twice hourly in session
-      us_price.py             # Tiingo EOD, kept as the cross-check
-      us_price_alpaca.py      # the US source in use — multi-symbol, SIP
+      validate.py             # ✅ the four checks every collector must pass
+      kr_price.py             # ✅ pykrx OHLCV
+      kr_flow.py              # ✅ investor flows, short interest, cap, fundamentals
+      kr_news.py              # ✅ outlet RSS, twice hourly in session
+      kr_index.py             # ✅ KODEX 200 — §8.5's shadow-portfolio benchmark
+      us_price.py             # ✅ Tiingo EOD, kept as the cross-check
+      us_price_alpaca.py      # ✅ the US source in use — multi-symbol, SIP
       us_filings.py
-      macro.py
+      macro.py                # ✅
+      calendar.py             # ✅ §2.2④ — CPI/employment/FOMC/options-expiry, partial
     entity/
-      resolve.py              # §4
+      resolve.py              # ✅ §4
     embed/
-      encode.py
-      dedup.py                # re-report clustering
-      relevance.py
+      encode.py                # ✅ local bge-m3 wrapper
+      dedup.py                # ✅ re-report clustering, calibrated
+      topicality.py            # ✅ built + calibrated 2026-08-22; deployment held, see notes/step6-plan.md
     features/
       compute.py              # §5 — 5 of 7 rating features; see notes/step9-plan.md
       normalize.py            # 252-session rolling z-score, window ends at t-1
@@ -642,8 +644,8 @@ market-briefing/
         v1_redteam.md
         v1_synthesis.md       # §2.2⑧ — paired with report/consistency.py
     report/
-      rating.py               # §2.2⑥ — the deterministic directional rating
-      consistency.py          # §2.2⑧ — commentary checked against the rating
+      rating.py               # ✅ §2.2⑥ — the deterministic directional rating
+      consistency.py          # ✅ built; §2.2⑧ contradiction check — not yet wired into render.py
       render.py               # ✅ §2 markdown; loading and rendering split; absences stated
     notify/
       base.py                 # ✅ Channel interface + summary routing
@@ -651,15 +653,17 @@ market-briefing/
       email.py                # ✅ SMTP-SSL, header+⑥ summary body
       webhook.py              # deliberately unbuilt — absent from delivery.yaml
     eval/
-      golden.py               # golden-set scoring
-      bakeoff.py               # model comparison
-      ic.py
-      shadow_portfolio.py
+      bakeoff.py               # ✅ model comparison
+      ic.py                    # ✅ §8.4 IC/ICIR/quantile-spread, read at the §8.5 3-month gate
+      shadow_portfolio.py      # ✅ §8.5's paper-portfolio comparison against KODEX 200
+      rating_calibration.py    # ✅ MANUAL-TASKS §6 — rating.yaml calibration support, not a SPEC step
+      gate_2week.py            # ✅ MANUAL-TASKS §8 / §8.5 — 2-week gate pre-read, not a SPEC step
   scripts/
     config_helper.py          # find / scaffold / audit for watchlist + aliases
     backfill.py               # ✅ resumable multi-year history loader
     collect_daily.py          # ✅ §1 — the two scheduled runs' collection driver
     golden.py                 # ✅ §7.3 — sample / triage / label / recheck / verify
+    topicality_labels.py      # ✅ MANUAL-TASKS #18 — topicality label set, separate from golden.py's
   data/
     golden/v1.jsonl
   tests/

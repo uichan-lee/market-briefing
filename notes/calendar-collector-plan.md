@@ -109,8 +109,9 @@ a company that already has a `corp_code`, including a follow-on/rights
 offering (유상증자) by a company already on the watchlist** — not only
 brand-new IPOs. Filed by the issuing company itself, so it can be queried
 filtered to exactly the watchlist's own `corp_code` set (the same
-`corp_code` mapping `kr_filings` already resolves per `API-KEYS.md §3`),
-with no market-wide scan and no KRX cross-reference needed. If a watchlist
+`corp_code` mapping a `kr_filings` collector would resolve per
+`API-KEYS.md §3` — not built yet, per `notes/step10-plan.md`), with no
+market-wide scan and no KRX cross-reference needed. If a watchlist
 company announces a rights offering, this endpoint's `sbd`/`pymd` fields
 are exactly the subscription/payment schedule a holder needs — genuinely
 calendar-worthy, and genuinely in scope, unlike a stranger company's IPO.
@@ -132,7 +133,8 @@ and probably belongs closer to `kr_filings` than to `calendar.py`), sized
 the same way the macro-events half was, and validation written before the
 fetch logic per CLAUDE.md's collector rule. Concretely still unverified,
 flagged for whoever picks this up: whether DART's filing-search endpoint
-(the one `kr_filings` already calls) can be filtered by `corp_code` **and**
+(the one a `kr_filings` collector would call) can be filtered by
+`corp_code` **and**
 by filing-type (증권신고서/지분증권 specifically) in one call, or whether
 it needs a full-text-search-then-filter approach; and whether payment date
 (`pymd`) is a close enough proxy for "shares become tradeable" for the

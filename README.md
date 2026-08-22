@@ -44,7 +44,7 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | `RUN_MORNING` | 07:00 | US close (previous day) + KR pre-market — 2h before KOSPI opens |
 | `RUN_EVENING` | 21:30 | KR close (same day) + US pre-market — 1h before US opens |
 
-It has run unattended since 2026-08-03. Twelve briefings are committed in [`reports/`](reports/) — those are real output, not samples.
+It has run unattended since 2026-08-03. 25 briefings are committed in [`reports/`](reports/) — those are real output, not samples.
 
 ### What the output actually looks like
 
@@ -300,10 +300,10 @@ Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it ca
 | 7 | Golden set — 100 hand-labelled articles | ✅ done; `relevance` fully re-labelled 2026-08-12 after a mid-run definition change |
 | 8 | Model adapter + bake-off | ✅ done 2026-08-13 — `gpt-5.4` selected |
 | 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |
-| 10 | Report renderer + delivery | ✅ vault + email live; 12 briefings rendered |
+| 10 | Report renderer + delivery | ✅ vault + email live; 25 briefings rendered |
 | 11 | Daily collection + report workflow | ✅ full cloud round trip 2026-08-06 |
 | 12 | Schedule burn-in | 🟡 in progress — cron fires unattended |
-| 13 | Two-week gate | 🟡 criterion 4 (inter-model polarity correlation) measured 2026-08-15, **passed** (0.81–0.88 vs. a 0.5 bar) — [PREREGISTRATION §R](PREREGISTRATION.md). Criteria 1–3 read 2026-08-25 |
+| 13 | Two-week gate | 🟡 criterion 4 (inter-model polarity correlation) measured 2026-08-15, **passed** (0.81–0.88 vs. a 0.5 bar) — [PREREGISTRATION §R](PREREGISTRATION.md). Criteria 1–3 read 2026-08-26 (moved one day from the original 08-25 pin — [PREREGISTRATION §8.5](PREREGISTRATION.md)); `src/eval/gate_2week.py report` gives an early read against real data now |
 
 <details>
 <summary><b>Detail: the backfill, the parked decisions, and what is blocking</b></summary>
@@ -331,7 +331,7 @@ With the history in place the features stopped being `NaN` — counts measured t
 
 ### Two decisions parked
 
-**`rev_4w` has no data source.** [SPEC §5](SPEC.md) defines it as the 4-week change in *consensus* EPS — forward analyst estimates. pykrx's `EPS` is trailing, and substituting it would produce a number that looks like the feature and is not. Doing it properly needs an estimates vendor. Weight 0.15; absent, and `rate()` renormalizes. Vendor research is done as of 2026-08-14 — FnGuide/QuantiWise are enterprise-only with no published individual tier, a sweep of 9 sites found every free consensus page structurally closed to scraping (robots.txt or explicit anti-scraping terms), and a university-affiliated path (WRDS/FactSet/Capital IQ Pro) is pending a reply from the Haas library on license fit and data lag — see [notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md).
+**`rev_4w` has no data source.** [SPEC §5](SPEC.md) defines it as the 4-week change in *consensus* EPS — forward analyst estimates. pykrx's `EPS` is trailing, and substituting it would produce a number that looks like the feature and is not. Doing it properly needs an estimates vendor. Weight 0.15; absent, and `rate()` renormalizes. Vendor research is done as of 2026-08-14 — FnGuide/QuantiWise are enterprise-only with no published individual tier, a sweep of 9 sites found every free consensus page structurally closed to scraping (robots.txt or explicit anti-scraping terms). The university-affiliated path (WRDS/FactSet/Capital IQ Pro) is **closed** — the Haas library's 2026-08-21 reply confirmed bulk downloading isn't generally permitted and post-graduation storage of licensed data isn't either, ruling out the one scenario (a one-time backfill kept permanently) that made it worth pursuing for a project that stores everything indefinitely. FnSpace's Academy tier (₩50,000/mo) remains the one paid path found that isn't entangled with university affiliation — see [notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md).
 
 **`valuation_band` will turn itself on, and a four-year backfill only buys time.** It is a 756-session PBR percentile; the stored window held 732 sessions as of 2026-08-07 and grows by one per KRX session, so it crosses 756 on **2026-09-11** for 30 tickers with no backfill at all. Extending the backfill by a year turns it on about four weeks earlier, for 124 KRX requests. Weight 0.05 — which is what makes waiting the obvious default.
 
