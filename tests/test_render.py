@@ -789,6 +789,21 @@ def test_the_measured_benign_difference_stays_silent():
     assert disagreements == []
 
 
+def test_a_zero_canonical_close_is_flagged_rather_than_skipped():
+    """The relative difference divides by the Alpaca close, so a zero made
+    `diff` NaN and `NaN > tolerance` is False — the row that most deserved the
+    header line was the one silently dropped. A close of zero is not a small
+    disagreement, it is a broken quote."""
+    from src.report.render import merge_us_preview
+
+    canonical = _us_frame(["2026-08-04"], [0.0])
+    preview = _us_frame(["2026-08-04"], [472.66])
+
+    _, _, disagreements = merge_us_preview(canonical, preview)
+    assert len(disagreements) == 1
+    assert "SPY" in disagreements[0]
+
+
 # --- step 11: the status handoff ------------------------------------------
 
 

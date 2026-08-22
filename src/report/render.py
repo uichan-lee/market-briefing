@@ -1013,18 +1013,40 @@ def load_inputs(
 ) -> ReportInputs:
     """Read everything the briefing needs off disk.
 
-    ``as_of`` defaults to the KR session close of ``day``, which is the boundary
-    that makes the day's flow data usable. Features are computed with that same
-    boundary, so the report never contains a number that was not knowable when
-    it claims to have been written.
+    ``as_of`` is the look-ahead boundary and is passed straight through to
+    :func:`src.features.compute.compute`, so the report never contains a number
+    that was not knowable when it claims to have been written.
+
+    **It defaults to now, not to the session close, and the difference is a
+    one-instant off-by-one that used to disable the guard entirely.**
+    ``kr_flow`` stamps ``known_at_utc`` for session `D` as *exactly*
+    ``session_close_utc("KR", D)``, and ``compute._visible`` filters on strict
+    ``<`` — deliberately, since a row is not usable at the instant it becomes
+    known. Defaulting the boundary to that same close therefore excluded the
+    rated session's own row: every feature came back ``None``, every ticker fell
+    to 관망 at 0% coverage, and ``write_ratings`` would have archived nothing.
+    The previous code sidestepped that by passing ``as_of=None`` into
+    ``compute()`` — no boundary at all — while this docstring claimed the
+    boundary was applied. Nothing was actually wrong in the published numbers,
+    because every downstream window (``rolling_z``, ``rolling_percentile``,
+    ``pct_change``) is trailing by construction; but that was the only thing
+    holding the property, and nothing checked it.
+
+    Now is the correct default because a briefing about session `D` is written
+    *after* `D` closes — the scheduled evening run publishes six hours later, and
+    ``main()`` already passes the render instant for both scheduled runs. One
+    consequence worth knowing: a manual replay (``--day``) is titled with the
+    real generation moment rather than the replayed session's close, since
+    :func:`header_facts` titles on ``as_of``. Pass ``as_of`` explicitly to
+    reproduce a past run's boundary.
     """
     from src.features.compute import compute, load_raw
     from src.util.config import load_aliases, load_rating, load_sector_mapping, load_watchlist
-    from src.util.session import session_close_utc
+    from src.util.session import now_utc
 
     root = root or Path("data")
     raw = root / "raw"
-    as_of = as_of or session_close_utc("KR", day)
+    as_of = as_of or now_utc()
 
     watchlist = load_watchlist(market="KR")
     failures: list[str] = []
@@ -1060,7 +1082,7 @@ def load_inputs(
 
     features = pd.DataFrame()
     if not flow.empty:
-        features = compute(flow, kr_prices, watchlist, as_of=None)
+        features = compute(flow, kr_prices, watchlist, as_of=as_of)
 
     counts, headlines, ambiguous, articles = news_for_day(raw, day, load_aliases())
     status_failures, news_gaps = read_status(root)
@@ -1126,7 +1148,11 @@ def merge_us_preview(
         alpaca = pd.to_numeric(overlap["close_alpaca"], errors="coerce")
         tiingo = pd.to_numeric(overlap["close_tiingo"], errors="coerce")
         diff = (tiingo - alpaca).abs() / alpaca.where(alpaca != 0)
-        bad = overlap[diff > VENDOR_TOLERANCE]
+        # A zero or unparseable canonical close makes `diff` NaN, and `NaN >
+        # tolerance` is False — so the row that most deserves the header line
+        # was the one silently skipped. A close of zero is not a small
+        # disagreement, it is a broken quote, and it is reported as such.
+        bad = overlap[(diff > VENDOR_TOLERANCE) | diff.isna()]
         for row in bad.itertuples():
             disagreements.append(
                 f"{row.ticker} {pd.Timestamp(row.date):%Y-%m-%d} "
