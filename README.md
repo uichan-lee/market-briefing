@@ -111,7 +111,7 @@ Five rules shape every decision in the repository.
 flowchart TD
     A["Collectors<br/>pykrx · DART · outlet RSS · SEC · FRED · Alpaca"] --> B["data/raw/<br/>immutable, never overwritten"]
     B --> C["Entity resolution<br/>alias-driven; ambiguous cases DROPPED, never guessed"]
-    C --> D["Embeddings, local<br/>dedup cos&gt;0.85 (calibrated) · topicality filter (threshold TBD)<br/>1,000–2,000 articles → 60–100"]
+    C --> D["Embeddings, local<br/>dedup cos&gt;0.85 (calibrated) · topicality filter (calibrated, held — no separating threshold found)<br/>1,000–2,000 articles → 60–100"]
     D --> E["LLM scoring<br/>5 dimensions per article<br/>the only step that costs money"]
     E --> F["Feature computation<br/>252-day rolling z-score per ticker"]
     F --> G["Rating — deterministic<br/>weighted sum → 7-point scale<br/>no LLM involved"]
@@ -234,7 +234,7 @@ market-briefing/
 │   ├── util/config.py         config loading + hand-editing safeguards
 │   ├── collectors/            validate.py + 7 collectors (KR/US price, flow, index, news, macro, calendar)
 │   ├── entity/resolve.py      alias-driven ticker matching + ambiguous bucket
-│   ├── embed/                 dedup (calibrated) + topicality (mechanism built, threshold TBD)
+│   ├── embed/                 dedup (calibrated) + topicality (calibrated 2026-08-22, deployment held)
 │   ├── features/              compute.py (5 of 7 features) + normalize.py (z-scores)
 │   ├── llm/                   adapter.py (vendor-neutral), score.py, prompts/
 │   ├── report/                rating.py · consistency.py · render.py
@@ -296,7 +296,7 @@ Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it ca
 | 3 | Collectors + validation tests | ✅ 7 collectors, 750 offline tests, 16 network |
 | 4 | 3-year backfill into `data/raw/` | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
 | 5 | Entity resolution + ambiguous ratio | ✅ ambiguous 8.8% of 2,432 articles (threshold 30%) |
-| 6 | Embedding pipeline (dedup + relevance) | 🟡 dedup half built + calibrated 2026-08-15 (title-only, cos>0.85); topicality mechanism + labeling tool built 2026-08-16 (`src/embed/topicality.py`, `scripts/topicality_labels.py`), threshold pending Ricky's ~150-example label pass — [notes/step6-plan.md](notes/step6-plan.md). Not blocking anything |
+| 6 | Embedding pipeline (dedup + relevance) | 🟡 dedup half built + calibrated 2026-08-15 (title-only, cos>0.85). Topicality half built, then calibrated 2026-08-22 against 149 real labels — negative result: AUC 0.74 but the two classes overlap too much for any threshold to beat the "everything is topical" baseline (0.752 acc), so **Stage 1 topicality deployment is held**; `src/embed/topicality.py` stays as a tested, unwired base — [notes/step6-plan.md](notes/step6-plan.md). Not blocking anything |
 | 7 | Golden set — 100 hand-labelled articles | ✅ done; `relevance` fully re-labelled 2026-08-12 after a mid-run definition change |
 | 8 | Model adapter + bake-off | ✅ done 2026-08-13 — `gpt-5.4` selected |
 | 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |

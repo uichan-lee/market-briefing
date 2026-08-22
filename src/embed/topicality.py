@@ -35,14 +35,21 @@ calibration pass — the same shape ``dedup.py``'s did — can compare title-onl
 against title+description against real labels before either is fixed as the
 answer.
 
-**No threshold ships with this module.** Unlike ``dedup.py``'s
-``DEDUP_THRESHOLD = 0.85``, there is no ``TOPICALITY_THRESHOLD`` constant
-here, and :func:`filter_topicality` requires ``threshold`` as an explicit
-keyword argument. Dedup had a golden set to check a number against the same
-day it was written; topicality does not yet — ``scripts/topicality_labels.py``
-exists to build one, and a threshold belongs in this docstring, backed by
-measurement, only once that set exists. Shipping a guessed number now would
-be exactly the failure mode CLAUDE.md's uncertainty section warns about.
+**No threshold ships with this module — and, as of calibration, none is
+coming.** Unlike ``dedup.py``'s ``DEDUP_THRESHOLD = 0.85``, there is no
+``TOPICALITY_THRESHOLD`` constant here, and :func:`filter_topicality`
+requires ``threshold`` as an explicit keyword argument. Checked against 149
+real labels on 2026-08-22 (``data/golden/topicality_v1.jsonl``,
+``notes/step6-plan.md``'s 2026-08-22 status block has the full numbers):
+AUC ≈ 0.74 — real signal, not nothing — but the ``topical``/not-``topical``
+similarity distributions overlap almost completely (lowest true positive
+0.210 sits *below* the lowest false positive 0.214), so no cut threshold
+beats the trivial "everything is topical" baseline (0.752 accuracy vs. 0.638
+at the best threshold found). **Decision: this module is not wired into the
+daily pipeline.** It stays built and tested as a base for a future attempt
+with a richer per-ticker profile than ``name + sector`` — shipping a guessed
+number now, or a measured-but-useless one, would both be the failure mode
+CLAUDE.md's uncertainty section warns about.
 
 **A ticker with a match but no profile sentence is a config bug, not a
 soft-fail case.** ``filter_topicality`` raises rather than silently passing

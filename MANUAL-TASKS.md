@@ -31,7 +31,7 @@ Claude가 대신할 수 없는 작업. Ricky가 직접 하는 것들이고, 이 
 | ~~13~~ | ~~LLM 키 3개 발급~~                       | ✅ **완료 2026-08-11** | [API-KEYS §8](API-KEYS.md) |
 | ~~17~~ | ~~`BRIEFING_EMAIL_TO`를 `.env`와 Actions secret에 등록~~ | ✅ **완료 2026-08-13 (Claude 대행)** | [§1](#1-계정과-인증-정보) |
 | ~~12~~ | ~~KIS 신청 시작 (승인 대기가 며칠 걸림)~~ | ✅ **완료 2026-08-05** | [§1](#1-계정과-인증-정보)     |
-| **18** | **관련성(topicality) 라벨 ~150건** | **~15분** | [notes/step6-plan.md](notes/step6-plan.md) |
+| ~~18~~ | ~~관련성(topicality) 라벨 ~150건~~ | ✅ **완료 2026-08-22 — 149건, 실측 결과는 부정적 (배포 보류)** | [notes/step6-plan.md](notes/step6-plan.md) |
 
 **17번은 저장소 공개 전환에서 생긴 항목이고 같은 날 닫혔다 (2026-08-13).** `config/delivery.yaml`에 Ricky의 개인 gmail이 그대로 적혀 있었는데, 공개 저장소의 추적되는 파일에 개인 수신함을 적어 둘 이유가 없어서 `to_env: BRIEFING_EMAIL_TO`로 바꿨다. 값은 `.env`와 Actions secret 양쪽에 들어갔고, 두 채널이 실제로 생성되는지까지 확인했다 — `unavailable_channels()`가 빈 리스트를 반환하고 `vault`·`email` 둘 다 빌드된다.
 
@@ -72,14 +72,9 @@ Claude가 대신할 수 없는 작업. Ricky가 직접 하는 것들이고, 이 
 
 > 6번은 Ricky가 초안을 직접 편집하고, Claude가 수집된 기사로 감사해서 네 곳을 고쳤다. `한국`·`대한`을 `ambiguous_parents`에서 빼자 모호 비율이 26.8% → 10.9%로 떨어졌는데 매칭 기사 수는 274건 그대로였다 — 두 단어가 코퍼스의 16%를 이유 없이 보류함에 넣고 있었다는 뜻이다.
 
-**18번은 6단계(임베딩 파이프라인)의 관련성(topicality) 절반을 실제로 쓸 수 있게 만드는 마지막 조각이다 — BLOCKING 아님.** 골든셋 `v1.jsonl`의 `relevance`(손익 관련성)와는 다른 질문이라 새 라벨셋이 필요했고, 그 도구가 2026-08-16에 만들어졌다:
+**18번이 끝났고, 결과는 "이 방식으로는 못 쓴다"였다 (2026-08-22).** `scripts/topicality_labels.py label`로 150건 후보 중 149건에 y/n을 매겼다(1건 skip, `data/golden/topicality_v1.jsonl`). 그 라벨로 `src/embed/topicality.py`의 프로필 문장(`name + sector`) 유사도를 실측 캘리브레이션한 결과, AUC 0.74로 신호는 있지만 `topical`/`not topical` 두 분포가 거의 완전히 겹쳐서(최저 topical 유사도 0.210이 최저 non-topical 0.214보다 낮음) 어떤 기준값도 "매칭된 건 다 topical로 친다"는 베이스라인(정확도 0.752)을 못 이겼다 — 최적 기준값에서도 0.638. dedup 때와 정반대 결론이다.
 
-```bash
-uv run python -m scripts.topicality_labels sample   # 이미 실행됨 — 150건 후보, data/golden/topicality_candidates.jsonl
-uv run python -m scripts.topicality_labels label     # 이걸 실행할 것
-```
-
-각 기사를 읽고 "이 종목에 관한 기사인가?"만 y/n으로 답하면 된다 — 실적과의 관련성이 아니라 주제 자체를 묻는다 (동명이인, 스쳐가는 언급, 실은 다른 회사 얘기 → n). `golden.py`의 라벨링 도구와 같은 append-only 방식이라 언제든 중단하고 이어서 할 수 있다. 끝나면 그 결과(`data/golden/topicality_v1.jsonl`)로 `src/embed/topicality.py`의 임계값과 어떤 텍스트를 임베딩할지(제목만 vs 제목+본문)를 실측으로 정하는 후속 작업이 이어진다 — dedup 절반을 실측으로 캘리브레이션한 것과 같은 방식.
+**결론: 1단계 topicality 필터는 배포하지 않는다.** `src/embed/topicality.py`는 테스트된 코드로 남기되 파이프라인에는 안 붙인다. SPEC §6.2의 `relevance`(손익 관련성, LLM 채점 + `consistency.py` 검증)가 이미 다운스트림에서 주제 이탈 기사를 걸러주므로, 약한 신호를 억지로 배포할 근거가 없다는 게 Ricky의 판단이다. 재도전하려면 `name + sector`보다 풍부한 프로필(사업 설명 등)이 필요한데, 그건 새 hand-maintained 데이터 소스를 만드는 일이라 이번 라운드에서는 시도하지 않았다. 전말은 [notes/step6-plan.md](notes/step6-plan.md)의 2026-08-22 항목 참조.
 
 ---
 

@@ -111,7 +111,7 @@ English: **[README.md](README.md)**
 flowchart TD
     A["수집기<br/>pykrx · DART · 언론사 RSS · SEC · FRED · Alpaca"] --> B["data/raw/<br/>불변, 덮어쓰지 않음"]
     B --> C["엔티티 해석<br/>별칭 기반; 모호하면 추측 대신 DROP"]
-    C --> D["임베딩 (로컬)<br/>중복 제거 cos&gt;0.85 (실측) · 관련성(topicality) 필터 (기준값 미정)<br/>기사 1,000~2,000건 → 60~100건"]
+    C --> D["임베딩 (로컬)<br/>중복 제거 cos&gt;0.85 (실측) · 관련성(topicality) 필터 (실측 완료, 배포 보류 — 분리 기준값 없음)<br/>기사 1,000~2,000건 → 60~100건"]
     D --> E["LLM 스코어링<br/>기사당 5개 차원<br/>돈이 드는 유일한 단계"]
     E --> F["피처 계산<br/>종목별 252일 롤링 z-score"]
     F --> G["등급 — 결정론적<br/>가중합 → 7단계<br/>LLM 개입 없음"]
@@ -234,7 +234,7 @@ market-briefing/
 │   ├── util/config.py         설정 로딩 + 손편집 안전장치
 │   ├── collectors/            validate.py + 수집기 7개
 │   ├── entity/resolve.py      별칭 기반 종목 매칭 + 모호 버킷
-│   ├── embed/                 중복 제거(실측 완료) + 관련성(topicality, 구조는 완성, 기준값 미정)
+│   ├── embed/                 중복 제거(실측 완료) + 관련성(topicality, 2026-08-22 실측 완료, 배포 보류)
 │   ├── features/              compute.py (7개 중 5개) + normalize.py (z-score)
 │   ├── llm/                   adapter.py (벤더 중립), score.py, prompts/
 │   ├── report/                rating.py · consistency.py · render.py
@@ -296,7 +296,7 @@ cp .env.example .env             # 자격증명 입력 (API-KEYS.md 참조)
 | 3 | 수집기 + 검증 테스트 | ✅ 수집기 7개, 오프라인 750 / 네트워크 16 |
 | 4 | `data/raw/`로 3년 백필 | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
 | 5 | 엔티티 해석 + 모호 비율 | ✅ 기사 2,432건 중 모호 8.8% (임계 30%) |
-| 6 | 임베딩 파이프라인 (중복 제거 + 관련성) | 🟡 중복 제거 절반은 2026-08-15에 구축·실측 완료(title-only, cos>0.85); 관련성(topicality) 절반은 2026-08-16에 구조와 라벨링 도구까지 구축(`src/embed/topicality.py`, `scripts/topicality_labels.py`), 기준값은 Ricky의 ~150건 라벨링 대기 — [notes/step6-plan.md](notes/step6-plan.md). 아무것도 막지 않음 |
+| 6 | 임베딩 파이프라인 (중복 제거 + 관련성) | 🟡 중복 제거 절반은 2026-08-15에 구축·실측 완료(title-only, cos>0.85). 관련성(topicality) 절반은 2026-08-22에 실제 라벨 149건으로 실측 — 결과는 부정적: AUC 0.74지만 두 클래스가 너무 겹쳐서 어떤 기준값도 "전부 topical" 베이스라인(정확도 0.752)을 못 이김. **1단계 topicality 필터는 배포 보류**, `src/embed/topicality.py`는 테스트된 채로 파이프라인 미연결 상태로 남음 — [notes/step6-plan.md](notes/step6-plan.md). 아무것도 막지 않음 |
 | 7 | 골든셋 — 손수 라벨링한 기사 100건 | ✅ 완료. `relevance`는 정의 변경 후 2026-08-12에 전량 재라벨링 |
 | 8 | 모델 어댑터 + 베이크오프 | ✅ 2026-08-13 완료 — `gpt-5.4` 선택 |
 | 9 | 피처 계산 | ✅ 등급 피처 7개 중 5개, 가중치 1.10 중 0.75 |

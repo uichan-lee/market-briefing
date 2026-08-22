@@ -30,12 +30,60 @@ them, samples 150 candidates into `data/golden/topicality_candidates.jsonl`
 (committed, sampled 2026-08-16), and a `label` subcommand records a binary
 y/n judgment per article into `data/golden/topicality_v1.jsonl` — a
 separate file from `v1.jsonl`, per this plan's own instruction not to reuse
-it. **What's still Ricky's to do: run `label` (~15 min for ~150 articles),
-then a follow-up pass calibrates the threshold and the article-text choice
-against real labels, the same way dedup's calibration worked.**
+it.
+
+**Status (2026-08-22): calibrated against real labels — negative result,
+Stage 1 deployment held.** Ricky labeled 149 of the 150 candidates
+(`data/golden/topicality_v1.jsonl`, 112 topical / 37 not, 1 skipped) on
+2026-08-21/22. Profile-sentence similarity was checked against both
+`article_text` variants:
+
+======================  ==================================  ======================================
+strategy                AUC (149 labels)                     accuracy at best single threshold (Youden's J)
+======================  ==================================  ======================================
+title-only              0.744                                0.638
+title+description       0.743                                0.611
+======================  ==================================  ======================================
+
+Both clear random (0.5) by a real margin, so the signal is not nothing — but
+neither clears the trivial baseline of labeling every match `topical`
+(accuracy 0.752, since the sample is 75% topical already). The reason: the
+two class distributions overlap almost completely. `topical=True`
+similarities range 0.210–0.579 (title-only); `topical=False` ranges
+0.214–0.567 — the lowest true positive scores *below* the lowest false
+positive, so no threshold exists that cuts real off-topic tail without also
+costing true positives at least as often. Per-ticker z-scoring (to correct
+for profile "richness" differing by ticker) was tried too and made it worse
+(best accuracy 0.597) — expected, given ~5 labels per ticker is too few to
+estimate a per-ticker mean/std from.
+
+This is the opposite finding from dedup's calibration: there, every
+inspected near-threshold "counterexample" turned out to be mislabeled ground
+truth, i.e. the signal was *better* than the check. Here every check made the
+signal look worse, and the false-positive/false-negative examples inspected
+by hand read as genuinely ambiguous, not mislabeled — a 두산에너빌리티 wind
+farm article whose real subject is the subcontractor, a 현대차 dividend
+story that shares almost no vocabulary with "현대차 (005380), 자동차". A
+short `name + sector` profile sentence apparently isn't a rich enough query
+to separate "about this company" from "mentions this company" via cosine
+similarity alone.
+
+**Decision (Ricky, 2026-08-22): hold Stage 1 topicality deployment.**
+`src/embed/topicality.py` and `scripts/topicality_labels.py` stay as-built —
+tested, `threshold` still has no default — but nothing wires
+`filter_topicality()` into the daily pipeline. SPEC §6.2's `relevance`
+scoring (P&L materiality, already LLM-judged per matched article and
+checked by `src/report/consistency.py`) already discounts off-topic
+mentions downstream, so shipping a weak Stage 1 cut on top of it was judged
+not worth the false-negative risk. Revisiting this needs a richer per-ticker
+profile than `name + sector` (a business-description source, not yet
+identified) — not attempted this round, since it would mean a new
+hand-maintained data source and CLAUDE.md's entity-resolution rule against
+inventing config casually applies to the same instinct here.
 
 Not wired into `scripts/collect_daily.py` or anything else that runs daily —
-out of scope per this plan's own boundary, unchanged.
+out of scope per this plan's own boundary, and now also blocked on the
+finding above rather than merely deferred.
 
 Written before implementation, on 2026-08-12, revised 2026-08-13 after a
 `/project-review` pass found three of the original version's load-bearing
