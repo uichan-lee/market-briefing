@@ -26,13 +26,15 @@ If an instruction conflicts with one of these, say so and ask before proceeding.
 4. Never import a vendor LLM SDK outside `src/llm/adapter.py`. The pipeline must stay model-agnostic.
 5. Never add a delivery channel that is not in `config/delivery.yaml`.
 
-### The commentary exception, in full
+### The commentary and red-team exceptions, in full
 
 SPEC §2.2⑧ lets an LLM write prose about direction. That is permitted only because three properties make it structurally incapable of becoming the rating. All three are load-bearing; removing any one reopens rule 3.
 
 1. **It reads the rendered deterministic sections, never raw articles.** It cannot re-score news, because scoring already happened upstream at §6.2 and only its output reaches the commentary.
 2. **It is checked before publication.** `src/report/consistency.py` compares every rating label in the prose against the computed rating for that ticker. On contradiction the section is dropped and the reason goes in the report header — the section is never published in a state that disagrees with §2.2⑥.
 3. **Nothing consumes it.** No feature, no score, no shadow portfolio, no PREREGISTRATION metric reads the commentary. It is a leaf of the pipeline. Non-reproducible prose entering the evaluation path would invalidate the evaluation, which is the whole reason rule 3 exists.
+
+**§2.2⑤ (red team, built 2026-08-25) sits under the same rule 3 but earns its place differently: it is never shown §2.2⑥'s ratings at all.** `src/llm/prompts/v1_redteam.md` gives it only §2.2①-④, and forbids the seven rating labels outright rather than reserving them — there is no rating in its input to originate, alter, or contradict, by construction rather than by a downstream check. `src/report/consistency.py`'s check still runs against its output (property 2, reused unmodified) as defense-in-depth, and property 3 holds identically (nothing consumes ⑤ either).
 
 The invariant, stated once: **the rating is computed; prose may not originate, alter, or contradict it.**
 

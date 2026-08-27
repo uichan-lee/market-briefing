@@ -291,13 +291,27 @@ candidates:
 synthesis:
   provider: anthropic
   model: claude-sonnet-5
-  temperature: 0.3
+  temperature: null            # verified live 2026-08-25: rejects any value, see below
   # Call volume is low enough that cost is immaterial here; SPEC §7.2 says
   # prioritize quality.
   #
   # Drives the red-team section (SPEC §2.2⑤) and the AI 총평 (SPEC §2.2⑧).
   # 총평 output is checked by src/report/consistency.py before publication: any
   # rating label disagreeing with the computed rating in §2.2⑥ drops the section
-  # and puts the reason in the report header. Note that temperature is 0.3 here,
-  # not 0 — this output is prose and is deliberately outside the evaluation path
-  # (PREREGISTRATION §8.4), unlike the scoring stage above.
+  # and puts the reason in the report header. This stage's output is prose and
+  # is deliberately outside the evaluation path (PREREGISTRATION §8.4), unlike
+  # the scoring stage above — which is why it was fine for this to run at a
+  # non-zero temperature at all, unlike scoring's determinism requirement.
+  #
+  # `temperature` was `0.3` from this stage's creation until 2026-08-25, when
+  # wiring ⑤/⑧ into render.py made the first real call and it failed:
+  # `litellm.UnsupportedParamsError: claude-sonnet-5 does not support
+  # temperature=0.3. Only temperature=1 is supported.` This project already
+  # knew claude-sonnet-5 rejects a temperature parameter under litellm's
+  # Anthropic route — the scoring stage's own bake-off notes above record the
+  # identical `400: "temperature" is deprecated for this model` result — but
+  # nothing had exercised *this* stage live before, so the 0.3 went untested
+  # from the day it was written. Fixed the same way the scoring stage's own
+  # claude-sonnet-5 candidate already was: `null`, which src/llm/adapter.py's
+  # `complete()` reads as "send no temperature at all" rather than "send
+  # zero". Re-verified live 2026-08-25 after the fix: succeeds.

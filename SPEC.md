@@ -300,7 +300,8 @@ data/
     kr/investor_flow/2026-07-29.parquet
     kr/news/2026-07-29/0917.jsonl.gz   # one file per collection run, gzipped
     us/price/2026-07-29.parquet
-    us/filings/2026-07-29.jsonl
+    us/filings/2026-07-29.parquet
+    kr/filings/2026-07-29.parquet
   embeddings/
     2026-07-29.parquet        # article embeddings (for re-report detection / relevance filtering)
   features/
@@ -312,6 +313,8 @@ reports/
 ```
 
 `raw/` is **never overwritten**. On a re-run, save separately with a `-v2` suffix and keep the original.
+
+**`us/filings/` is parquet, not the `.jsonl` this section originally specified, and `kr/filings/` was originally absent entirely — both corrected 2026-08-25.** Every collector integration point (`write_daily`/`backfill.py`'s versioning, `features/compute.py`'s `load_raw`) is parquet-only; a second JSONL writer for one collector would have duplicated that machinery for no benefit. `notes/filings-collector-plan.md` has the full reasoning and the live-verification record for both `us_filings.py` and `kr_filings.py`.
 
 > [!warning] All of `data/raw/` is committed — since 2026-08-06, not only news
 > The original split — news committed because RSS has no backfill, everything else gitignored because pykrx and FRED re-serve history — was true and still insufficient. The report workflow runs on a fresh Actions checkout, and a 252-session z-score needs the full three-year history *present*; regenerable-on-the-Mac is absent-in-the-runner, and re-fetching three years per run would spend hundreds of KRX requests daily against a block near 250. The whole backfill measures 28 MB, so it is committed, which also makes §0 principle 3 machine-independent. `data/features/` stays ignored (recomputed each render). News remains the one part that is additionally *irreplaceable*: roughly 300–450 KB/day gzipped, and an hour not collected is gone.
@@ -355,11 +358,12 @@ $$z_{i,t} = \frac{x_{i,t} - \mu_{i,t-252:t-1}}{\sigma_{i,t-252:t-1}}$$
 | `foreign_flow_5d` | 5-day cumulative foreign net buying ÷ 5-day cumulative trading value |
 | `inst_flow_5d` | Same, for institutional investors |
 | `short_ratio` | Short-interest balance ÷ shares outstanding |
-| `rev_4w` | 4-week change in consensus EPS |
 | `rel_strength_20d` | Ticker 20-day return − sector 20-day return |
 | `rv_20d` | 20-day realized volatility (stdev of log returns × √252) |
 | `news_volume_z` | z-score of daily article count **after deduplication** |
 | `us_kr_beta_60d` | 60-day rolling beta against the corresponding US sector ETF |
+
+> `rev_4w` (4-week change in consensus EPS, weight 0.15) was defined here but **permanently dropped 2026-08-25** for lack of a data source — no vendor was found that is both free and ToS-clean, and the one academic path closed. See `MANUAL-TASKS.md` §11 and `notes/rev4w-vendor-research.md`.
 
 **Medium-term features (added v0.5).** Everything above tops out at 4 weeks for fundamentals and 20 days for price; 252 days appeared only as the normalization window, never as a signal. These three supply the missing horizon and are cross-sectional, so unlike the §2.2⑨ regime indicators they can enter the ⑥ composite and be measured by IC.
 
@@ -367,7 +371,7 @@ $$z_{i,t} = \frac{x_{i,t} - \mu_{i,t-252:t-1}}{\sigma_{i,t-252:t-1}}$$
 |---|---|
 | `rel_strength_120d` | 120-day return − sector 120-day return |
 | `flow_persistence_60d` | 60-day cumulative foreign net buying ÷ 60-day cumulative trading value |
-| `rev_trend_12w` | 12-week change in consensus EPS — the slower companion to `rev_4w` |
+| `rev_trend_12w` | 12-week change in consensus EPS — the slower companion to the now-dropped `rev_4w` (§5 above) |
 
 All three are computable from the day the 3-year backfill lands (§12 step 4), since pykrx and DART both serve history. Their weights sit **commented out** in `config/rating.yaml` until `src/features/compute.py` produces them: `rate()` renormalizes over present features, so activating a weight for a feature that does not yet exist would lower every ticker's `weight_coverage` and could trip the 0.5 floor into spurious `관망`.
 
@@ -623,7 +627,8 @@ market-briefing/
       kr_index.py             # ✅ KODEX 200 — §8.5's shadow-portfolio benchmark
       us_price.py             # ✅ Tiingo EOD, kept as the cross-check
       us_price_alpaca.py      # ✅ the US source in use — multi-symbol, SIP
-      us_filings.py
+      us_filings.py            # ✅ SEC EDGAR — filings.recent only, no filings.files pagination
+      kr_filings.py            # ✅ DART OpenAPI, §2.2② `filing` flag
       macro.py                # ✅
       calendar.py             # ✅ §2.2④ — CPI/employment/FOMC/options-expiry, partial
     entity/
@@ -638,15 +643,15 @@ market-briefing/
     llm/
       adapter.py              # vendor-neutral layer
       score.py
-      synthesize.py
+      synthesize.py            # ✅ §2.2⑤/⑧ — Stage 3 red-team + synthesis, wired into render.py
       prompts/
         v1_scoring.md
-        v1_redteam.md
+        v1_redteam.md          # §2.2⑤ — paired with report/consistency.py, model never shown §2.2⑥
         v1_synthesis.md       # §2.2⑧ — paired with report/consistency.py
     report/
       rating.py               # ✅ §2.2⑥ — the deterministic directional rating
-      consistency.py          # ✅ built; §2.2⑧ contradiction check — not yet wired into render.py
-      render.py               # ✅ §2 markdown; loading and rendering split; absences stated
+      consistency.py          # ✅ built; §2.2⑤/⑧ contradiction check — wired into render.py 2026-08-25
+      render.py               # ✅ §2 markdown; loading and rendering split; ⑤/⑧ generated, not absent
     notify/
       base.py                 # ✅ Channel interface + summary routing
       vault.py                # ✅ reports/{date}-{run}.md

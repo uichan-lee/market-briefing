@@ -1,10 +1,11 @@
 # `rev_4w` vendor research
 
-Written 2026-08-14. Research record, not a decision — `MANUAL-TASKS.md §11`
-still holds the decision itself ("Ricky가 정할 것: 유료 소스를 붙일지, `rev_4w`를
-영구히 빼고 나머지 여섯 개로 갈지"), unchanged by this file. This exists so the
-investigation already done isn't lost to chat history, following the same
-"engineering research belongs in notes/" principle as
+Written 2026-08-14. Was a research record, not a decision, until
+**2026-08-25, when the decision was made: `rev_4w` is permanently dropped**
+(see the "Resolved" entry at the end of this file). `MANUAL-TASKS.md §11`
+records the decision. This file exists so the investigation already done
+isn't lost to chat history, following the same "engineering research
+belongs in notes/" principle as
 [model-bakeoff-decision.md](model-bakeoff-decision.md).
 
 `rev_4w` (weight 0.15 in `config/rating.yaml`, currently in `deferred_weights`)
@@ -170,9 +171,14 @@ software project in the first place, was judged not worth it. Ricky closed
 out the correspondence with a thank-you rather than chasing the point-3
 clarification.
 
-`rev_4w` stays in `config/rating.yaml`'s `deferred_weights`. `FnSpace`
-Academy (₩50,000/mo, [see above](#paid-vendors)) remains the only paid
-path this research found that isn't entangled with university affiliation
-— still the candidate if `rev_4w` becomes a priority. `MANUAL-TASKS.md
-§11`'s decision (drop `rev_4w` permanently vs. pay for a source) is still
-open and still Ricky's call.
+**Resolved, 2026-08-25: `rev_4w` is permanently dropped.** FnSpace Academy
+(₩50,000/mo ≈ $36) was the one paid path this research found that isn't
+entangled with university affiliation, but it sits above Ricky's stated
+cost tolerance and was not taken. `config/rating.yaml`'s `deferred_weights`
+no longer lists `rev_4w` at all — deleted, not commented out, since
+"deferred" implies it might still arrive and this decision is permanent.
+`rate()` never read `deferred_weights` (it's display-only, read by
+`render.py`'s header), so the removal changes no computed rating. If a
+consensus-EPS vendor ever becomes affordable, FnSpace Academy is still the
+concrete lead to revisit — the research above stays valid. `MANUAL-TASKS.md
+§11` records the decision.

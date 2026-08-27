@@ -23,6 +23,9 @@ from src.report.rating import rate
 from src.report.render import (
     ABSENT_SECTIONS,
     ReportInputs,
+    _absent,
+    _llm_section,
+    _llm_section_unavailable,
     _transmission_correlation,
     load_rating_history,
     ratings_frame,
@@ -35,7 +38,7 @@ from src.report.render import (
     volatility_z,
     write_ratings,
 )
-from src.util.config import WatchlistEntry
+from src.util.config import AliasEntry, WatchlistEntry
 
 DAY = dt.date(2026, 8, 3)
 AS_OF = pd.Timestamp("2026-08-03 06:30", tz="UTC")
@@ -70,6 +73,20 @@ def watchlist(*entries: tuple[str, str]) -> list[WatchlistEntry]:
     ]
 
 
+def aliases_for(*entries: tuple[str, str]) -> dict[str, AliasEntry]:
+    """One ``AliasEntry`` per ``(ticker, canonical name)``, for check_commentary().
+
+    ``ReportInputs.aliases`` defaults to ``{}``, which is safe for every test
+    that never touches ⑤/⑧ — but *not* for a consistency-drop test, since an
+    empty mapping means ``check_commentary()`` recognizes no tickers at all
+    and every commentary trivially "passes".
+    """
+    return {
+        t: AliasEntry(ticker=t, canonical=n, aliases=(n,), exclude=(), ambiguous_parents=())
+        for t, n in entries
+    }
+
+
 def features_frame(rows: dict[str, dict[str, float]]) -> pd.DataFrame:
     """One row per ticker for DAY, with the z-columns render reads."""
     built = []
@@ -93,22 +110,40 @@ def inputs(**overrides) -> ReportInputs:
     return ReportInputs(**base)
 
 
+def _stub_synthesis(text: str) -> str:
+    return "**오늘의 한 줄:** 테스트 총평"
+
+
+def _stub_redteam(text: str) -> str:
+    return "- **테스트** — 테스트 반증"
+
+
 # --- absence --------------------------------------------------------------
 
 
-def test_every_unbuilt_section_is_rendered_with_its_reason():
-    """The load-bearing test. Omission is what this renderer must never do."""
-    page = render(inputs())
-    for section, (title, reason) in ABSENT_SECTIONS.items():
-        assert f"## {section} {title}" in page
-        assert reason in page
+def test_a_genuinely_unbuilt_section_is_rendered_with_its_reason(monkeypatch):
+    """The load-bearing test for ABSENT_SECTIONS/`_absent()`. ⑤/⑧ were wired
+    2026-08-25 and no longer go through this path (see the ⑤/⑧ tests below) —
+    ABSENT_SECTIONS is `{}` in production today, so this test injects a
+    synthetic entry rather than asserting on an empty dict, which would pass
+    vacuously and silently lose coverage of the mechanism itself."""
+    monkeypatch.setitem(ABSENT_SECTIONS, "⑨", ("테스트 섹션", "테스트 사유"))
+    assert _absent("⑨") == "## ⑨ 테스트 섹션\n\n> **이 섹션은 아직 없습니다.** 테스트 사유.\n"
 
 
-def test_the_header_lists_the_unbuilt_sections():
+def test_the_header_lists_a_genuinely_unbuilt_section(monkeypatch):
+    monkeypatch.setitem(ABSENT_SECTIONS, "⑨", ("테스트 섹션", "테스트 사유"))
     header = render_header(inputs())
     assert "미구현 섹션" in header
-    for section in ABSENT_SECTIONS:
-        assert section in header
+    assert "⑨" in header
+
+
+def test_the_header_says_nothing_about_unbuilt_sections_when_there_are_none():
+    """ABSENT_SECTIONS is `{}` as of 2026-08-25 (⑤/⑧ wired). The header must
+    not print a dangling `⚠ 미구현 섹션: ` line for an empty dict."""
+    assert not ABSENT_SECTIONS
+    header = render_header(inputs())
+    assert "미구현 섹션" not in header
 
 
 def test_the_header_names_the_features_that_do_not_exist_yet():
@@ -169,9 +204,11 @@ def test_the_data_basis_line_omits_macro_when_there_is_none():
 def test_a_run_with_no_data_at_all_still_renders():
     """CLAUDE.md requires a partial report over no report, so empty inputs must
     produce a page rather than an exception."""
-    page = render(ReportInputs(day=DAY, as_of=AS_OF))
+    page = render(
+        ReportInputs(day=DAY, as_of=AS_OF), synthesize_fn=_stub_synthesis, redteam_fn=_stub_redteam
+    )
     assert page.startswith("# 📅 2026-08-03")
-    assert "이 섹션은 아직 없습니다" in page
+    assert "이 섹션을 만들 수 없습니다" in page
 
 
 def test_collector_failures_reach_the_header():
@@ -264,10 +301,74 @@ def test_flow_flags_fire_on_the_spec_thresholds():
     assert "`inflow`" in page and "`outflow`" in page
 
 
-def test_the_scan_names_the_four_flags_it_cannot_compute():
+def test_the_scan_names_the_three_flags_it_cannot_compute():
     page = render_scan(inputs(features=features_frame({"005930": {"foreign_flow_5d": 0.5}})))
-    for flag in ("valuation_band", "earnings_revision", "filing", "news_spike"):
+    for flag in ("valuation_band", "earnings_revision", "news_spike"):
         assert flag in page
+
+
+def _filings_frame(ticker: str, rcept_dt: dt.date) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "corp_code": "00000000",
+                "ticker": ticker,
+                "rcept_no": "1",
+                "report_nm": "test",
+                "flr_nm": "test",
+                "date": pd.Timestamp(rcept_dt),
+                "known_at_utc": pd.Timestamp(rcept_dt, tz="UTC"),
+            }
+        ]
+    )
+
+
+def test_filed_tickers_uses_the_previous_trading_day_not_day_itself():
+    """SPEC §2.2②'s literal wording — the *previous* day's filing, not DAY's."""
+    from src.report.render import filed_tickers
+    from src.util.session import previous_trading_day
+
+    filed_on = previous_trading_day("KR", DAY)
+    assert filed_tickers(_filings_frame("005930", filed_on), DAY) == {"005930"}
+
+
+def test_filed_tickers_excludes_two_sessions_back():
+    from src.report.render import filed_tickers
+    from src.util.session import previous_trading_day
+
+    two_sessions_back = previous_trading_day("KR", previous_trading_day("KR", DAY))
+    assert filed_tickers(_filings_frame("005930", two_sessions_back), DAY) == set()
+
+
+def test_filed_tickers_is_empty_on_an_empty_frame():
+    from src.report.render import filed_tickers
+
+    assert filed_tickers(pd.DataFrame(), DAY) == set()
+
+
+def test_the_filing_flag_fires_in_a_rendered_page():
+    from src.util.session import previous_trading_day
+
+    filed_on = previous_trading_day("KR", DAY)
+    page = render_scan(
+        inputs(
+            features=features_frame({"005930": {"foreign_flow_5d": 0.1}}),
+            kr_filings=_filings_frame("005930", filed_on),
+        )
+    )
+    assert "`filing`" in page
+
+
+def test_the_filing_flag_ignores_a_different_tickers_filing():
+    """A page-level ``not in`` check would false-pass: the footnote's own
+    explanatory sentence always mentions `` `filing` ``. Checking at the
+    ``_flags_for`` level avoids that collision."""
+    from src.report.render import _flags_for, filed_tickers
+    from src.util.session import previous_trading_day
+
+    filed_on = previous_trading_day("KR", DAY)
+    filed = filed_tickers(_filings_frame("000660", filed_on), DAY)
+    assert "`filing`" not in _flags_for("005930", {}, {}, filed)
 
 
 def test_volatility_z_needs_a_full_window():
@@ -388,13 +489,173 @@ def test_the_rating_section_says_no_llm_wrote_it():
     assert "계산" in page and "LLM" in page
 
 
+# --- ⑤/⑧ LLM sections, wired 2026-08-25 ------------------------------------
+
+
+def _known_rating_inputs() -> ReportInputs:
+    """A ReportInputs whose §2.2⑥ rating for 005930 is real, known (매수, full
+    coverage), and named in `aliases` — the shape a consistency-drop test
+    needs. An empty `aliases` would make check_commentary() recognize no
+    tickers at all and every commentary trivially "pass"."""
+    z = {
+        "foreign_flow_5d": 2.0,
+        "inst_flow_5d": 2.0,
+        "rel_strength_20d": 2.0,
+        "short_ratio": 2.0,
+        "valuation_band": 2.0,
+    }
+    return inputs(
+        watchlist=watchlist(("005930", "삼성전자")),
+        features=features_frame({"005930": z}),
+        aliases=aliases_for(("005930", "삼성전자")),
+    )
+
+
+def test_llm_section_unavailable_matches_the_absent_shape():
+    body = _llm_section_unavailable("⑧", "AI 총평", "테스트 사유")
+    assert body == "## ⑧ AI 총평\n\n> **이 섹션은 이번 실행에서 생략됐습니다.** 테스트 사유.\n"
+
+
+def test_llm_section_reports_a_raised_exception_without_crashing():
+    def boom():
+        raise RuntimeError("vendor down")
+
+    body, warning = _llm_section("⑧", "AI 총평", "총평", "§2.2⑧", boom, {}, {})
+    assert "이번 실행에서 생략됐습니다" in body
+    assert warning == "⚠ 총평 생략: LLM 호출 실패: vendor down (§2.2⑧)"
+
+
+def test_llm_section_publishes_on_a_clean_pass():
+    body, warning = _llm_section("⑧", "AI 총평", "총평", "§2.2⑧", lambda: "본문", {}, {})
+    assert body == "## ⑧ AI 총평\n\n본문\n"
+    assert warning is None
+
+
+def test_the_commentary_section_is_rendered_from_the_injected_synthesize_fn():
+    page = render(
+        inputs(),
+        synthesize_fn=lambda text: "**오늘의 한 줄:** 진짜 총평",
+        redteam_fn=_stub_redteam,
+    )
+    assert "## ⑧ AI 총평" in page
+    assert "진짜 총평" in page
+
+
+def test_the_redteam_section_is_rendered_from_the_injected_redteam_fn():
+    page = render(
+        inputs(),
+        synthesize_fn=_stub_synthesis,
+        redteam_fn=lambda text: "- **테스트** — 진짜 반증",
+    )
+    assert "## ⑤ 반증 (red team)" in page
+    assert "진짜 반증" in page
+
+
+def test_a_contradicting_commentary_is_dropped_with_the_spec_format_header_line():
+    page = render(
+        _known_rating_inputs(),
+        synthesize_fn=lambda text: "- **005930 삼성전자 (매도, -1.00)** — 임의 반박",
+        redteam_fn=_stub_redteam,
+    )
+    assert "⚠ 총평 생략: 등급과 모순 — 005930 (§2.2⑧)" in page
+    assert "## ⑧ AI 총평\n\n> **이 섹션은 이번 실행에서 생략됐습니다.**" in page
+
+
+def test_a_contradicting_redteam_is_dropped_with_the_spec_format_header_line():
+    """A ⑤ output stating a rating label at all would already break the prompt's
+    own rule — this proves the safety net catches it independently anyway."""
+    page = render(
+        _known_rating_inputs(),
+        synthesize_fn=_stub_synthesis,
+        redteam_fn=lambda text: "- **005930 삼성전자 (매도)** — 임의 반박",
+    )
+    assert "⚠ 반증 생략: 등급과 모순 — 005930 (§2.2⑤)" in page
+
+
+def test_an_llm_failure_in_the_commentary_degrades_to_a_stated_absence_not_a_crash():
+    def boom(text: str) -> str:
+        raise RuntimeError("vendor down")
+
+    page = render(inputs(), synthesize_fn=boom, redteam_fn=_stub_redteam)
+    assert "⚠ 총평 생략: LLM 호출 실패: vendor down (§2.2⑧)" in page
+
+
+def test_an_llm_failure_in_the_redteam_degrades_to_a_stated_absence_not_a_crash():
+    def boom(text: str) -> str:
+        raise RuntimeError("vendor down")
+
+    page = render(inputs(), synthesize_fn=_stub_synthesis, redteam_fn=boom)
+    assert "⚠ 반증 생략: LLM 호출 실패: vendor down (§2.2⑤)" in page
+
+
+def test_the_redteam_input_never_includes_the_ratings_section():
+    """SPEC's literal scope for ⑤ is ①-④ — ⑥ and ⑨ are deliberately excluded,
+    per src/llm/prompts/v1_redteam.md."""
+    captured: list[str] = []
+
+    def record(text: str) -> str:
+        captured.append(text)
+        return "- ok"
+
+    render(
+        inputs(features=features_frame({"005930": {"foreign_flow_5d": 0.5}})),
+        synthesize_fn=_stub_synthesis,
+        redteam_fn=record,
+    )
+    assert "방향성 등급" not in captured[0]
+    assert "중장기 국면" not in captured[0]
+    assert "미국 → 한국" in captured[0]
+
+
+def test_the_commentary_input_never_includes_the_redteam_output():
+    """⑧ reads only rendered deterministic sections — feeding one LLM's prose
+    into another as input would compound hallucination risk."""
+    captured: list[str] = []
+
+    def record(text: str) -> str:
+        captured.append(text)
+        return "**오늘의 한 줄:** 총평"
+
+    render(inputs(), synthesize_fn=record, redteam_fn=lambda text: "고유한마커반증텍스트")
+    assert "고유한마커반증텍스트" not in captured[0]
+
+
+def test_render_defaults_to_the_real_synthesize_functions_when_not_injected(monkeypatch):
+    """Proves the `None` -> lazy import -> real function wiring actually works,
+    at the lowest seam (adapter._call) rather than by trusting the default
+    parameter resolves correctly."""
+    from src.llm import adapter
+
+    class _Response:
+        def __init__(self, content: str) -> None:
+            message = type("M", (), {"content": content})()
+            self.choices = [type("C", (), {"message": message})()]
+            self.usage = type("U", (), {"prompt_tokens": 10, "completion_tokens": 5})()
+
+    def fake_call(**kwargs):
+        schema = kwargs["response_format"]["json_schema"]["schema"]
+        key = next(iter(schema["properties"]))
+        return _Response(json.dumps({key: "실제 함수 경로 확인"}))
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    monkeypatch.setattr(adapter, "_call", fake_call)
+    monkeypatch.setattr(adapter, "_cost", lambda response: None)
+
+    page = render(inputs())
+    assert page.count("실제 함수 경로 확인") == 2  # both ⑤ and ⑧
+
+
 # --- ordering and persistence ---------------------------------------------
 
 
 def test_sections_appear_in_spec_display_order():
     """SPEC §2.3: 헤더 → ⑧ → ① → ⑨ → ② → ③ → ④ → ⑥ → ⑤ → ⑦. IDs are stable
     identifiers, not positions, so ⑧ leads even though it is generated last."""
-    page = render(inputs(features=features_frame({"005930": {"foreign_flow_5d": 0.5}})))
+    page = render(
+        inputs(features=features_frame({"005930": {"foreign_flow_5d": 0.5}})),
+        synthesize_fn=_stub_synthesis,
+        redteam_fn=_stub_redteam,
+    )
     order = ["## ⑧", "## ①", "## ⑨", "## ②", "## ③", "## ④", "## ⑥", "## ⑤", "## ⑦"]
     positions = [page.index(marker) for marker in order]
     assert positions == sorted(positions), "display order does not follow SPEC §2.3"
@@ -572,7 +833,7 @@ def test_the_shadow_section_survives_a_broken_evaluation_layer(tmp_path, monkeyp
 
 def test_the_footer_states_that_nothing_is_executed():
     """SPEC §0 principle 5 and CLAUDE.md absolute rule 2, on the page."""
-    page = render(inputs())
+    page = render(inputs(), synthesize_fn=_stub_synthesis, redteam_fn=_stub_redteam)
     assert "매매를 실행하지 않습니다" in page
 
 

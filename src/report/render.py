@@ -1,8 +1,15 @@
 """Render the daily briefing. SPEC §2, §12 step 10.
 
 Turns the deterministic pipeline's output into the markdown document a human
-reads. **No LLM is involved anywhere in this module**, which is why sections ⑤
-and ⑧ appear here only as stated absences.
+reads. **⑤ and ⑧ are the only sections that call an LLM**, both through
+:mod:`src.llm.synthesize`, and both only after every deterministic section has
+already been rendered to text — ⑤/⑧ read that text, never raw data. Each call
+is checked by :func:`src.report.consistency.check_commentary` before
+publication; a failed call or a failed check degrades that section to a
+stated per-run absence via :func:`_llm_section`, never a crash and never a
+silent drop (CLAUDE.md: "a partial report is published rather than no
+report"). This is different from :data:`ABSENT_SECTIONS`, which is for a
+section with no implementation at all — see :func:`_llm_section_unavailable`.
 
 The plan and the reasoning behind the section-by-section verdicts are in
 ``notes/step10-plan.md``; the conclusions are carried here.
@@ -15,12 +22,15 @@ reproduce that same failure one level up. CLAUDE.md is explicit: missing data
 appears in the report header, not only in logs.
 
 **Rendering is separated from loading.** :func:`render` takes a
-:class:`ReportInputs` and touches no disk, so a test can hand it a synthetic
-frame; :func:`load_inputs` does the reading. The two failure modes — "the
+:class:`ReportInputs` and touches no disk on its own — the one exception is
+the live LLM calls behind ⑤/⑧, injectable via ``synthesize_fn``/``redteam_fn``
+for exactly this reason — so a test can hand it a synthetic frame and a stub
+generator; :func:`load_inputs` does the reading. The two failure modes — "the
 numbers are wrong" and "the page is unreadable" — are then testable apart.
 
-Five of the nine sections ship complete (①⑨⑥⑦ and the header), two ship
-partial (②③), and three are absent (④⑤⑧). The header says so every day.
+All nine sections are generated as of 2026-08-25 (①②③④⑥⑦⑨ and the header
+deterministically, ⑤⑧ via the LLM synthesis stage). ②③④ still name specific
+sub-gaps inline rather than being fully built.
 
 ⑦ moved from partial to complete on 2026-08-13, when
 :mod:`src.eval.shadow_portfolio` gave it PREREGISTRATION §8.5's construction.
@@ -35,7 +45,7 @@ import datetime as dt
 import gzip
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,9 +53,10 @@ import pandas as pd
 
 from src.features.compute import FEATURES, z_scores_for
 from src.features.normalize import rolling_z
+from src.report.consistency import check_commentary
 from src.report.rating import Rating, RatingResult, rate
-from src.util.config import WatchlistEntry
-from src.util.session import to_kst, to_utc
+from src.util.config import AliasEntry, WatchlistEntry
+from src.util.session import previous_trading_day, to_kst, to_utc
 
 # SPEC §2.2① — the transmission correlation window, in KR sessions.
 CORRELATION_WINDOW = 60
@@ -62,23 +73,15 @@ VOLATILITY_FLAG_Z = 1.5
 
 _WEEKDAY_KO = ("월", "화", "수", "목", "금", "토", "일")
 
-# Sections with no implementation, and the reason each one gives the reader.
-# Written as data rather than inline prose so that the header's "미구현 섹션"
-# line and the section bodies can never disagree about what is missing.
-#
-# Removing "⑧" is a two-file change, not one. src/report/consistency.py
-# (the guard that compares every rating label in the LLM's prose against ⑥'s
-# computed rating, CLAUDE.md rule 3's "checked before publication" property)
-# already exists and is tested, but nothing calls it yet — grep confirms
-# render() is not among its callers. Wiring real ⑧ content into render()
-# without wiring consistency.py's check in the same change reopens CLAUDE.md
-# rule 3: an LLM-authored paragraph could publish already contradicting ⑥
-# with nothing to catch it. Found by /project-review on 2026-08-14; do both
-# halves together.
-ABSENT_SECTIONS: dict[str, tuple[str, str]] = {
-    "⑤": ("반증 (red team)", "LLM 단계입니다 — SPEC §12 6~8단계 완료 후 켜집니다"),
-    "⑧": ("AI 총평", "LLM 단계입니다 — SPEC §12 6~8단계 완료 후 켜집니다"),
-}
+# Sections with no implementation at all, and the reason each one gives the
+# reader. Written as data rather than inline prose so that the header's
+# "미구현 섹션" line and the section bodies can never disagree about what is
+# missing. ⑤/⑧ were removed here on 2026-08-25 once both were wired into
+# render() — see _llm_section for what replaced them: a section that *is*
+# built but could not be published on one particular run (a vendor outage, or
+# a §2.2⑥ contradiction) is a different fact from "not built", and is
+# reported through _llm_section_unavailable() instead of this dict.
+ABSENT_SECTIONS: dict[str, tuple[str, str]] = {}
 
 
 @dataclass
@@ -98,8 +101,23 @@ class ReportInputs:
     us_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
     macro: pd.DataFrame = field(default_factory=pd.DataFrame)
     calendar: pd.DataFrame = field(default_factory=pd.DataFrame)
+    kr_filings: pd.DataFrame = field(default_factory=pd.DataFrame)
+    # Collected daily but not read by any section yet — ② scans inputs.watchlist,
+    # which load_inputs populates KR-only (per-company US ratings are out of
+    # scope, notes/us-rating-plan.md), so there is no US row for it to flag
+    # against. Kept here rather than dropped, the same reasoning kr_index.py
+    # gives for collecting a benchmark before anything reads it: a source
+    # fetched only once something finally needs it would never have been
+    # validated against real data before that day arrives.
+    us_filings: pd.DataFrame = field(default_factory=pd.DataFrame)
     sector_mapping: Sequence[Mapping[str, object]] = ()
     rating_config: Mapping[str, object] = field(default_factory=dict)
+    # Needed by check_commentary() to attribute a rating-label-bearing line in
+    # ⑤/⑧'s LLM output to a ticker. An empty default is safe for callers that
+    # never touch ⑤/⑧, but *not* for a test of the consistency-drop path — an
+    # empty mapping means check_commentary() finds no tickers at all and every
+    # commentary trivially "passes", which proves nothing.
+    aliases: Mapping[str, AliasEntry] = field(default_factory=dict)
     news_counts: Mapping[str, int] = field(default_factory=dict)
     news_headlines: Mapping[str, tuple[str, str]] = field(default_factory=dict)
     ambiguous_ratio: float | None = None
@@ -151,6 +169,57 @@ def _fmt_z(value: float | None) -> str:
 def _absent(section: str) -> str:
     title, reason = ABSENT_SECTIONS[section]
     return f"## {section} {title}\n\n> **이 섹션은 아직 없습니다.** {reason}.\n"
+
+
+def _llm_section_unavailable(section: str, title: str, reason: str) -> str:
+    """Same shape as :func:`_absent`, for a section that *is* built but could
+    not be published this run — a vendor outage, or a §2.2⑥ contradiction.
+
+    Kept distinct from ``_absent``/``ABSENT_SECTIONS``: that pair says a
+    feature does not exist; this says it exists and today's run could not
+    publish it. Both must read as "this page is not lying to you", never as
+    "this page silently dropped something".
+    """
+    return f"## {section} {title}\n\n> **이 섹션은 이번 실행에서 생략됐습니다.** {reason}.\n"
+
+
+def _llm_section(
+    section: str,
+    heading: str,
+    warning_label: str,
+    spec_ref: str,
+    generate: Callable[[], str],
+    ratings: Mapping[str, RatingResult],
+    aliases: Mapping[str, AliasEntry],
+) -> tuple[str, str | None]:
+    """Run one LLM section end to end: generate, check, decide.
+
+    Returns the section's markdown and, when it had to be dropped, the
+    header warning line explaining why (``None`` on success). Exceptions from
+    ``generate`` are caught broadly rather than narrowed to
+    :class:`~src.llm.adapter.AdapterError` — CLAUDE.md rule 4 confines vendor
+    SDK imports to ``src/llm/adapter.py``, so this module cannot name
+    litellm's own exception types even if it wanted to, and a vendor outage
+    must never crash the whole report (CLAUDE.md: "a partial report is
+    published rather than no report"). This is reported, not swallowed —
+    the reason is threaded into the header — so it does not fall under
+    CLAUDE.md's "no bare except / no except Exception: pass" rule.
+    """
+    try:
+        text = generate()
+    except Exception as exc:  # noqa: BLE001 — reported via the header, not raised
+        reason = f"LLM 호출 실패: {exc}"
+        body = _llm_section_unavailable(section, heading, reason)
+        return body, f"⚠ {warning_label} 생략: {reason} ({spec_ref})"
+
+    report = check_commentary(text, ratings, aliases)
+    if not report.ok:
+        tickers = ", ".join(sorted({c.ticker for c in report.contradictions}))
+        reason = f"등급과 모순 — {tickers}"
+        body = _llm_section_unavailable(section, heading, reason)
+        return body, f"⚠ {warning_label} 생략: {reason} ({spec_ref})"
+
+    return f"## {section} {heading}\n\n{text}\n", None
 
 
 def _series_at(frame: pd.DataFrame, name: str) -> pd.Series:
@@ -278,8 +347,9 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
             "아래 등급은 전부 근거 0%이며 시장에 대한 판단이 아닙니다"
         )
 
-    absent = ", ".join(f"{key} {name}" for key, (name, _) in ABSENT_SECTIONS.items())
-    warnings.append(f"⚠ 미구현 섹션: {absent}")
+    if ABSENT_SECTIONS:
+        absent = ", ".join(f"{key} {name}" for key, (name, _) in ABSENT_SECTIONS.items())
+        warnings.append(f"⚠ 미구현 섹션: {absent}")
 
     if inputs.ambiguous_ratio is not None:
         note = (
@@ -295,14 +365,24 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
     return title, " | ".join(market), warnings
 
 
-def render_header(inputs: ReportInputs) -> str:
+def render_header(inputs: ReportInputs, *, extra_warnings: Sequence[str] = ()) -> str:
     """SPEC §2.1, as markdown. Every degradation of the briefing is stated here.
 
     The order is deliberate: what the reader can act on first, then everything
     that makes today's briefing less complete than it should be. A reader who
     stops after the header still knows what the document is not telling them.
+
+    ``extra_warnings`` carries facts only knowable mid-render — today, whether
+    ⑤/⑧ actually published or had to be dropped this run. ``header_facts`` stays
+    a pure function of ``inputs`` alone; keeping this separate is the same
+    "loaded facts vs. render-time facts" split :func:`load_inputs`'s docstring
+    already draws for the numbers themselves. :func:`render` calls this twice:
+    once with no extra warnings to build ⑧'s own input text (the commentary
+    cannot be shown a warning about its own outcome, which doesn't exist yet),
+    and once with the real outcome for the page actually published.
     """
     title, market, warnings = header_facts(inputs)
+    warnings = [*warnings, *extra_warnings]
     lines = [f"# {title}", ""]
     if market:
         lines += [market, ""]
@@ -534,8 +614,33 @@ def volatility_z(prices: pd.DataFrame, day: dt.date, *, window: int = 20) -> dic
     }
 
 
+def filed_tickers(filings: pd.DataFrame, day: dt.date) -> set[str]:
+    """Tickers with a DART filing dated the previous KR session.
+
+    SPEC §2.2②'s ``filing`` condition reads "new filing the previous day"
+    literally — ``day`` is the session being reported on, so this looks at
+    ``previous_trading_day("KR", day")``, not ``day`` itself.
+
+    Computed here rather than in ``features/compute.py``, the same reasoning
+    ``volatility_z`` gives: a §2.2② display flag with no ``rating.yaml``
+    weight is not a rating input.
+
+    Unfiltered by filing type — see ``src.collectors.kr_filings``'s module
+    docstring for why that is a measured cost, not a guess, and the section
+    footnote below for the same caveat surfaced to the reader.
+    """
+    if filings.empty:
+        return set()
+    target = previous_trading_day("KR", day)
+    dates = pd.to_datetime(filings["date"]).dt.date
+    return set(filings.loc[dates == target, "ticker"])
+
+
 def _flags_for(
-    ticker: str, z: Mapping[str, float | None], volatility: Mapping[str, float]
+    ticker: str,
+    z: Mapping[str, float | None],
+    volatility: Mapping[str, float],
+    filed: set[str],
 ) -> list[str]:
     """The §2.2② flags that are actually computable. See the section footnote."""
     flags = []
@@ -548,16 +653,20 @@ def _flags_for(
     vol = volatility.get(ticker)
     if vol is not None and vol > VOLATILITY_FLAG_Z:
         flags.append("`volatility`")
+
+    if ticker in filed:
+        flags.append("`filing`")
     return flags
 
 
 def render_scan(inputs: ReportInputs) -> str:
-    """SPEC §2.2②. Three of the seven flags are buildable; the rest are named."""
+    """SPEC §2.2②. Four of the seven flags are buildable; the rest are named."""
     lines = ["## ② 종목 스캔", ""]
     if inputs.features.empty or not inputs.watchlist:
         return "\n".join(lines + ["> 피처가 없어 이 섹션을 만들 수 없습니다.", ""])
 
     volatility = volatility_z(inputs.kr_prices, inputs.day)
+    filed = filed_tickers(inputs.kr_filings, inputs.day)
     header = (
         "| 종목 | 이름 | 외국인 5일 z | 기관 5일 z | 공매도 z "
         "| 상대강도 z | 변동성 z | 기사 | 플래그 |"
@@ -567,7 +676,7 @@ def render_scan(inputs: ReportInputs) -> str:
         z = z_scores_for(inputs.features, entry.ticker, inputs.day)
         if all(value is None for value in z.values()):
             continue
-        flags = _flags_for(entry.ticker, z, volatility)
+        flags = _flags_for(entry.ticker, z, volatility, filed)
         count = inputs.news_counts.get(entry.ticker, 0)
         name = entry.name or ""
         row = (
@@ -580,20 +689,22 @@ def render_scan(inputs: ReportInputs) -> str:
 
     lines += [
         "",
-        "> SPEC §2.2②는 플래그 7개를 정의하지만 **3개만 계산됩니다.** "
+        "> SPEC §2.2②는 플래그 7개를 정의하지만 **4개만 계산됩니다.** "
         "`inflow`/`outflow`는 외국인 5일 z ≷ ∓1.5, `volatility`는 20일 실현변동성 "
-        "z > 1.5입니다.",
+        "z > 1.5, `filing`은 전일 DART 공시 유무입니다(유형 무관 — 삼성전자처럼 "
+        "공시가 잦은 종목은 거의 매일 뜰 수 있습니다, 2026-08-25 실측: 55일간 832건).",
         ">",
         # 세션 수를 적지 않는 것은 의도적이다. 저장 창은 KRX 세션마다 1씩 늘어나서
         # 여기 박아 둔 숫자는 다음 날부터 틀린다 — 실제로 728로 박혀 있던 동안
         # 창은 732가 됐다. 도달일은 거래일 달력에서 나오는 고정된 사실이라 안 썩는다.
-        "> 나머지 4개가 없는 이유: `valuation_band`는 756세션이 필요한데 백필 창이 "
+        # news_spike의 2027-08-06도 같은 방식 — trading_days("KR", 2026-08-03, ...)로
+        # 뉴스 수집 시작일부터 252번째 세션을 구해 2026-08-25에 박아 넣었다(그때 16세션).
+        "> 나머지 3개가 없는 이유: `valuation_band`는 756세션이 필요한데 백필 창이 "
         "아직 못 미칩니다(백필을 늘리지 않아도 2026-09-11에 30종목, 2026-11-12에 "
         "454910이 도달합니다), `earnings_revision`은 컨센서스 EPS 소스 없음, "
-        "`filing`은 공시 "
-        "수집기 없음, **`news_spike`는 일별 언급량의 z-score가 필요한데 뉴스 "
-        "수집이 며칠치뿐이라 아직 분포가 없습니다** — 기사 열은 z가 아니라 "
-        "당일 건수입니다.",
+        "**`news_spike`는 다른 z-score 플래그와 같은 252세션 창이 "
+        "필요한데 뉴스 수집이 시작된 2026-08-03 이후 아직 16세션뿐입니다"
+        "(2027-08-06에 도달)** — 기사 열은 z가 아니라 당일 건수입니다.",
         "",
     ]
     return "\n".join(lines)
@@ -876,24 +987,86 @@ def render_shadow(inputs: ReportInputs, history: pd.DataFrame | None) -> str:
 # --- the whole document ---------------------------------------------------
 
 
-def render(inputs: ReportInputs, *, rating_history: pd.DataFrame | None = None) -> str:
+def render(
+    inputs: ReportInputs,
+    *,
+    rating_history: pd.DataFrame | None = None,
+    synthesize_fn: Callable[[str], str] | None = None,
+    redteam_fn: Callable[[str], str] | None = None,
+) -> str:
     """Render the full briefing in SPEC §2.3 display order.
 
     §2.3 order is ``헤더 → ⑧ → ① → ⑨ → ② → ③ → ④ → ⑥ → ⑤ → ⑦``. Section IDs are
     stable identifiers and are not display positions, so ⑧ leads the document
-    even though it is generated last — and today, absent.
+    even though it is generated last — it is built from every deterministic
+    section's already-rendered text (header + ①⑨②③④⑥), never from ⑤'s output
+    or raw data. ⑤ is built from ①②③④ only, deliberately excluding ⑥ and ⑨ —
+    it argues against ①-④'s conclusions on their own evidence and must not
+    have a rating to agree or disagree with (src/llm/prompts/v1_redteam.md).
+
+    ``synthesize_fn``/``redteam_fn`` default to the real calls in
+    :mod:`src.llm.synthesize`, imported lazily so this module stays importable
+    even if ``src/llm`` has a problem (the same resilience :func:`render_shadow`
+    already applies to :mod:`src.eval.shadow_portfolio`). A test injects a stub
+    instead of making a live call — the same testability shape
+    :func:`src.llm.score.score_article` already threads for the scoring stage.
     """
+    if synthesize_fn is None:
+        from src.llm.synthesize import run_synthesis
+
+        synthesize_fn = run_synthesis
+    if redteam_fn is None:
+        from src.llm.synthesize import run_redteam
+
+        redteam_fn = run_redteam
+
     results = rate_all(inputs)
+
+    transmission = render_transmission(inputs)
+    regime = render_regime(inputs)
+    scan = render_scan(inputs)
+    news = render_news(inputs)
+    calendar = render_calendar(inputs)
+    ratings = render_ratings(inputs, results)
+
+    # No extra_warnings: ⑧'s own input can't describe an outcome that doesn't
+    # exist yet.
+    plain_header = render_header(inputs)
+    synthesis_input = "\n".join([plain_header, transmission, regime, scan, news, calendar, ratings])
+    redteam_input = "\n".join([transmission, scan, news, calendar])
+
+    synthesis_body, synthesis_warning = _llm_section(
+        "⑧",
+        "AI 총평",
+        "총평",
+        "§2.2⑧",
+        lambda: synthesize_fn(synthesis_input),
+        results,
+        inputs.aliases,
+    )
+    redteam_body, redteam_warning = _llm_section(
+        "⑤",
+        "반증 (red team)",
+        "반증",
+        "§2.2⑤",
+        lambda: redteam_fn(redteam_input),
+        results,
+        inputs.aliases,
+    )
+
+    extra_warnings = [w for w in (synthesis_warning, redteam_warning) if w]
+    header = render_header(inputs, extra_warnings=extra_warnings)
+
     parts = [
-        render_header(inputs),
-        _absent("⑧"),
-        render_transmission(inputs),
-        render_regime(inputs),
-        render_scan(inputs),
-        render_news(inputs),
-        render_calendar(inputs),
-        render_ratings(inputs, results),
-        _absent("⑤"),
+        header,
+        synthesis_body,
+        transmission,
+        regime,
+        scan,
+        news,
+        calendar,
+        ratings,
+        redteam_body,
         render_shadow(inputs, rating_history),
         _footer(inputs),
     ]
@@ -1067,6 +1240,27 @@ def load_inputs(
     macro = read("macro", key=("date", "series"))
     calendar = read("calendar", key=("event", "date"))
 
+    def read_filings(source: str, key: tuple[str, ...]) -> pd.DataFrame:
+        """Like ``read()``, but an empty result is not a failure.
+
+        Zero filings across the whole watchlist in a short window is the
+        normal case for this source — the same "a quiet run is not a
+        failure" reasoning ``us/price_preview`` below is exempted for, not
+        the "flow/prices/macro are always non-empty for a real window"
+        assumption ``read()`` bakes in for every other source. ``key`` is
+        ``accession_no``/``rcept_no`` plus ``ticker``, not the default
+        ``date``/``ticker`` — a ticker can file more than once on the same
+        session, and the default key would collapse those rows into one.
+        """
+        try:
+            return load_raw(raw, source, key=key)
+        except (OSError, KeyError, ValueError) as exc:
+            failures.append(f"{source} ({type(exc).__name__})")
+            return pd.DataFrame()
+
+    kr_filings = read_filings("kr/filings", key=("rcept_no", "ticker"))
+    us_filings = read_filings("us/filings", key=("accession_no", "ticker"))
+
     # The Tiingo preview extends the *display* series past the Alpaca recency
     # boundary. Features never see it: `compute()` reads only KR frames, and
     # the canonical us/price path stays single-vendor. Absence is normal here
@@ -1084,7 +1278,8 @@ def load_inputs(
     if not flow.empty:
         features = compute(flow, kr_prices, watchlist, as_of=as_of)
 
-    counts, headlines, ambiguous, articles = news_for_day(raw, day, load_aliases())
+    aliases = load_aliases()
+    counts, headlines, ambiguous, articles = news_for_day(raw, day, aliases)
     status_failures, news_gaps = read_status(root)
 
     return ReportInputs(
@@ -1096,8 +1291,11 @@ def load_inputs(
         us_prices=us_prices,
         macro=macro,
         calendar=calendar,
+        kr_filings=kr_filings,
+        us_filings=us_filings,
         sector_mapping=load_sector_mapping(),
         rating_config=load_rating(),
+        aliases=aliases,
         news_counts=counts,
         news_headlines=headlines,
         ambiguous_ratio=ambiguous,

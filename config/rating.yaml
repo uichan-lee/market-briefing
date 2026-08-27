@@ -46,9 +46,18 @@ weights:                     # sums to 0.75
 # When a producer arrives, move the name up and rebalance the actives rather
 # than adding on top — weights are relative shares, so appending silently
 # rescales what every existing weight means.
-deferred_weights:            # sums to 0.35
+deferred_weights:            # sums to 0.20
   news_polarity: 0.20        # aggregated per SPEC §6.2 — the LLM stage, SPEC §12 steps 6–8
-  rev_4w: 0.15               # 4-week consensus EPS change — needs an estimates vendor
+
+  # `rev_4w` (4-week consensus EPS change, weight 0.15) was permanently
+  # dropped here 2026-08-25, not deferred: notes/rev4w-vendor-research.md
+  # found no source that is both free and ToS-clean, and the one academic
+  # path (WRDS/FactSet/Capital IQ Pro) closed 2026-08-21 — Haas library:
+  # bulk download not permitted, post-graduation retention not permitted
+  # either. Decision recorded in MANUAL-TASKS.md §11. rate() never read this
+  # key (deferred_weights is display-only, read by render.py's header), so
+  # removing the line is a documentation-only change — it does not alter any
+  # computed rating.
 
   # --- medium-term features (SPEC §5, added v0.5) -----------------------------
   # Left commented rather than listed above, and the distinction is deliberate:
