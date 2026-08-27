@@ -40,13 +40,14 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from src.features.compute import FEATURES, compute, load_raw
+from src.llm.daily_scoring import load_news_polarity_frame
 from src.report.rating import Rating, bucket_from_score
 from src.report.render import load_rating_history
 from src.util.config import load_rating, load_watchlist
@@ -74,6 +75,9 @@ class CalibrationData:
     weights: Mapping[str, float]
     cut_points: Mapping[str, float]
     min_weight_coverage: float = 0.0
+    # A feature with a producer but no live weight yet (news_polarity today).
+    # Read-only here — this module never proposes moving one into `weights`.
+    deferred_weights: Mapping[str, float] = field(default_factory=dict)
 
 
 def _long_features(wide: pd.DataFrame) -> pd.DataFrame:
@@ -101,6 +105,9 @@ def load(
     weights = {name: float(w) for name, w in (config.get("weights") or {}).items()}
     cut_points = {name: float(v) for name, v in (config.get("cut_points") or {}).items()}
     min_coverage = float((config.get("confidence") or {}).get("min_weight_coverage", 0.0))
+    deferred_weights = {
+        name: float(w) for name, w in (config.get("deferred_weights") or {}).items()
+    }
 
     scores = load_rating_history(root)
 
@@ -110,7 +117,8 @@ def load(
         prices = load_raw(root / "raw", "kr/price")
         if not flow.empty:
             watchlist = load_watchlist(market="KR")
-            wide = compute(flow, prices, watchlist, as_of=None)
+            news = load_news_polarity_frame(root)
+            wide = compute(flow, prices, watchlist, as_of=None, news=news)
             features = _long_features(wide)
 
     return CalibrationData(
@@ -119,6 +127,7 @@ def load(
         weights=weights,
         cut_points=cut_points,
         min_weight_coverage=min_coverage,
+        deferred_weights=deferred_weights,
     )
 
 
@@ -247,6 +256,41 @@ def weight_influence_table(features: pd.DataFrame, weights: Mapping[str, float])
     return pd.DataFrame(rows, columns=columns)
 
 
+def deferred_feature_table(features: pd.DataFrame, deferred: Mapping[str, float]) -> pd.DataFrame:
+    """Per deferred feature: n / mean |z| / z-score percentiles — no
+    ``realized_share`` column, since there is no live weight to compare
+    against. ``weight_influence_table`` only ever iterates ``weights``, so a
+    feature that has a producer but stays in ``deferred_weights`` (today:
+    ``news_polarity``) would otherwise never surface here at all. This is the
+    concrete "don't bury the distribution somewhere unobservable" tool for
+    the later reweight decision MANUAL-TASKS §6 already points at. Reads
+    ``features``'s already-melted ``z`` column (see ``_long_features``) —
+    the same z-scored view ``weight_influence_table`` reads, not the raw
+    pre-normalization value.
+    """
+    columns = ["feature", "designed_weight", "n", "mean_abs_z", "p10", "p50", "p90"]
+    if not deferred or features.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+    for name, weight in deferred.items():
+        sub = features[features["feature"] == name]
+        n = len(sub)
+        z = sub["z"].dropna()
+        rows.append(
+            {
+                "feature": name,
+                "designed_weight": weight,
+                "n": n,
+                "mean_abs_z": float(z.abs().mean()) if n else None,
+                "p10": float(np.percentile(z, 10)) if n else None,
+                "p50": float(np.percentile(z, 50)) if n else None,
+                "p90": float(np.percentile(z, 90)) if n else None,
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
 def _cell(value: float | None, digits: int = 3, *, pct: bool = False) -> str:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return "—"
@@ -326,6 +370,34 @@ def report(data: CalibrationData) -> str:
                 f"| {row.feature} | {row.weight:+.2f} | {_cell(row.designed_share, pct=True)} "
                 f"| {row.n} | {_cell(row.mean_abs_z, 2)} | {_cell(row.mean_abs_contribution, 2)} "
                 f"| {_cell(row.realized_share, pct=True)} | {_cell(row.delta, pct=True)} |"
+            )
+        lines.append("")
+
+    lines += ["## Deferred features", ""]
+    if not data.deferred_weights:
+        lines += ["`config/rating.yaml` has no `deferred_weights` entries.", ""]
+    elif data.features.empty:
+        lines += [
+            "No recomputed feature history (`recompute=False`, or `data/raw/kr/"
+            "investor_flow` is empty).",
+            "",
+        ]
+    else:
+        lines += [
+            "A feature with a producer but no live weight yet — see "
+            "`config/rating.yaml`'s own comment on `deferred_weights`. No "
+            "`realized_share` column: there is no weight to compare against, "
+            "since this is the distribution the later reweight decision reads.",
+            "",
+            "| feature | designed weight | n | mean \\|z\\| | p10 | p50 | p90 |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ]
+        table = deferred_feature_table(data.features, data.deferred_weights)
+        for row in table.itertuples(index=False):
+            lines.append(
+                f"| {row.feature} | {row.designed_weight:+.2f} | {row.n} | "
+                f"{_cell(row.mean_abs_z, 2)} | {_cell(row.p10, 2)} | {_cell(row.p50, 2)} | "
+                f"{_cell(row.p90, 2)} |"
             )
         lines.append("")
 

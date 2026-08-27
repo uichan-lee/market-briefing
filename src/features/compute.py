@@ -4,18 +4,25 @@ Turns the raw collector output in ``data/raw/`` into the z-scores
 :func:`src.report.rating.rate` consumes. The reasoning behind every choice here
 is in ``notes/step9-plan.md``; this docstring carries the conclusions.
 
-**Five of the seven rating features are built.** The other two are not, and
-neither is an oversight:
+**Six of the seven rating features are built.** ``rev_4w`` is not, and was
+permanently dropped rather than deferred (``config/rating.yaml``,
+``notes/rev4w-vendor-research.md``, MANUAL-TASKS §11) — no source in this
+repository provides consensus (forward) EPS, and pykrx's trailing ``EPS``
+would produce a number that looks like the feature and is not.
 
-* ``news_polarity`` (0.20) comes from the LLM scoring stage in SPEC §6.2, which
-  does not exist yet.
-* ``rev_4w`` (0.15) is the 4-week change in **consensus** EPS — forward analyst
-  estimates. No collector in this repository provides that. pykrx's ``EPS`` is
-  *trailing*, and substituting it would produce a number that looks like the
-  feature and is not. Doing it properly needs an estimates vendor, which is a
-  source decision rather than something to improvise.
+**``news_polarity`` has a producer (below) but is still in
+``deferred_weights``, deliberately.** ``src.llm.daily_scoring`` archives a
+score for every resolved article and this module aggregates and z-scores it,
+so the value is real and inspectable (``z_scores_for``, and
+``src.eval.rating_calibration``'s deferred-feature table) — but moving it into
+``rate()``'s ``weights`` changes every published rating, and CLAUDE.md/
+PREREGISTRATION §8.4 permit that only for a distributional reason argued
+after real data exists, never as part of wiring the producer up. That
+decision is deferred on purpose; this module's job stops at producing and
+z-scoring the number.
 
-The five that are built carry 0.75 of 1.10 total weight, comfortably above
+The six built features (five active, `news_polarity` still deferred) carry
+0.75 of 0.95 designed total weight, comfortably above
 ``min_weight_coverage: 0.5``, so :func:`rate` produces real ratings today and
 records the gap in ``weight_coverage`` rather than hiding it.
 
@@ -66,18 +73,31 @@ FLOW_WINDOW = 5
 RETURN_WINDOW = 20
 VALUATION_WINDOW = 756  # three years
 
-# The features this module produces. news_polarity and rev_4w are absent by
-# design — see the module docstring.
+# The features this module produces. rev_4w is absent by design — see the
+# module docstring; news_polarity is built but its weight stays deferred.
 FEATURES = (
     "foreign_flow_5d",
     "inst_flow_5d",
     "short_ratio",
     "rel_strength_20d",
     "valuation_band",
+    "news_polarity",
 )
 
 # valuation_band arrives already normalized; everything else gets the §5 z-score.
 _NOT_Z_SCORED = frozenset({"valuation_band"})
+
+# rolling_z's min_periods defaults to window (252) — right for the five
+# price/flow features, which have had a full trailing year available since
+# early in the 3-year backfill. news_polarity's raw value is NaN on any
+# session a ticker had no qualifying news, so most tickers would never reach
+# 252 non-null trailing observations and news_polarity_z would be permanently
+# absent — indistinguishable from the feature never having been wired up at
+# all. 60 sessions (~one quarter) is a policy starting point, not a measured
+# one — like valuation_band's normalization gap, this is named rather than
+# hidden, and is exactly the kind of choice PREREGISTRATION §8.4 lets Ricky
+# revisit once a real distribution exists.
+_MIN_PERIODS: dict[str, int] = {"news_polarity": 60}
 
 
 # Prefix for the placeholder sector a sectorless ticker gets, chosen so it cannot
@@ -175,6 +195,7 @@ def compute(
     window: int = WINDOW,
     valuation_window: int = VALUATION_WINDOW,
     short_lag: int = SHORT_LAG_SESSIONS,
+    news: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Compute every feature and its z-score, one row per (ticker, session).
 
@@ -183,6 +204,12 @@ def compute(
     boundary is applied when the features are consumed. It is not the *only*
     boundary — ``short_lag`` is the other; see ``short_ratio`` below.
 
+    ``news`` is ``src.llm.daily_scoring.load_news_polarity_frame``'s output
+    (``article_id``, ``ticker``, ``relevance``, ``polarity``, ``known_at_utc``)
+    — optional and defaulting to absent, so every existing caller keeps
+    working with ``news_polarity`` simply absent, exactly like
+    ``rel_strength_20d`` behaves today with an empty ``prices``.
+
     The returned frame carries both ``{feature}`` and ``{feature}_z``. ``rate()``
     needs only the z-score, but the MANUAL-TASKS §6 calibration cannot judge
     whether the cut points are sane without seeing the raw distributions, and a
@@ -190,6 +217,9 @@ def compute(
     """
     flow = _visible(flow, as_of)
     prices = _visible(prices, as_of)
+    if news is None:
+        news = pd.DataFrame(columns=["ticker", "relevance", "polarity", "known_at_utc"])
+    news = _visible(news, as_of)
     if not flow.empty:
         flow = flow.sort_values(["ticker", "date"])
     if not prices.empty:
@@ -270,14 +300,40 @@ def compute(
             returns[["date", "ticker", "rel_strength_20d"]], on=["date", "ticker"], how="left"
         )
 
+    # --- news polarity ------------------------------------------------------
+    # SPEC §2.2③: relevance-weighted average polarity, per (ticker, session).
+    # `known_at_utc` is already the look-ahead-correct column — it is the
+    # article's own tradeable-open timestamp, carried through unchanged by
+    # `load_news_polarity_frame` — so grouping by its KST calendar date, not
+    # `date` on any raw frame, is what makes this consistent with `_visible`'s
+    # boundary above rather than a second, looser one.
+    if news.empty:
+        out["news_polarity"] = pd.NA
+    else:
+        scored = news.copy()
+        scored["date"] = (
+            pd.to_datetime(scored["known_at_utc"], utc=True)
+            .dt.tz_convert("Asia/Seoul")
+            .dt.normalize()
+            .dt.tz_localize(None)
+            .astype("datetime64[s]")  # matches flow/prices' own date dtype exactly
+        )
+        scored["weighted"] = scored["relevance"] * scored["polarity"]
+        daily = scored.groupby(["date", "ticker"], observed=True).agg(
+            weighted=("weighted", "sum"), relevance=("relevance", "sum")
+        )
+        daily["news_polarity"] = _ratio(daily["weighted"], daily["relevance"])
+        out = out.merge(daily["news_polarity"].reset_index(), on=["date", "ticker"], how="left")
+
     # --- normalization ----------------------------------------------------
     out = out.sort_values(["ticker", "date"]).reset_index(drop=True)
     for feature in FEATURES:
         if feature in _NOT_Z_SCORED:
             out[f"{feature}_z"] = out[feature]
             continue
+        min_periods = min(_MIN_PERIODS.get(feature, window), window)
         out[f"{feature}_z"] = out.groupby("ticker", observed=True, group_keys=False)[feature].apply(
-            lambda s: rolling_z(s, window=window)
+            lambda s, min_periods=min_periods: rolling_z(s, window=window, min_periods=min_periods)
         )
 
     return out[["date", "ticker", *FEATURES, *(f"{f}_z" for f in FEATURES)]]

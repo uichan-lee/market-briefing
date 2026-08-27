@@ -63,10 +63,12 @@ from src.collectors import (
     us_price_alpaca,
 )
 from src.collectors.validate import ValidationReport
+from src.llm import daily_scoring
 from src.util.config import load_filing_ids, load_news_feeds, load_watchlist
 from src.util.session import now_utc
 
 ROOT = Path(__file__).resolve().parents[1]
+DATA = ROOT / "data"
 RAW = ROOT / "data" / "raw"
 STATUS = ROOT / "data" / "status"
 
@@ -385,6 +387,17 @@ def collect_news(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
     return f"{len(df)} articles -> {path.name}", report
 
 
+def collect_news_scores(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
+    """LLM-scores whatever's resolved-and-unscored in the recent news archive.
+    No KRX dependency, same as ``kr_news``/``calendar``/the filings sources —
+    runs in both runs. Not a date-range collector: ``daily_scoring`` finds its
+    own candidates from ``data/raw/kr/news/`` and archives to ``data/scores/``.
+    """
+    del start, end  # see docstring — daily_scoring works off its own window
+    df, report = daily_scoring.score_new_articles(DATA)
+    return f"{len(df)} newly scored", report
+
+
 Collector = Callable[[dt.date, dt.date], tuple[str, ValidationReport]]
 
 # What each run collects, in order. The morning list containing no KRX source is
@@ -397,6 +410,7 @@ RUNS: dict[str, dict[str, Collector]] = {
         "us_price_preview": collect_us_preview,
         "us_filings": collect_us_filings,
         "kr_filings": collect_kr_filings,
+        "news_scores": collect_news_scores,
     },
     "evening": {
         "kr_news": collect_news,
@@ -408,6 +422,7 @@ RUNS: dict[str, dict[str, Collector]] = {
         "us_price": collect_us_price,
         "us_filings": collect_us_filings,
         "kr_filings": collect_kr_filings,
+        "news_scores": collect_news_scores,
     },
 }
 

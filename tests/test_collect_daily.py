@@ -88,6 +88,13 @@ def test_both_runs_collect_calendar():
     assert "calendar" in RUNS["evening"]
 
 
+def test_both_runs_score_news():
+    """No KRX dependency — daily_scoring works off data/raw/kr/news/ and
+    data/scores/, same as kr_news/calendar/the filings sources."""
+    assert "news_scores" in RUNS["morning"]
+    assert "news_scores" in RUNS["evening"]
+
+
 def test_both_runs_collect_filings():
     """Neither filings source touches KRX/pykrx — us_filings hits SEC EDGAR,
     kr_filings hits DART's OpenAPI — so both run in both, same as macro and

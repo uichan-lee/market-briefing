@@ -57,6 +57,15 @@ data/*
 # than in reports/ so the Obsidian vault stays readable documents only.
 !data/ratings/
 
+# Scored news, one JSONL line per (article, ticker, model, prompt_version)
+# (SPEC §6.2/§6.3, src.llm.daily_scoring). Committed for the same reason
+# data/ratings/ is: this is what the later news_polarity reweight decision
+# gets made on, and it cannot be regenerated without paying for the LLM
+# calls again. Grows faster than data/ratings/ (~140 rows/day vs. ~31) but
+# at ~35 KB/day this is still small next to the already-committed 28 MB
+# data/raw/ backfill — revisit if that math changes.
+!data/scores/
+
 # Python
 __pycache__/
 *.pyc

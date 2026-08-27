@@ -1214,6 +1214,7 @@ def load_inputs(
     reproduce a past run's boundary.
     """
     from src.features.compute import compute, load_raw
+    from src.llm.daily_scoring import load_news_polarity_frame
     from src.util.config import load_aliases, load_rating, load_sector_mapping, load_watchlist
     from src.util.session import now_utc
 
@@ -1274,9 +1275,15 @@ def load_inputs(
 
     us_prices, preview_dates, disagreements = merge_us_preview(us_prices, preview)
 
+    try:
+        news_scores = load_news_polarity_frame(root)
+    except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
+        failures.append(f"scores ({type(exc).__name__})")
+        news_scores = pd.DataFrame()
+
     features = pd.DataFrame()
     if not flow.empty:
-        features = compute(flow, kr_prices, watchlist, as_of=as_of)
+        features = compute(flow, kr_prices, watchlist, as_of=as_of, news=news_scores)
 
     aliases = load_aliases()
     counts, headlines, ambiguous, articles = news_for_day(raw, day, aliases)

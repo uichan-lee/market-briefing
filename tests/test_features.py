@@ -78,6 +78,27 @@ def price_frame(tickers, days, closes=None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def news_frame(rows: list[tuple[str, dt.date, float, float]]) -> pd.DataFrame:
+    """``src.llm.daily_scoring.load_news_polarity_frame``'s output shape:
+    (ticker, day, relevance, polarity) tuples, one article each. Uses the
+    session close as ``known_at_utc`` — same convention ``flow_frame``/
+    ``price_frame`` already use, and it lands on the right KST calendar date
+    after ``compute()``'s tz-convert-and-normalize, which is all this needs.
+    """
+    return pd.DataFrame(
+        [
+            {
+                "article_id": f"{ticker}-{day.isoformat()}-{i}",
+                "ticker": ticker,
+                "relevance": relevance,
+                "polarity": polarity,
+                "known_at_utc": session_close_utc("KR", day),
+            }
+            for i, (ticker, day, relevance, polarity) in enumerate(rows)
+        ]
+    )
+
+
 # --- the z-score window ---------------------------------------------------
 
 
@@ -453,6 +474,115 @@ def test_valuation_band_is_absent_until_the_window_has_enough_history():
         valuation_window=756,
     )
     assert out["valuation_band"].isna().all()
+
+
+# --- news polarity ---------------------------------------------------------
+
+
+def test_news_polarity_is_the_relevance_weighted_average():
+    """SPEC §2.2③: sum(relevance*polarity) / sum(relevance), not a plain mean —
+    a highly relevant article should outweigh an off-topic one on the same
+    day, not count equally."""
+    days = sessions(10)
+    day = days[-1]
+    news = news_frame(
+        [("005930", day, 1.0, 1.0), ("005930", day, 0.2, -1.0)]  # mostly the relevant one
+    )
+    out = compute(
+        flow_frame(["005930"], days),
+        pd.DataFrame(),
+        watchlist(("005930", "반도체")),
+        window=5,
+        news=news,
+    )
+    row = out[out["date"] == pd.Timestamp(day)].iloc[0]
+    expected = (1.0 * 1.0 + 0.2 * -1.0) / (1.0 + 0.2)
+    assert row["news_polarity"] == pytest.approx(expected)
+
+
+def test_news_polarity_is_nan_when_no_relevance_at_all():
+    days = sessions(10)
+    day = days[-1]
+    news = news_frame([("005930", day, 0.0, 0.5)])
+    out = compute(
+        flow_frame(["005930"], days),
+        pd.DataFrame(),
+        watchlist(("005930", "반도체")),
+        window=5,
+        news=news,
+    )
+    row = out[out["date"] == pd.Timestamp(day)].iloc[0]
+    assert pd.isna(row["news_polarity"])
+
+
+def test_news_polarity_is_absent_when_no_news_frame_is_passed():
+    """The default (``news=None``) must not break every other caller — the
+    feature is simply absent, the same shape ``rel_strength_20d`` takes
+    with an empty ``prices``."""
+    days = sessions(10)
+    out = compute(
+        flow_frame(["005930"], days), pd.DataFrame(), watchlist(("005930", "반도체")), window=5
+    )
+    assert out["news_polarity"].isna().all()
+    scores = z_scores_for(out, "005930", days[-1])
+    assert scores["news_polarity"] is None
+
+
+def test_news_polarity_respects_the_look_ahead_boundary():
+    """An article known at or after ``as_of`` must not enter the aggregate —
+    the same boundary `_visible` already enforces for flow/prices.
+
+    ``as_of`` sits strictly after the session's own ``known_at_utc`` (flow's
+    boundary) so the session's flow row stays visible, and the article's
+    ``known_at_utc`` sits at/after ``as_of`` so only the article — not the
+    whole session — is excluded.
+    """
+    days = sessions(10)
+    day = days[-1]
+    as_of = session_close_utc("KR", day) + pd.Timedelta(hours=1)
+    news = news_frame([("005930", day, 1.0, 1.0)])
+    news.loc[0, "known_at_utc"] = as_of  # published exactly at the boundary
+    out = compute(
+        flow_frame(["005930"], days),
+        pd.DataFrame(),
+        watchlist(("005930", "반도체")),
+        window=5,
+        news=news,
+        as_of=as_of,
+    )
+    row = out[out["date"] == pd.Timestamp(day)].iloc[0]
+    assert pd.isna(row["news_polarity"])
+
+
+def test_news_polarity_z_survives_sparse_coverage():
+    """Regression for the min_periods trap: news_polarity's raw value is NaN
+    on any session a ticker had no news, so with rolling_z's default
+    min_periods=window a ticker would need 252 *consecutive non-null*
+    sessions — which a realistically sparse coverage pattern never reaches —
+    and news_polarity_z would be permanently absent, indistinguishable from
+    the feature never having been wired up. This constructs a ticker with
+    news on 80 of its last 252 sessions and asserts the z-score is real."""
+    days = sessions(252)
+    covered = days[::3][:80]  # 80 sessions, spread across the window
+    # Varying polarity, not a constant — a constant raw series has zero
+    # variance and rolling_z correctly returns NaN for that (by design, see
+    # its docstring), which would make this regression pass for the wrong
+    # reason.
+    news = news_frame(
+        [("005930", day, 1.0, 0.3 if i % 2 == 0 else -0.2) for i, day in enumerate(covered)]
+    )
+    out = compute(
+        flow_frame(["005930"], days),
+        pd.DataFrame(),
+        watchlist(("005930", "반도체")),
+        window=252,
+        news=news,
+    )
+    # z is only defined on a session that itself has a raw value — checked
+    # on the last *covered* session, not the window's last session (which
+    # this sparse pattern leaves without news at all).
+    row = out[out["date"] == pd.Timestamp(covered[-1])].iloc[0]
+    assert pd.notna(row["news_polarity_z"])
 
 
 # --- the sector map -------------------------------------------------------

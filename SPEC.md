@@ -451,7 +451,7 @@ All three are computable from the day the 3-year backfill lands (§12 step 4), s
 >
 > **Where the guarantee actually lives.** Reproducibility here comes from keeping what the model said, not from asking it to say the same thing twice — the pattern already used everywhere else in this project (`data/raw/` is never overwritten, ratings archive with a `-v2` suffix, the golden set is committed because it cannot be regenerated). Two mechanisms carry it:
 >
-> 1. **The archive.** §3's `data/scores/{date}__{model_id}__{prompt_version}.jsonl` is the record a re-run reads instead of re-scoring. ⚠ **Not yet implemented, and `.gitignore` does not except `data/scores/` yet** — both land with the production scoring wiring. Until then a re-score is not guaranteed to reproduce a published rating.
+> 1. **The archive.** §3's `data/scores/{date}__{model_id}__{prompt_version}.jsonl` is the record a re-run reads instead of re-scoring. ✅ **Built 2026-08-27** (`src/llm/daily_scoring.py`, wired into `scripts/collect_daily.py`), `.gitignore` excepts `data/scores/`. `news_polarity` (SPEC §2.2③) is computed and z-scored from it, though its weight stays deferred pending a separate, distributionally-informed reweight decision (`config/rating.yaml`).
 > 2. **The measurement.** §7.4's self-consistency σ, which this bullet list now makes load-bearing.
 >
 > PREREGISTRATION §8.3 defines what "LLM output reproducibility" means operationally, and records that it is **not** a §8.5 gate criterion — the four gate criteria are unchanged by this.
@@ -644,6 +644,7 @@ market-briefing/
       adapter.py              # vendor-neutral layer
       score.py
       synthesize.py            # ✅ §2.2⑤/⑧ — Stage 3 red-team + synthesis, wired into render.py
+      daily_scoring.py         # ✅ §6.2/§6.3 scores archive + news_polarity producer, wired into collect_daily.py
       prompts/
         v1_scoring.md
         v1_redteam.md          # §2.2⑤ — paired with report/consistency.py, model never shown §2.2⑥

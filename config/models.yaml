@@ -142,9 +142,10 @@ scoring:
   # If usage grows past the ~77% mark and starts
   # spilling into paid overflow regularly, revisit whether a same-day
   # cheaper-model fallback (e.g. gpt-5.6-luna) is worth the added routing
-  # complexity — deferred because scoring is not wired into
-  # `scripts/collect_daily.py` yet (SPEC §12 steps 6-8), so there is no
-  # running system to attach that logic to today.
+  # complexity — not built yet, but scoring is wired into
+  # `scripts/collect_daily.py` now (`src/llm/daily_scoring.py`, 2026-08-27),
+  # so this has a running system to attach that logic to whenever it is
+  # worth building.
 
 # The models the SPEC §7.4 bake-off compares. Read only by src/eval/bakeoff.py,
 # never by the pipeline — these are alternatives under test, not the configured

@@ -61,7 +61,11 @@ RATING_CONFIG = {
 # tested after the committed config stopped making it.
 LEGACY_RATING_CONFIG = {
     **RATING_CONFIG,
-    "weights": {**RATING_CONFIG["weights"], "news_polarity": 0.20},
+    # rev_4w, not news_polarity — news_polarity has had a real producer
+    # since 2026-08-27 (src.llm.daily_scoring + src.features.compute), so
+    # it no longer demonstrates "a weight for a feature with no producer".
+    # rev_4w is permanently dropped and will never have one.
+    "weights": {**RATING_CONFIG["weights"], "rev_4w": 0.15},
     "deferred_weights": {},
 }
 
@@ -168,7 +172,7 @@ def test_a_weight_for_a_feature_with_no_producer_is_still_flagged():
     out of `weights` must not disarm the check that catches the next one."""
     header = render_header(inputs(rating_config=LEGACY_RATING_CONFIG))
 
-    assert "⚠ 등급 근거 충족도: 0.75/0.95 (79%) — news_polarity 부재" in header
+    assert "⚠ 등급 근거 충족도: 0.75/0.90 (83%) — rev_4w 부재" in header
 
 
 def test_the_data_basis_line_dates_macro_separately_from_prices():

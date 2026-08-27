@@ -328,13 +328,19 @@ def test_a_non_numeric_deferred_weight_is_rejected(tmp_path):
         load_rating(path)
 
 
-def test_no_deferred_feature_already_has_a_producer():
-    """Catches the opposite drift: the feature arrived, the config did not move.
-    The header would keep calling it absent while rate() ignored its weight."""
+def test_no_deferred_feature_already_has_a_producer_except_the_named_exception():
+    """Catches the opposite drift: a feature quietly arrives and the config
+    doesn't move, so the header keeps calling it absent while rate() ignores
+    its weight. `news_polarity` is the one deliberate exception (2026-08-27):
+    its producer exists (src.llm.daily_scoring + src.features.compute) but
+    the reweight is a separate, later, distributionally-informed decision —
+    see config/rating.yaml's own comment on `deferred_weights`. Any other
+    deferred name still having a producer would be exactly the drift this
+    test exists to catch."""
     from src.features.compute import FEATURES
 
     deferred = load_rating().get("deferred_weights") or {}
-    assert not set(deferred) & set(FEATURES)
+    assert not (set(deferred) & set(FEATURES)) - {"news_polarity"}
 
 
 def test_every_active_weight_has_a_producer():
