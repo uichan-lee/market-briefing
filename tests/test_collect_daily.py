@@ -88,6 +88,16 @@ def test_both_runs_collect_calendar():
     assert "calendar" in RUNS["evening"]
 
 
+def test_both_runs_collect_filings():
+    """Neither filings source touches KRX/pykrx — us_filings hits SEC EDGAR,
+    kr_filings hits DART's OpenAPI — so both run in both, same as macro and
+    calendar. This is not the KRX constraint the morning-run test guards."""
+    assert "us_filings" in RUNS["morning"]
+    assert "us_filings" in RUNS["evening"]
+    assert "kr_filings" in RUNS["morning"]
+    assert "kr_filings" in RUNS["evening"]
+
+
 def test_calendar_looks_ahead_further_than_the_driver_window(monkeypatch):
     """calendar isn't compensating for a slow publisher the way macro is —
     it's sizing how far forward §2.2④ needs to see. CPI/FOMC dates are known

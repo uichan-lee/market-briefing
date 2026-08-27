@@ -7,12 +7,15 @@ are exercised against temporary files.
 from __future__ import annotations
 
 import pytest
+import yaml
 
 from src.util.config import (
+    CONFIG_DIR,
     ConfigError,
     load_aliases,
     load_all,
     load_delivery,
+    load_filing_ids,
     load_models,
     load_sector_mapping,
     load_watchlist,
@@ -38,6 +41,7 @@ def test_all_committed_config_files_load():
         "sector_mapping",
         "rating",
         "news_feeds",
+        "filing_ids",
     }
 
 
@@ -327,6 +331,41 @@ def test_every_committed_mapping_names_a_collected_symbol():
     from src.collectors.us_price import INDEX_ETFS
 
     assert [m["us"] for m in load_sector_mapping() if m["us"] not in INDEX_ETFS] == []
+
+
+# --- filing ids -------------------------------------------------------
+
+
+def test_committed_filing_ids_covers_the_whole_watchlist():
+    load_filing_ids()  # raises if any watchlist ticker has no entry
+
+
+def _committed_filing_ids() -> dict:
+    return yaml.safe_load((CONFIG_DIR / "filing_ids.yaml").read_text(encoding="utf-8"))
+
+
+def test_a_watchlist_ticker_missing_from_filing_ids_is_rejected(tmp_path):
+    """The failure this guards: a ticker with no entry would make the filings
+    collectors silently skip it forever, with nothing in the report header to
+    say so — so this is a hard error, not a warning, unlike aliases.yaml's
+    missing-alias tolerance."""
+    raw = _committed_filing_ids()
+    dropped = next(iter(raw["kr"]))
+    del raw["kr"][dropped]
+    path = tmp_path / "filing_ids.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match=dropped):
+        load_filing_ids(path)
+
+
+def test_a_malformed_filing_id_value_is_rejected(tmp_path):
+    raw = _committed_filing_ids()
+    some_ticker = next(iter(raw["kr"]))
+    raw["kr"][some_ticker] = {}
+    path = tmp_path / "filing_ids.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="corp_code"):
+        load_filing_ids(path)
 
 
 # --- missing files --------------------------------------------------------

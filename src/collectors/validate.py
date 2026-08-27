@@ -105,6 +105,18 @@ def _dtype_matches(actual, expected: str) -> bool:
     return False
 
 
+def empty_frame(schema: Mapping[str, str]) -> pd.DataFrame:
+    """A zero-row frame that still satisfies ``check_schema`` against ``schema``.
+
+    ``pd.DataFrame(columns=[...])`` alone leaves every column ``object``
+    dtype, which fails a declared ``datetime64``/``float64`` column even
+    though there is nothing wrong with an empty result — the collectors where
+    zero rows is a normal outcome (filings; see ``us_filings.py``/
+    ``kr_filings.py``) need an empty frame that still type-checks.
+    """
+    return pd.DataFrame(columns=list(schema)).astype(dict(schema))
+
+
 def check_schema(df: pd.DataFrame, expected: Mapping[str, str]) -> CheckResult:
     """Assert column names and dtypes.
 
@@ -277,6 +289,37 @@ def check_known_value(
             f"{column} at ({label}) is {actual}, expected {expected} (±{tolerance})",
         )
     return CheckResult("known_value", True, f"{column} at ({label}) == {actual}")
+
+
+def check_known_row_exists(df: pd.DataFrame, where: Mapping[str, object]) -> CheckResult:
+    """Assert a specific, independently-verified row is present.
+
+    ``check_known_value`` compares one *numeric* column with a tolerance, which
+    fits a price or an index level. A filing has no such continuous value to
+    check — the fact worth pinning is that a specific, independently-verified
+    accession/receipt number exists at all. ``where`` selects the row the same
+    way ``check_known_value`` does, e.g.
+    ``{"accession_no": "0000320193-25-000079", "ticker": "AAPL"}``; any number
+    of columns can be checked at once, so the filing's date can be pinned in
+    the same call as its id.
+    """
+    label = ", ".join(f"{k}={v!r}" for k, v in where.items())
+
+    mask = pd.Series(True, index=df.index)
+    for key, value in where.items():
+        if key not in df.columns:
+            return CheckResult("known_value", False, f"selector column {key} absent")
+        series = df[key]
+        if isinstance(value, dt.date) and not isinstance(value, dt.datetime):
+            series = pd.to_datetime(series).dt.date
+        mask &= series == value
+
+    matched = df[mask]
+    if len(matched) != 1:
+        return CheckResult(
+            "known_value", False, f"selector ({label}) matched {len(matched)} rows, expected 1"
+        )
+    return CheckResult("known_value", True, f"({label}) present")
 
 
 # --- aggregate -----------------------------------------------------------

@@ -52,16 +52,18 @@ from src.collectors import (
     calendar as calendar_events,
 )
 from src.collectors import (
+    kr_filings,
     kr_flow,
     kr_index,
     kr_news,
     kr_price,
     macro,
+    us_filings,
     us_price,
     us_price_alpaca,
 )
 from src.collectors.validate import ValidationReport
-from src.util.config import load_news_feeds, load_watchlist
+from src.util.config import load_filing_ids, load_news_feeds, load_watchlist
 from src.util.session import now_utc
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -127,6 +129,8 @@ PATHS = {
     "us_price_preview": RAW / "us" / "price_preview",
     "macro": RAW / "macro",
     "calendar": RAW / "calendar",
+    "us_filings": RAW / "us" / "filings",
+    "kr_filings": RAW / "kr" / "filings",
 }
 
 # Row identity per source, for the changed-content comparison.
@@ -138,6 +142,10 @@ KEYS = {
     "us_price_preview": ["date", "ticker"],
     "macro": ["date", "series"],
     "calendar": ["event", "date"],
+    # A ticker can file more than once on the same day, so the filing id
+    # (not the date) is what makes a row unique.
+    "us_filings": ["accession_no", "ticker"],
+    "kr_filings": ["rcept_no", "ticker"],
 }
 
 
@@ -342,6 +350,30 @@ def collect_calendar(start: dt.date, end: dt.date) -> tuple[str, ValidationRepor
     return f"{len(df)} rows, {new} new / {revised} revised", report
 
 
+def collect_us_filings(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
+    """SEC EDGAR filings. No KRX dependency, so this runs in both runs like
+    ``macro``/``calendar`` — the evening run is what actually reaches the
+    published report's "filing the previous day" flag, and the morning run
+    costs only a handful of cheap, ungated SEC calls.
+    """
+    tickers = [e.ticker for e in load_watchlist(market="US")]
+    cik_by_ticker = load_filing_ids()["us"]
+    df, report = us_filings.fetch(tickers, cik_by_ticker, start, end)
+    new, revised = write_daily("us_filings", df)
+    return f"{len(df)} rows, {new} new / {revised} revised", report
+
+
+def collect_kr_filings(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
+    """DART filings. Uses DART's OpenAPI, not pykrx/KRX scraping, so it does
+    not carry kr_flow's KRX rate-limit constraint and runs in both runs.
+    """
+    tickers = [e.ticker for e in load_watchlist(market="KR")]
+    corp_code_by_ticker = load_filing_ids()["kr"]
+    df, report = kr_filings.fetch(tickers, corp_code_by_ticker, start, end)
+    new, revised = write_daily("kr_filings", df)
+    return f"{len(df)} rows, {new} new / {revised} revised", report
+
+
 def collect_news(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
     del start, end  # news has no date range; the buffer is whatever it is now
     now = now_utc()
@@ -363,6 +395,8 @@ RUNS: dict[str, dict[str, Collector]] = {
         "macro": collect_macro,
         "calendar": collect_calendar,
         "us_price_preview": collect_us_preview,
+        "us_filings": collect_us_filings,
+        "kr_filings": collect_kr_filings,
     },
     "evening": {
         "kr_news": collect_news,
@@ -372,6 +406,8 @@ RUNS: dict[str, dict[str, Collector]] = {
         "kr_flow": collect_kr_flow,
         "kr_index": collect_kr_index,
         "us_price": collect_us_price,
+        "us_filings": collect_us_filings,
+        "kr_filings": collect_kr_filings,
     },
 }
 

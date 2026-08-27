@@ -38,8 +38,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.collectors import kr_flow, kr_index, kr_price, macro, us_price, us_price_alpaca
-from src.util.config import load_watchlist
+from src.collectors import kr_filings, kr_flow, kr_index, kr_price, macro, us_price, us_price_alpaca
+from src.util.config import load_filing_ids, load_watchlist
 from src.util.krx import KrxSessionError
 from src.util.session import trading_days
 
@@ -56,6 +56,7 @@ PATHS = {
     "kr_index": RAW / "kr" / "benchmark",
     "us_price": RAW / "us" / "price",
     "macro": RAW / "macro",
+    "kr_filings": RAW / "kr" / "filings",
 }
 
 # KRX is fetched a year at a time. One request per ticker per endpoint for a
@@ -191,12 +192,45 @@ def backfill_kr_index(start: dt.date, end: dt.date, *, revise: bool) -> str:
     )
 
 
+def backfill_kr_filings(start: dt.date, end: dt.date, *, revise: bool) -> str:
+    """Routed through ``_backfill_kr`` for its chunking/resumability, even
+    though DART is rate-limited by a daily call count rather than KRX's
+    per-address block — the KrxSessionError branch simply never fires here.
+
+    **Known inefficiency, not a correctness bug**: a session where the whole
+    watchlist filed nothing writes no file (``_write_by_date`` skips an empty
+    frame), so ``_pending`` treats that date as still missing and re-requests
+    it on every re-run. kr_news solves the analogous problem by writing an
+    empty file as a record that the run happened; doing the same here would
+    mean changing ``_write_by_date``/``_pending`` for every source, not just
+    this one, so it is left as a stated cost rather than forced through here.
+    """
+    corp_code_by_ticker = load_filing_ids()["kr"]
+    return _backfill_kr(
+        "kr_filings",
+        lambda tickers, chunk_start, chunk_end: kr_filings.fetch(
+            tickers, corp_code_by_ticker, chunk_start, chunk_end
+        ),
+        start,
+        end,
+        revise=revise,
+    )
+
+
 SOURCES = {
     "macro": backfill_macro,
     "us_price": backfill_us_price,
     "kr_price": backfill_kr_price,
     "kr_flow": backfill_kr_flow,
     "kr_index": backfill_kr_index,
+    "kr_filings": backfill_kr_filings,
+    # us_filings is deliberately absent. src.collectors.us_filings.fetch()
+    # reads only SEC's filings.recent (the most recent ~1000 filings per
+    # company) and does not paginate into filings.files — correct for the
+    # daily driver's few-day window, but a multi-year backfill against a
+    # high-volume filer (Apple: ~600 Form 4s in a few months) would silently
+    # stop short of full history. A stated absence rather than a backfill
+    # that quietly under-collects — see us_filings.py's fetch() docstring.
 }
 
 
