@@ -411,10 +411,35 @@ def test_load_news_polarity_frame_dedups_on_article_ticker_model_prompt(tmp_path
     assert len(frame) == 1
 
 
+def test_load_news_polarity_frame_can_select_one_model_and_prompt(tmp_path):
+    day = dt.date(2026, 8, 20)
+    _write_news(tmp_path, day, [_article("a1")])
+    write_scores(tmp_path, day, "gpt-5.4", "v1", [_score_row("a1")])
+    write_scores(
+        tmp_path, day, "other", "v2", [_score_row("a1", model_id="other", prompt_version="v2")]
+    )
+
+    frame = load_news_polarity_frame(tmp_path, model_id="gpt-5.4", prompt_version="v1")
+    assert len(frame) == 1
+    assert frame.iloc[0]["model_id"] == "gpt-5.4"
+
+
 def test_load_news_polarity_frame_empty_when_nothing_scored(tmp_path):
     frame = load_news_polarity_frame(tmp_path)
     assert frame.empty
-    assert list(frame.columns) == ["article_id", "ticker", "relevance", "polarity", "known_at_utc"]
+    assert list(frame.columns) == [
+        "article_id",
+        "ticker",
+        "model_id",
+        "prompt_version",
+        "relevance",
+        "polarity",
+        "intensity",
+        "uncertainty",
+        "known_at_utc",
+        "title",
+        "link",
+    ]
 
 
 # --- live, manual verification only ------------------------------------------

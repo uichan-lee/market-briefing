@@ -211,7 +211,12 @@ def write_scores(
     return path
 
 
-def load_news_polarity_frame(root: Path) -> pd.DataFrame:
+def load_news_polarity_frame(
+    root: Path,
+    *,
+    model_id: str | None = None,
+    prompt_version: str | None = None,
+) -> pd.DataFrame:
     """Every archived score joined against its article's ``known_at_utc``.
 
     This is ``compute.py``'s ``load_raw`` equivalent for ``news_polarity``: it
@@ -221,7 +226,19 @@ def load_news_polarity_frame(root: Path) -> pd.DataFrame:
     archive is dropped, not a crash — SPEC's stated failure discipline
     applies here too.
     """
-    columns = ["article_id", "ticker", "relevance", "polarity", "known_at_utc"]
+    columns = [
+        "article_id",
+        "ticker",
+        "model_id",
+        "prompt_version",
+        "relevance",
+        "polarity",
+        "intensity",
+        "uncertainty",
+        "known_at_utc",
+        "title",
+        "link",
+    ]
     score_files = sorted(glob.glob(str(root / "scores" / "*.jsonl")))
     if not score_files:
         return pd.DataFrame(columns=columns)
@@ -233,23 +250,39 @@ def load_news_polarity_frame(root: Path) -> pd.DataFrame:
         return pd.DataFrame(columns=columns)
 
     scores = pd.DataFrame(records)
+    if model_id is not None:
+        scores = scores[scores["model_id"] == model_id]
+    if prompt_version is not None:
+        scores = scores[scores["prompt_version"] == prompt_version]
+    if scores.empty:
+        return pd.DataFrame(columns=columns)
     scores = scores.drop_duplicates(
         subset=["article_id", "ticker", "model_id", "prompt_version"], keep="last"
     )
 
-    known_at: dict[str, Any] = {}
+    articles: dict[str, dict[str, Any]] = {}
     news_dir = root / "raw" / "kr" / "news"
     for path in sorted(glob.glob(str(news_dir / "*" / "*.jsonl.gz"))):
         with gzip.open(path, "rt", encoding="utf-8") as handle:
             for line in handle:
                 row = json.loads(line)
-                known_at.setdefault(row["article_id"], row.get("known_at_utc"))
+                articles.setdefault(row["article_id"], row)
 
-    scores["known_at_utc"] = scores["article_id"].map(known_at)
+    scores["known_at_utc"] = scores["article_id"].map(
+        lambda article_id: articles.get(article_id, {}).get("known_at_utc")
+    )
+    scores["title"] = scores["article_id"].map(
+        lambda article_id: articles.get(article_id, {}).get("title", "")
+    )
+    scores["link"] = scores["article_id"].map(
+        lambda article_id: articles.get(article_id, {}).get("link", "")
+    )
     scores = scores.dropna(subset=["known_at_utc"]).copy()
     scores["known_at_utc"] = pd.to_datetime(scores["known_at_utc"], utc=True)
     scores["relevance"] = pd.to_numeric(scores["relevance"], errors="coerce")
     scores["polarity"] = pd.to_numeric(scores["polarity"], errors="coerce")
+    scores["intensity"] = pd.to_numeric(scores["intensity"], errors="coerce")
+    scores["uncertainty"] = pd.to_numeric(scores["uncertainty"], errors="coerce")
     return scores[columns].reset_index(drop=True)
 
 

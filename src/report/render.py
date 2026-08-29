@@ -120,6 +120,7 @@ class ReportInputs:
     aliases: Mapping[str, AliasEntry] = field(default_factory=dict)
     news_counts: Mapping[str, int] = field(default_factory=dict)
     news_headlines: Mapping[str, tuple[str, str]] = field(default_factory=dict)
+    news_scores: pd.DataFrame = field(default_factory=pd.DataFrame)
     ambiguous_ratio: float | None = None
     articles_seen: int = 0
     collector_failures: Sequence[str] = ()
@@ -719,34 +720,69 @@ def render_scan(inputs: ReportInputs) -> str:
 
 
 def render_news(inputs: ReportInputs) -> str:
-    """SPEC §2.2③, without the scores. Counts are deterministic; polarity is not.
-
-    The section ships as counts and headlines rather than waiting for §6.2,
-    because mention volume is itself evidence and it is available today. What is
-    absent — polarity, uncertainty, intensity — is named, so nobody reads the
-    counts as sentiment.
-    """
+    """SPEC §2.2③ from the scored, visible pairs for this report day."""
     lines = ["## ③ 뉴스 집계", ""]
     if not inputs.news_counts:
         return "\n".join(lines + ["> 이 날짜에 워치리스트 종목과 매칭된 기사가 없습니다.", ""])
 
-    lines += ["| 종목 | 기사 | 대표 헤드라인 |", "|---|---:|---|"]
+    lines += [
+        "| 종목 | 매칭/채점 기사 | polarity | uncertainty | 최고 intensity 기사 |",
+        "|---|---:|---:|---:|---|",
+    ]
     ranked = sorted(inputs.news_counts.items(), key=lambda kv: -kv[1])
     names = {entry.ticker: (entry.name or "") for entry in inputs.watchlist}
     for ticker, count in ranked:
         if not count:
             continue
-        headline, link = inputs.news_headlines.get(ticker, ("", ""))
-        shown = f"[{headline}]({link})" if headline and link else (headline or "—")
-        lines.append(f"| {ticker} {names.get(ticker, '')} | {count} | {shown} |")
+        scored = (
+            inputs.news_scores[inputs.news_scores["ticker"] == ticker]
+            if "ticker" in inputs.news_scores
+            else pd.DataFrame()
+        )
+        scored_count = len(scored)
+        if scored_count:
+            relevance = pd.to_numeric(scored["relevance"], errors="coerce").fillna(0.0)
+            polarity = pd.to_numeric(scored["polarity"], errors="coerce")
+            total_relevance = relevance.sum()
+            weighted_polarity = (
+                float((relevance * polarity).sum() / total_relevance)
+                if total_relevance > 0 and polarity.notna().any()
+                else None
+            )
+            uncertainty = pd.to_numeric(scored["uncertainty"], errors="coerce").mean()
+            intensity = pd.to_numeric(scored["intensity"], errors="coerce")
+            if intensity.notna().any():
+                top = scored.loc[intensity.idxmax()]
+                headline, link = str(top["title"]), str(top["link"])
+            else:
+                headline, link = "", ""
+            shown = f"[{headline}]({link})" if headline and link else (headline or "—")
+            polarity_text = "—" if weighted_polarity is None else f"{weighted_polarity:+.2f}"
+            uncertainty_text = "—" if pd.isna(uncertainty) else f"{float(uncertainty):.2f}"
+        else:
+            headline, link = inputs.news_headlines.get(ticker, ("", ""))
+            shown = f"[{headline}]({link})" if headline and link else (headline or "—")
+            polarity_text = uncertainty_text = "미채점"
+        lines.append(
+            f"| {ticker} {names.get(ticker, '')} | {count}/{scored_count} | "
+            f"{polarity_text} | {uncertainty_text} | {shown} |"
+        )
 
-    lines += [
-        "",
-        "> **점수가 아니라 건수입니다.** SPEC §2.2③의 polarity·uncertainty·"
-        "intensity는 §6.2 LLM 스코어링 단계에서 나오는데 그 단계가 아직 "
-        "없습니다. 건수 자체는 결정론적이라 지금도 유효한 증거입니다.",
-        "",
-    ]
+    if inputs.news_scores.empty:
+        lines += [
+            "",
+            "> **점수 아카이브에 이 날짜의 채점 결과가 없습니다.** "
+            "매칭 기사 수와 대표 헤드라인만 표시합니다.",
+            "",
+        ]
+    else:
+        lines += [
+            "",
+            "> **중복 제거 전 매칭 기사 기준입니다.** "
+            "topicality/dedup 단계는 아직 생산 경로에 연결되지 않았습니다. "
+            "채점 기사 수가 매칭 기사 수보다 작으면 미채점 항목이 남아 있다는 뜻입니다.",
+            "",
+        ]
     return "\n".join(lines)
 
 
@@ -1139,7 +1175,7 @@ def write_ratings(frame: pd.DataFrame, root: Path, day: dt.date) -> Path | None:
 
 def news_for_day(
     root: Path, day: dt.date, entries: Mapping[str, object]
-) -> tuple[dict[str, int], dict[str, tuple[str, str]], float | None, int]:
+) -> tuple[dict[str, int], dict[str, tuple[str, str]], float | None, int, set[tuple[str, str]]]:
     """Resolve one day's collected articles onto watchlist tickers.
 
     Returns per-ticker counts, a representative headline each, the ambiguous
@@ -1152,14 +1188,14 @@ def news_for_day(
 
     directory = root / "kr" / "news" / day.isoformat()
     if not directory.exists():
-        return {}, {}, None, 0
+        return {}, {}, None, 0, set()
 
     articles = []
     for path in sorted(directory.glob("*.jsonl.gz")):
         with gzip.open(path, "rt", encoding="utf-8") as handle:
             articles.extend(json.loads(line) for line in handle)
     if not articles:
-        return {}, {}, None, 0
+        return {}, {}, None, 0, set()
 
     seen: set[str] = set()
     unique = []
@@ -1174,13 +1210,15 @@ def news_for_day(
 
     counts: dict[str, int] = {}
     headlines: dict[str, tuple[str, str]] = {}
+    pairs: set[tuple[str, str]] = set()
     if not matches.empty:
         for ticker, group in matches.groupby("ticker"):
             counts[str(ticker)] = int(group["article_id"].nunique())
             first = by_id.get(group.iloc[0]["article_id"], {})
             headlines[str(ticker)] = (first.get("title", ""), first.get("link", ""))
+            pairs.update((str(article_id), str(ticker)) for article_id in group["article_id"])
 
-    return counts, headlines, report.ambiguous_ratio, report.articles
+    return counts, headlines, report.ambiguous_ratio, report.articles, pairs
 
 
 def load_inputs(
@@ -1220,7 +1258,13 @@ def load_inputs(
     """
     from src.features.compute import compute, load_raw
     from src.llm.daily_scoring import load_news_polarity_frame
-    from src.util.config import load_aliases, load_rating, load_sector_mapping, load_watchlist
+    from src.util.config import (
+        load_aliases,
+        load_models,
+        load_rating,
+        load_sector_mapping,
+        load_watchlist,
+    )
     from src.util.session import now_utc
 
     root = root or Path("data")
@@ -1281,7 +1325,10 @@ def load_inputs(
     us_prices, preview_dates, disagreements = merge_us_preview(us_prices, preview)
 
     try:
-        news_scores = load_news_polarity_frame(root)
+        scoring = load_models().get("scoring", {})
+        news_scores = load_news_polarity_frame(
+            root, model_id=scoring.get("model"), prompt_version="v1"
+        )
     except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
         failures.append(f"scores ({type(exc).__name__})")
         news_scores = pd.DataFrame()
@@ -1291,7 +1338,13 @@ def load_inputs(
         features = compute(flow, kr_prices, watchlist, as_of=as_of, news=news_scores)
 
     aliases = load_aliases()
-    counts, headlines, ambiguous, articles = news_for_day(raw, day, aliases)
+    counts, headlines, ambiguous, articles, pairs = news_for_day(raw, day, aliases)
+    if pairs and not news_scores.empty:
+        pair_frame = pd.DataFrame(sorted(pairs), columns=["article_id", "ticker"])
+        visible_scores = news_scores[pd.to_datetime(news_scores["known_at_utc"], utc=True) < as_of]
+        day_scores = visible_scores.merge(pair_frame, on=["article_id", "ticker"], how="inner")
+    else:
+        day_scores = pd.DataFrame(columns=news_scores.columns)
     status_failures, news_gaps = read_status(root)
 
     return ReportInputs(
@@ -1310,6 +1363,7 @@ def load_inputs(
         aliases=aliases,
         news_counts=counts,
         news_headlines=headlines,
+        news_scores=day_scores,
         ambiguous_ratio=ambiguous,
         articles_seen=articles,
         collector_failures=[*failures, *status_failures],

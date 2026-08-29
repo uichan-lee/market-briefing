@@ -32,6 +32,7 @@ from src.report.render import (
     render,
     render_calendar,
     render_header,
+    render_news,
     render_ratings,
     render_scan,
     render_shadow,
@@ -348,6 +349,42 @@ def test_filed_tickers_is_empty_on_an_empty_frame():
     from src.report.render import filed_tickers
 
     assert filed_tickers(pd.DataFrame(), DAY) == set()
+
+
+def test_news_aggregates_scored_pairs_and_uses_the_highest_intensity_article():
+    scores = pd.DataFrame(
+        {
+            "article_id": ["a1", "a2"],
+            "ticker": ["005930", "005930"],
+            "relevance": [0.7, 0.3],
+            "polarity": [0.4, -0.2],
+            "intensity": [0.2, 0.9],
+            "uncertainty": [0.4, 0.6],
+            "title": ["낮은 강도", "최고 강도"],
+            "link": ["https://example.com/a1", "https://example.com/a2"],
+        }
+    )
+
+    page = render_news(inputs(news_counts={"005930": 3}, news_scores=scores))
+
+    assert "3/2" in page
+    assert "+0.22" in page
+    assert "0.50" in page
+    assert "[최고 강도](https://example.com/a2)" in page
+    assert "중복 제거 전" in page
+
+
+def test_news_without_scores_names_the_fallback_instead_of_showing_zero():
+    page = render_news(
+        inputs(
+            news_counts={"005930": 1},
+            news_headlines={"005930": ("원본 기사", "https://example.com/raw")},
+        )
+    )
+
+    assert "1/0" in page
+    assert "미채점" in page
+    assert "점수 아카이브" in page
 
 
 def test_the_filing_flag_fires_in_a_rendered_page():
