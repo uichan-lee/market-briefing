@@ -65,6 +65,17 @@ SCORE_WINDOW_DAYS = 4
 CONTINUITY_MAX_AGE_HOURS = 30.0
 CHECKPOINT_SIZE = 25
 
+# Hard ceiling on scored pairs per run, so a run cannot spill past OpenAI's
+# ~250K-token/day free pool into billed usage. A steady weekday sits near
+# 140 pairs across four scheduled runs; only a multi-day backlog (a Monday
+# after a weekend of RSS, a stretch of missed runs) reaches this cap, and
+# then the newest pairs are scored and the rest are left for the day's later
+# runs. Pairs the cap defers are not a continuity failure — they are dropped
+# on purpose — and their absence is already visible in §2.2③'s
+# matched/scored count. news_polarity is frozen out of the composite until
+# after the 3-month gate, so a few permanently-unscored old pairs cost nothing.
+MAX_PAIRS_PER_RUN = 180
+
 # Which golden-set example check_known_scoring re-scores every run. Fixed
 # rather than random, so a drift is comparable run to run.
 KNOWN_SCORING_INDEX = 0
@@ -381,14 +392,21 @@ def score_new_articles(
     pacer: Pacer | None = None,
     known_value_check: bool = True,
     checkpoint_size: int = CHECKPOINT_SIZE,
+    max_pairs_per_run: int = MAX_PAIRS_PER_RUN,
 ) -> tuple[pd.DataFrame, ValidationReport]:
     """Score every resolved-and-unscored (article, ticker) pair once, archive
     the successes, and report on it. Never raises on a per-article failure —
     only a missing credential stops the run before it starts, since nothing
     can be attempted without one.
+
+    At most ``max_pairs_per_run`` pairs are scored, newest first; a larger
+    backlog has its oldest pairs left for a later run or, if they age out,
+    dropped — see ``MAX_PAIRS_PER_RUN``.
     """
     if checkpoint_size < 1:
         raise ValueError("checkpoint_size must be positive")
+    if max_pairs_per_run < 1:
+        raise ValueError("max_pairs_per_run must be positive")
 
     now = now if now is not None else now_utc()
     config = models if models is not None else load_models()
@@ -419,6 +437,26 @@ def score_new_articles(
     candidates = resolved_candidates(root, now=now)
     scored = already_scored_pairs(root, model_id=model_id, prompt_version=prompt_version, now=now)
     todo = [c for c in candidates if (c["article_id"], c["ticker"]) not in scored]
+
+    # Newest first, so a backlog spends the run's budget on the pairs a reader
+    # is most likely to act on. `collected_at_utc` (not `known_at_utc`, which
+    # can be missing) is what `check_scoring_continuity` also keys on.
+    _epoch = pd.Timestamp.min.tz_localize("UTC")
+
+    def _collected(candidate: dict) -> pd.Timestamp:
+        raw = candidate.get("collected_at_utc")
+        return to_utc(raw) if raw else _epoch
+
+    todo.sort(key=_collected, reverse=True)
+    deferred, todo = todo[max_pairs_per_run:], todo[:max_pairs_per_run]
+    if deferred:
+        report.add(
+            CheckResult(
+                "scoring_budget",
+                True,
+                f"{len(deferred)} pair(s) left for a later run — {max_pairs_per_run}/run cap",
+            )
+        )
 
     written: list[dict] = []
     checkpoint: list[dict] = []
