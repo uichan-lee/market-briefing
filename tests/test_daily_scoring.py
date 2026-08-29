@@ -254,6 +254,42 @@ def test_score_new_articles_writes_the_successful_records(tmp_path, monkeypatch)
     assert row["model_id"] == "gpt-5.4"
 
 
+def test_score_new_articles_checkpoints_before_the_full_batch(tmp_path, monkeypatch):
+    import src.llm.daily_scoring as scoring
+
+    day = dt.date(2026, 8, 20)
+    _write_news(tmp_path, day, [_article("a1"), _article("a2", title="삼성전자 신제품")])
+    monkeypatch.setattr(scoring, "load_aliases", _aliases)
+    monkeypatch.setattr(scoring, "load_watchlist", lambda market=None: _watchlist())
+    monkeypatch.setattr(scoring, "missing_credential", lambda provider: None)
+    original_write = scoring.write_scores
+    checkpoints: list[int] = []
+
+    def capture_write(root, date, model_id, prompt_version, records):
+        checkpoints.append(len(records))
+        return original_write(root, date, model_id, prompt_version, records)
+
+    monkeypatch.setattr(scoring, "write_scores", capture_write)
+    frame, report = scoring.score_new_articles(
+        tmp_path,
+        now=pd.Timestamp("2026-08-20 12:00", tz="UTC"),
+        models=MODELS,
+        scorer=lambda article, **kwargs: _completion(),
+        known_value_check=False,
+        checkpoint_size=1,
+    )
+
+    assert report.ok, report.summary()
+    assert len(frame) == 2
+    assert checkpoints == [1, 1]
+    assert len(score_path(tmp_path, day, "gpt-5.4", "v1").read_text().splitlines()) == 2
+
+
+def test_score_new_articles_rejects_a_nonpositive_checkpoint_size(tmp_path):
+    with pytest.raises(ValueError, match="checkpoint_size"):
+        score_new_articles(tmp_path, checkpoint_size=0)
+
+
 def test_score_new_articles_skips_entirely_without_a_credential(tmp_path, monkeypatch):
     day = dt.date(2026, 8, 20)
     _write_news(tmp_path, day, [_article("a1")])

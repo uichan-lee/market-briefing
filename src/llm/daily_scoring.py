@@ -63,6 +63,7 @@ SCORE_WINDOW_DAYS = 4
 # principle kr_news.check_feed_continuity uses, sized so the failure fires
 # well inside SCORE_WINDOW_DAYS rather than at its edge.
 CONTINUITY_MAX_AGE_HOURS = 30.0
+CHECKPOINT_SIZE = 25
 
 # Which golden-set example check_known_scoring re-scores every run. Fixed
 # rather than random, so a drift is comparable run to run.
@@ -346,12 +347,16 @@ def score_new_articles(
     scorer=score_article,
     pacer: Pacer | None = None,
     known_value_check: bool = True,
+    checkpoint_size: int = CHECKPOINT_SIZE,
 ) -> tuple[pd.DataFrame, ValidationReport]:
     """Score every resolved-and-unscored (article, ticker) pair once, archive
     the successes, and report on it. Never raises on a per-article failure —
     only a missing credential stops the run before it starts, since nothing
     can be attempted without one.
     """
+    if checkpoint_size < 1:
+        raise ValueError("checkpoint_size must be positive")
+
     now = now if now is not None else now_utc()
     config = models if models is not None else load_models()
     report = ValidationReport(collector="news_scores")
@@ -383,6 +388,7 @@ def score_new_articles(
     todo = [c for c in candidates if (c["article_id"], c["ticker"]) not in scored]
 
     written: list[dict] = []
+    checkpoint: list[dict] = []
     outstanding: list[dict] = []
     exhausted = ""
     for candidate in todo:
@@ -409,24 +415,27 @@ def score_new_articles(
             outstanding.append(candidate)
             continue
 
-        written.append(
-            {
-                "article_id": candidate["article_id"],
-                "ticker": candidate["ticker"],
-                "model_id": result.model_id,
-                "prompt_version": result.prompt_version,
-                "relevance": float(result.parsed["relevance"]),
-                "polarity": float(result.parsed["polarity"]),
-                "intensity": float(result.parsed["intensity"]),
-                "uncertainty": float(result.parsed["uncertainty"]),
-                "forwardness": float(result.parsed["forwardness"]),
-                "rationale": str(result.parsed.get("rationale", "")),
-                "temperature": stage.get("temperature"),
-            }
-        )
+        record = {
+            "article_id": candidate["article_id"],
+            "ticker": candidate["ticker"],
+            "model_id": result.model_id,
+            "prompt_version": result.prompt_version,
+            "relevance": float(result.parsed["relevance"]),
+            "polarity": float(result.parsed["polarity"]),
+            "intensity": float(result.parsed["intensity"]),
+            "uncertainty": float(result.parsed["uncertainty"]),
+            "forwardness": float(result.parsed["forwardness"]),
+            "rationale": str(result.parsed.get("rationale", "")),
+            "temperature": stage.get("temperature"),
+        }
+        written.append(record)
+        checkpoint.append(record)
+        if len(checkpoint) >= checkpoint_size:
+            write_scores(root, now.date(), model_id, prompt_version, checkpoint)
+            checkpoint.clear()
 
-    if written:
-        write_scores(root, now.date(), model_id, prompt_version, written)
+    if checkpoint:
+        write_scores(root, now.date(), model_id, prompt_version, checkpoint)
 
     frame = pd.DataFrame(written)
     if not frame.empty:
