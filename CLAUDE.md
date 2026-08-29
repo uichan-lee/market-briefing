@@ -1,18 +1,33 @@
-# CLAUDE.md
+# Agent instructions — market-briefing
 
-Project instructions for `market-briefing`. Checked into the repository.
+Project instructions for `market-briefing`. Checked into the repository. `CLAUDE.md` is the canonical file; `AGENTS.md` is a symlink to it, so both Claude Code and Codex read the same text.
 
-Personal preferences (communication style, commit conventions, naming, general engineering hygiene) live in user memory at `~/.claude/CLAUDE.md` and are not repeated here. This file contains only what is specific to this project.
+Personal preferences (communication style, commit conventions, naming, general engineering hygiene) live in the user-level instructions file — `~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex — and are not repeated here. This file contains only what is specific to this project.
 
 ---
 
 ## Purpose
 
-Generate a daily market briefing for Korean and US equities. Full specification: @SPEC.md. Evaluation criteria, frozen before data collection: @PREREGISTRATION.md. Work that only Ricky can do: @MANUAL-TASKS.md.
+Generate a daily market briefing for Korean and US equities. Full specification: `SPEC.md` — read it before changing pipeline logic or schemas. Evaluation criteria, frozen before data collection: @PREREGISTRATION.md (eager-loaded here; it is short and defines what the evaluation may not violate). Work that only Ricky can do: `MANUAL-TASKS.md`.
 
 This system **does not execute trades**. It produces a document that a human reads and acts on.
 
 > **`MANUAL-TASKS.md` is written in Korean, deliberately.** User memory defaults repository documents to English but excepts output artifacts written for Ricky to read, and that file is a checklist Ricky follows step by step rather than reference material for an agent. Keep it Korean; do not "correct" it. Everything else — SPEC, README.md, code, comments, commit messages — stays English, with README.ko.md as the maintained Korean translation.
+
+---
+
+## Repository documents
+
+Beyond this file:
+
+- `SPEC.md` — full system specification. Read before changing pipeline logic or schemas.
+- `PREREGISTRATION.md` — evaluation criteria, frozen before data collection. Eager-loaded in Purpose.
+- `MANUAL-TASKS.md` — Korean, deliberately (see the note above). Steps only Ricky can perform.
+- `API-KEYS.md` — how to obtain each credential and which component it unblocks.
+- `README.md` / `README.ko.md` — external overview; the Korean file is the maintained translation.
+- `notes/` — design-decision history, per-step implementation plans, dated project reviews, and Korean next-step briefs for Ricky. Read the newest `notes/review-YYYY-MM-DD.md` for evidence and the newest `notes/next-steps-YYYY-MM-DD.md` for follow-up status before assuming any stage is live in production.
+
+**The agent maintains this list.** When a repository document or a `notes/` naming convention is added, renamed, moved, or retired, update this section — and any `@import` in Purpose — in the same change. Do not rely on Ricky to remember. If a referenced file is missing, check this list against `git ls-files` for a rename before assuming deletion.
 
 ---
 
@@ -37,6 +52,13 @@ SPEC §2.2⑧ lets an LLM write prose about direction. That is permitted only be
 **§2.2⑤ (red team, built 2026-08-25) sits under the same rule 3 but earns its place differently: it is never shown §2.2⑥'s ratings at all.** `src/llm/prompts/v1_redteam.md` gives it only §2.2①-④, and forbids the seven rating labels outright rather than reserving them — there is no rating in its input to originate, alter, or contradict, by construction rather than by a downstream check. `src/report/consistency.py`'s check still runs against its output (property 2, reused unmodified) as defense-in-depth, and property 3 holds identically (nothing consumes ⑤ either).
 
 The invariant, stated once: **the rating is computed; prose may not originate, alter, or contradict it.**
+
+> **Current enforcement status, 2026-08-28.** The reproduced bypasses are
+> closed by a fail-closed guard and regression tests: an unattributed,
+> ambiguous, or ungraded rating claim drops ⑤/⑧; a recognized US ticker clears
+> the prior KR subject; and reviewed compounds such as `저가매수` are detected.
+> Ordinary flow vocabulary remains excluded. No agent registers or enables
+> `ANTHROPIC_API_KEY`; Ricky registers it only after reviewing this change.
 
 ---
 
@@ -152,6 +174,24 @@ Dependencies are added when the code that needs them is written, each with a sta
 
 ---
 
+## Git and CI
+
+Two GitHub Actions workflows — `collect-news.yml` (hourly, twice-hourly in the KRX session) and `report.yml` (four scheduled firings per weekday) — run the pipeline and commit their output straight to `main` as `github-actions[bot]`. `origin/main` advances on its own many times a day, with no local action.
+
+- Before starting work, and again before committing, run `git fetch` then `git rebase origin/main`. A local `main` that was current yesterday is now many commits behind.
+- Never analyse "the latest data" from the working tree without fetching first; the local snapshot is stale by construction, and conclusions about coverage or gaps drawn from it are wrong.
+- Rebase, don't merge. The bot pushes under a rebase-retry loop (`report.yml` Commit step); a local merge commit is noise against that.
+
+---
+
+## Secrets
+
+Local credentials live in `.env` (gitignored); `.env.example` lists the keys. CI reads them from GitHub Actions repository secrets. `API-KEYS.md` is the inventory — what each key is and which component needs it.
+
+CI secrets and local `.env` drift apart silently: a key can be held locally and absent from Actions. Several LLM stages are wired into the pipeline but produce nothing in production for this reason — see `notes/review-2026-08-27.md`. Do not assume a stage runs in CI because its code path exists and its key is in `.env`.
+
+---
+
 ## Testing
 
 - `pytest`. Tests making network calls are marked `@pytest.mark.network` and excluded from the default run.
@@ -165,6 +205,7 @@ Dependencies are added when the code that needs them is written, each with a sta
 
 1. The code runs.
 2. `pytest -m "not network"` passes.
-3. Validation functions exist for any new data path.
-4. No `UNVERIFIED` marker remains that Ricky has not seen.
-5. The diff has been shown.
+3. `ruff check .` reports no errors and `ruff format .` has been applied.
+4. Validation functions exist for any new data path.
+5. No `UNVERIFIED` marker remains that Ricky has not seen.
+6. The diff has been shown.
