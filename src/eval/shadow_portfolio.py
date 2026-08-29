@@ -55,6 +55,8 @@ from src.eval.ic import (
 from src.features.compute import load_raw
 from src.report.render import load_rating_history
 
+_LOW_CONFIDENCE_COVERAGE = 0.5
+
 
 def holdings(
     ratings: pd.DataFrame,
@@ -78,8 +80,21 @@ def holdings(
 
     rows = []
     for day, group in scoped.dropna(subset=["score"]).groupby("date", observed=True):
-        size = bucket_size(len(group), quantile)
-        for ticker in group.nlargest(size, "score")["ticker"]:
+        if "low_confidence" in group:
+            eligible = group[~group["low_confidence"].fillna(False)]
+        elif {"rating", "weight_coverage"}.issubset(group.columns):
+            # Archives written before the explicit field still carry enough
+            # evidence to recover the same publication guard.
+            forced_hold = (group["rating"] == "관망") & (
+                group["weight_coverage"] < _LOW_CONFIDENCE_COVERAGE
+            )
+            eligible = group[~forced_hold]
+        else:
+            eligible = group
+        if eligible.empty:
+            continue
+        size = bucket_size(len(eligible), quantile)
+        for ticker in eligible.nlargest(size, "score")["ticker"]:
             rows.append({"date": pd.Timestamp(day), "ticker": ticker})
     if not rows:
         return pd.DataFrame(columns=["date", "ticker"])

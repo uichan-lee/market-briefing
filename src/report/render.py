@@ -1134,6 +1134,7 @@ def ratings_frame(inputs: ReportInputs, results: Mapping[str, RatingResult]) -> 
                 "rating": str(result.rating),
                 "score": result.score,
                 "weight_coverage": result.weight_coverage,
+                "low_confidence": result.low_confidence,
                 "missing": ",".join(result.missing),
             }
         )

@@ -89,6 +89,22 @@ def test_selection_happens_per_session_not_once():
     assert second == ["B"]
 
 
+def test_a_low_confidence_hold_is_not_selected_on_its_raw_score():
+    day = sessions(1)
+    ratings = pd.DataFrame(
+        {
+            "date": [pd.Timestamp(day[0])] * 3,
+            "ticker": ["A", "B", "C"],
+            "score": [9.0, 0.8, 0.1],
+            "low_confidence": [True, False, False],
+        }
+    )
+
+    held = holdings(ratings)
+
+    assert held["ticker"].tolist() == ["B"]
+
+
 def test_sessions_outside_the_window_are_not_traded():
     days = trading_days("KR", dt.date(2026, 8, 3), dt.date(2026, 8, 20))[:6]
     ratings = rating_frame({"A": [0.9] * 6, "B": [0.1] * 6}, days)
