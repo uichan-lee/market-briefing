@@ -66,7 +66,7 @@ from src.collectors.validate import (
     empty_frame,
     validate,
 )
-from src.util.session import session_close_utc, to_utc
+from src.util.session import NoSessionFoundError, next_tradeable_open, session_close_utc, to_utc
 
 COLLECTOR = "kr_filings"
 
@@ -179,6 +179,19 @@ def validate_frame(
 # --- fetching ------------------------------------------------------------
 
 
+def _known_at(date: dt.date) -> pd.Timestamp:
+    """Conservative timestamp for DART's date-only filing record.
+
+    DART can accept a filing on a KRX closure. On a normal session the existing
+    close-of-session convention remains; on a closure the next tradable open is
+    the earliest safe timestamp and, unlike a fabricated close, exists.
+    """
+    try:
+        return session_close_utc("KR", date)
+    except NoSessionFoundError:
+        return next_tradeable_open("KR", pd.Timestamp(date, tz="UTC"))
+
+
 def _parse(rows: list[dict], ticker: str) -> pd.DataFrame:
     if not rows:
         return empty_frame(SCHEMA)
@@ -187,7 +200,7 @@ def _parse(rows: list[dict], ticker: str) -> pd.DataFrame:
     df["ticker"] = ticker
     df["date"] = pd.to_datetime(df["rcept_dt"], format="%Y%m%d")
     df["flr_nm"] = df["flr_nm"].replace("", None)
-    df["known_at_utc"] = [session_close_utc("KR", d.date()) for d in df["date"]]
+    df["known_at_utc"] = [_known_at(d.date()) for d in df["date"]]
     df = df[list(SCHEMA)]
     # Cast here, not in fetch — the same reasoning as us_filings._parse: this
     # is what produces the committed schema, so check_schema must pass on

@@ -81,7 +81,7 @@ from src.collectors.validate import (
     empty_frame,
     validate,
 )
-from src.util.session import session_close_utc, to_utc
+from src.util.session import NoSessionFoundError, next_tradeable_open, session_close_utc, to_utc
 
 COLLECTOR = "us_filings"
 
@@ -232,6 +232,14 @@ def validate_frame(
 # --- fetching ---------------------------------------------------------------
 
 
+def _fallback_known_at(date: dt.date) -> pd.Timestamp:
+    """Safe fallback when EDGAR omits its intraday acceptance timestamp."""
+    try:
+        return session_close_utc("US", date)
+    except NoSessionFoundError:
+        return next_tradeable_open("US", pd.Timestamp(date, tz="UTC"))
+
+
 def _parse(payload: dict, ticker: str) -> pd.DataFrame:
     """Turn one company's ``filings.recent`` columnar block into row form."""
     recent = payload.get("filings", {}).get("recent", {})
@@ -248,7 +256,7 @@ def _parse(payload: dict, ticker: str) -> pd.DataFrame:
     accept = col("acceptanceDateTime")
     date = col("filingDate")
     known_at = [
-        to_utc(pd.Timestamp(a)) if a else session_close_utc("US", dt.date.fromisoformat(d))
+        to_utc(pd.Timestamp(a)) if a else _fallback_known_at(dt.date.fromisoformat(d))
         for a, d in zip(accept, date, strict=True)
     ]
 

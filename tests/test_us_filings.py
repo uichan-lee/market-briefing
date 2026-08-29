@@ -64,6 +64,19 @@ def test_known_at_utc_uses_acceptance_datetime_when_present(payload, frame):
     assert row["known_at_utc"].iloc[0] == pd.Timestamp(accept)
 
 
+def test_a_missing_acceptance_on_a_us_closure_uses_the_next_tradeable_open(payload):
+    from src.util.session import next_tradeable_open
+
+    closed = dt.date(2026, 4, 3)  # Good Friday
+    payload["filings"]["recent"]["acceptanceDateTime"][0] = ""
+    payload["filings"]["recent"]["filingDate"][0] = closed.isoformat()
+    parsed = _parse(payload, "AAPL")
+
+    assert parsed.iloc[0]["known_at_utc"] == next_tradeable_open(
+        "US", pd.Timestamp(closed, tz="UTC")
+    )
+
+
 def test_a_blank_report_date_becomes_nat_not_a_parse_error(frame):
     blank = frame[frame["report_date"].isna()]
     assert len(blank) >= 1

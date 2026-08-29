@@ -59,6 +59,18 @@ def test_known_at_utc_is_the_kr_session_close_of_the_date(frame):
     assert row["known_at_utc"] == expected
 
 
+def test_a_filing_on_a_krx_closure_uses_the_next_tradeable_open(payload):
+    from src.util.session import next_tradeable_open
+
+    closed = dt.date(2026, 2, 17)
+    rows = [dict(payload["list"][0], rcept_dt=closed.strftime("%Y%m%d"))]
+    parsed = _parse(rows, "005930")
+
+    assert parsed.iloc[0]["known_at_utc"] == next_tradeable_open(
+        "KR", pd.Timestamp(closed, tz="UTC")
+    )
+
+
 def test_an_empty_payload_parses_to_an_empty_frame():
     empty = _parse([], "005930")
     assert empty.empty
