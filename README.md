@@ -4,7 +4,7 @@
 
 This system does not execute trades. It produces a document a human reads and acts on.
 
-[![tests](https://img.shields.io/badge/tests-814%20offline%20%2B%2016%20network-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-921%20offline%20%2B%2020%20network-brightgreen)](tests/)
 [![python](https://img.shields.io/badge/python-3.13-blue)](pyproject.toml)
 [![evaluation](https://img.shields.io/badge/evaluation-preregistered%202026--08--02-orange)](PREREGISTRATION.md)
 
@@ -44,7 +44,16 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 | `RUN_MORNING` | 07:00 | US close (previous day) + KR pre-market — 2h before KOSPI opens |
 | `RUN_EVENING` | 21:30 | KR close (same day) + US pre-market — 1h before US opens |
 
-It has run unattended since 2026-08-03. 25 briefings are committed in [`reports/`](reports/) — those are real output, not samples.
+It has run unattended since 2026-08-03. More than 30 briefings are committed in [`reports/`](reports/) — those are real output, not samples.
+
+> [!WARNING]
+> **The LLM stages are code-complete but have not run in production.** Sections ⑤ (red team) and ⑧ (AI 총평) were wired into `render()` on 2026-08-25, and `news_polarity` scoring into the daily run on 2026-08-27. The pending 2026-08-28 change maps all four required credentials into `report.yml`, stages `data/scores/`, checkpoints paid scoring calls, closes the commentary guard bypasses, and renders ③ from archived scores. `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` are still absent from Actions, and the change has not yet completed a production run. Today's committed briefings therefore remain the deterministic flow-and-price model only. Current sequence: [notes/next-steps-2026-08-28.md](notes/next-steps-2026-08-28.md).
+>
+> **Do not register the keys until this pending change lands.** The guard,
+> score staging/checkpointing, and ③ score aggregation are implemented and
+> covered by the 921-test offline suite, but production evidence still requires
+> one Actions run after the change is merged. `news_polarity` remains excluded
+> from the rating composite until after the 2026-11-13 gate.
 
 ### What the output actually looks like
 
@@ -69,11 +78,16 @@ Three things in that block are the whole design argument:
 The header carries the same honesty about the run itself:
 
 ```
-ℹ 데이터 기준: KR 2026-08-12 · US 2026-08-11 · MACRO 2026-08-11
+ℹ 데이터 기준: KR 2026-08-27 · US 2026-08-26 · MACRO 2026-08-27
 ℹ 등급 근거 충족도: 0.75/0.75 (100%)
-⚠ 미구현 피처: news_polarity(0.20), rev_4w(0.15) — 설계 가중치 1.10의 32%
-ℹ 엔티티 모호 비율: 7.7% (기사 1,153건)
+⚠ 미구현 피처: news_polarity(0.20) — 설계 가중치 0.95의 21%
+ℹ 엔티티 모호 비율: 8.7% (기사 1,117건)
 ```
+
+(`rev_4w`, weight 0.15, was permanently dropped 2026-08-25 — no consensus-EPS
+source that is both free and ToS-clean; see [SPEC §5](SPEC.md) and
+[notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md). The design
+weight total is now 0.95, not 1.10.)
 
 Missing data appears in the document, not only in the logs. A partial report is published rather than no report.
 
@@ -150,6 +164,9 @@ The guard is string matching, not a second LLM — a checker that needed judgmen
 
 The interesting part of the matcher is what it *doesn't* match: 순매수, 매수세, 매도호가 are ordinary market vocabulary, not rating claims, so a label glued to an adjacent Hangul syllable is rejected — with an allowlist for trailing particles (매수는, 매수로), which are a closed class where compound nouns are not.
 
+> [!NOTE]
+> The 2026-08-27 review found bypass cases in this guard; the 2026-08-28 fail-closed fix now drops uncheckable rating claims, clears an inherited subject after an ungraded ticker, and detects reviewed recommendation compounds such as 저가매수. ⑤/⑧ still await Ricky's Actions-secret registration; details are in [notes/review-2026-08-27.md](notes/review-2026-08-27.md) §2 F1.
+
 ### Two rules that prevent self-deception
 
 **Look-ahead prohibition.** A feature computed at time `t` never uses data timestamped at or after `t`. Any function computing features takes an explicit `as_of` parameter — a function that reads "the latest" data without a boundary is a bug, not a convenience. News is joined on publication timestamp, and news published during a session is assumed tradeable only at the *next* session's open.
@@ -181,9 +198,11 @@ Criteria were frozen in [PREREGISTRATION.md](PREREGISTRATION.md) on 2026-08-02, 
 
 | Gate | Criteria | If not met |
 |---|---|---|
-| **2 weeks**<br>2026-08-12 → 08-26 | Pipeline uninterrupted · zero data-consistency errors · `ambiguous` < 30% · inter-model polarity correlation > 0.5 | Halt signal work, repair the measurement layer |
+| **2 weeks** ✅ **passed 2026-08-27**<br>2026-08-12 → 08-26 | Pipeline uninterrupted · zero data-consistency errors · `ambiguous` < 30% · inter-model polarity correlation > 0.5 | Halt signal work, repair the measurement layer |
 | **3 months**<br>2026-08-13 → 11-13 | ICIR > 0.3 · shadow portfolio beats KODEX 200 buy-and-hold | Discard the signal logic, redesign |
 | **6 months** | The above holds after fees, transaction tax, and slippage | End the project, switch to indexing |
+
+All four 2-week criteria read as cleared: `ambiguous` ~9%, zero counted data-consistency errors, uninterrupted runs, inter-model polarity correlation 0.81–0.88 ([PREREGISTRATION §R](PREREGISTRATION.md), 2026-08-27; criterion 4 measured 2026-08-15). The gate validates the *measurement layer*, not the signal — and it passed on a pipeline whose LLM stages had been dead in CI since 2026-08-25 (see the warning near the top).
 
 **Two weeks cannot measure whether the signal works.** Separating a 55% hit rate from 50% needs roughly 800 independent observations; two weeks of 30 tickers yields an effective 60–100 once market beta eats the cross-sectional independence. So the early gate measures *measurement stability* — whether three different models scoring the same articles agree with each other — rather than predictive accuracy. If they disagree, the scores are model-specific noise and there is nothing worth validating yet.
 
@@ -227,28 +246,31 @@ market-briefing/
 │   ├── news_feeds.yaml        RSS sources — coverage equals this file
 │   ├── sector_mapping.yaml    US ETF ↔ KR sector
 │   ├── models.yaml            which model per stage, with the bake-off's reasoning
+│   ├── filing_ids.yaml        DART corp codes for the KR filings collector
 │   └── delivery.yaml          output channels — the ONLY place one may be declared
 │
 ├── src/
 │   ├── util/session.py        UTC/KST, trading days, look-ahead boundary
 │   ├── util/config.py         config loading + hand-editing safeguards
-│   ├── collectors/            validate.py + 7 collectors (KR/US price, flow, index, news, macro, calendar)
+│   ├── collectors/            validate.py + 10 collectors (KR/US price, KR flow/index, KR/US filings, news, macro, calendar; us_price has an Alpaca + a Tiingo variant)
 │   ├── entity/resolve.py      alias-driven ticker matching + ambiguous bucket
-│   ├── embed/                 dedup (calibrated) + topicality (calibrated 2026-08-22, deployment held)
-│   ├── features/              compute.py (5 of 7 features) + normalize.py (z-scores)
-│   ├── llm/                   adapter.py (vendor-neutral), score.py, prompts/
+│   ├── embed/                 dedup (calibrated 2026-08-15) + topicality (calibrated 2026-08-22, deployment held) — neither wired into the daily run yet
+│   ├── features/              compute.py (6 features: 5 active + news_polarity deferred) + normalize.py (z-scores)
+│   ├── llm/                   adapter.py (vendor-neutral), score.py, daily_scoring.py, synthesize.py, prompts/
 │   ├── report/                rating.py · consistency.py · render.py
 │   ├── notify/                vault + email adapters
-│   └── eval/                  bakeoff.py · ic.py · shadow_portfolio.py
+│   └── eval/                  bakeoff.py · ic.py · shadow_portfolio.py · rating_calibration.py · gate_2week.py
 │
-├── scripts/                   config_helper · backfill · collect_daily · golden
-├── reports/                   rendered briefings, committed daily
-├── tests/                     814 offline, 16 network
-└── data/                      raw/ · ratings/ · bakeoff/ · golden/ committed — see .gitignore for why each
+├── scripts/                   config_helper · backfill · collect_daily · golden · resolve_filing_ids · topicality_labels
+├── reports/                   rendered briefings, committed daily (30+)
+├── tests/                     921 offline, 20 network
+└── data/                      raw/ · ratings/ · bakeoff/ · golden/ · scores/ excepted in .gitignore — see it for why each
 ```
 
 <details>
 <summary><b>What the built modules actually do</b></summary>
+
+**`src/embed/`** — Built and calibrated, **not wired into the daily run.** The dedup half (title cosine > 0.85) and the held topicality half are imported only by `tests/`; the production pipeline takes its (article, ticker) candidates straight from `src/entity/resolve.py`, which alone lands inside SPEC §6.1's 60–100 target band. So "the embedding pipeline" is not what blocks `news_polarity` — the LLM scoring credentials in CI are.
 
 **`src/util/session.py`** — Everything is stored in UTC and displayed in KST. Market sessions come from `pandas_market_calendars`, never a hardcoded holiday list, which matters because Korean lunar holidays shift every year. It carries a removal-only correction for two 2026 KRX closures the library still reports as sessions (지방선거일, 제헌절), found by diffing against KRX itself and re-derived by a network test so it fails rather than rots. The US close is *derived*, so it correctly lands at 05:00 KST during daylight saving and 06:00 KST outside it without either number appearing in the code.
 
@@ -271,7 +293,7 @@ market-briefing/
 
 ```bash
 uv sync                          # install dependencies
-uv run pytest -m "not network"   # the default test run — 814 tests
+uv run pytest -m "not network"   # the default test run — 902 tests
 uv run ruff check . && uv run ruff format .
 
 cp .env.example .env             # then fill in credentials (see API-KEYS.md)
@@ -285,7 +307,11 @@ Tests that hit the network are marked `@pytest.mark.network` and excluded by def
 
 ## Project status
 
-**Running stage.** The deterministic pipeline collects, resolves, computes, rates, renders and delivers twice a day without supervision, and has done so since 2026-08-03. `data/raw/` holds a 3-year backfill plus a live news record. The golden set and the model bake-off are finished. What is missing is the embedding pipeline, without which `news_polarity` has nothing to score. §2.2④ (calendar) went from fully absent to partial on 2026-08-14 — CPI/employment/FOMC release dates and options expiration are now real collected data; US individual-company earnings and KR ex-dividend/IPO dates stay named-absent, and §2.2⑥'s directional rating stays scoped to the 31 KR tickers only, both by deliberate decision rather than oversight — see [notes/calendar-collector-plan.md](notes/calendar-collector-plan.md) and [notes/us-rating-plan.md](notes/us-rating-plan.md).
+**Running stage; 2-week gate passed 2026-08-27.** The deterministic pipeline collects, resolves, computes, rates, renders and delivers twice a day without supervision, and has done so since 2026-08-03. `data/raw/` holds a 3-year backfill plus a live news record. The golden set and the model bake-off are finished.
+
+**What is not yet production-proven: the LLM half and the repaired filings path.** `src/llm/daily_scoring.py` (news → `news_polarity`) and `src/llm/synthesize.py` (§2.2⑤/⑧) are wired into the daily run. The pending 2026-08-28 change maps the workflow credentials, persists `data/scores/`, checkpoints scoring, aggregates scores into ③, and repairs non-session filing timestamps. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are still not Actions secrets, so production activation and a first successful archived-score run remain open. This is not blocked by the embedding pipeline (`daily_scoring.py` reads `src/entity/resolve.py` directly).
+
+§2.2④ (calendar) went from fully absent to partial on 2026-08-14 — CPI/employment/FOMC release dates and options expiration are now real collected data; US individual-company earnings and KR ex-dividend/IPO dates stay named-absent, and §2.2⑥'s directional rating stays scoped to the 31 KR tickers only, both by deliberate decision rather than oversight — see [notes/calendar-collector-plan.md](notes/calendar-collector-plan.md) and [notes/us-rating-plan.md](notes/us-rating-plan.md).
 
 Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it can be checked against the repository rather than taken on trust.
 
@@ -293,17 +319,17 @@ Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it ca
 |---|---|---|
 | 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
-| 3 | Collectors + validation tests | ✅ 7 collectors, 814 offline tests, 16 network |
+| 3 | Collectors + validation tests | ✅ 10 collectors, 921 offline tests, 20 network. Filing credentials and non-session fallbacks are fixed locally; first production verification remains in step 11 |
 | 4 | 3-year backfill into `data/raw/` | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
-| 5 | Entity resolution + ambiguous ratio | ✅ ambiguous 8.8% of 2,432 articles (threshold 30%) |
-| 6 | Embedding pipeline (dedup + relevance) | 🟡 dedup half built + calibrated 2026-08-15 (title-only, cos>0.85). Topicality half built, then calibrated 2026-08-22 against 149 real labels — negative result: AUC 0.74 but the two classes overlap too much for any threshold to beat the "everything is topical" baseline (0.752 acc), so **Stage 1 topicality deployment is held**; `src/embed/topicality.py` stays as a tested, unwired base — [notes/step6-plan.md](notes/step6-plan.md). Not blocking anything |
+| 5 | Entity resolution + ambiguous ratio | ✅ ambiguous ~9% over the gate window (threshold 30%) |
+| 6 | Embedding pipeline (dedup + relevance) | 🟡 dedup half built + calibrated 2026-08-15 (title-only, cos>0.85). Topicality half built, then calibrated 2026-08-22 against 149 real labels — negative result: AUC 0.74 but the two classes overlap too much for any threshold to beat the "everything is topical" baseline (0.752 acc), so **Stage 1 topicality deployment is held**; `src/embed/topicality.py` stays as a tested, unwired base — [notes/step6-plan.md](notes/step6-plan.md). Neither half is wired into the daily run, and neither blocks anything |
 | 7 | Golden set — 100 hand-labelled articles | ✅ done; `relevance` fully re-labelled 2026-08-12 after a mid-run definition change |
 | 8 | Model adapter + bake-off | ✅ done 2026-08-13 — `gpt-5.4` selected |
-| 9 | Feature computation | ✅ 5 of 7 rating features, 0.75 of 1.10 weight |
-| 10 | Report renderer + delivery | ✅ vault + email live; 25 briefings rendered |
-| 11 | Daily collection + report workflow | ✅ full cloud round trip 2026-08-06 |
-| 12 | Schedule burn-in | 🟡 in progress — cron fires unattended |
-| 13 | Two-week gate | 🟡 criterion 4 (inter-model polarity correlation) measured 2026-08-15, **passed** (0.81–0.88 vs. a 0.5 bar) — [PREREGISTRATION §R](PREREGISTRATION.md). Criteria 1–3 read 2026-08-26 (moved one day from the original 08-25 pin — [PREREGISTRATION §8.5](PREREGISTRATION.md)); `src/eval/gate_2week.py report` gives an early read against real data now |
+| 9 | Feature computation | ✅ 5 active rating features (0.75 weight) + `news_polarity` producer built 2026-08-27, weight deferred. Design total 0.95 (was 1.10 before `rev_4w` dropped) |
+| 10 | Report renderer + delivery | 🟡 vault + email live; 30+ briefings rendered. ③ score aggregation and the fail-closed ⑤/⑧ guard are implemented; LLM output still awaits Actions secrets and production verification |
+| 11 | Daily collection + report workflow | 🟡 full cloud round trip 2026-08-06. The pending change maps all four credentials, stages `data/scores`, checkpoints calls, and keys report filenames to the resolved session; merge + first CI verification remain |
+| 12 | Schedule burn-in | ✅ cron fired unattended through the full gate window |
+| 13 | Two-week gate | ✅ **passed 2026-08-27** — criterion 4 measured 2026-08-15 (0.81–0.88 vs. a 0.5 bar), criteria 1–3 read against the full window via `src/eval/gate_2week.py` ([PREREGISTRATION §R](PREREGISTRATION.md), 2026-08-27) |
 
 <details>
 <summary><b>Detail: the backfill, the parked decisions, and what is blocking</b></summary>
@@ -329,9 +355,9 @@ With the history in place the features stopped being `NaN` — counts measured t
 
 `scripts/backfill.py` stays resumable. KRX throttles by address — roughly 250 requests earns an HTML error page for a few hours — and `kr_flow` costs 124 requests per year of history, so a re-run lands over several windows.
 
-### Two decisions parked
+### One decision parked, one closed
 
-**`rev_4w` has no data source.** [SPEC §5](SPEC.md) defines it as the 4-week change in *consensus* EPS — forward analyst estimates. pykrx's `EPS` is trailing, and substituting it would produce a number that looks like the feature and is not. Doing it properly needs an estimates vendor. Weight 0.15; absent, and `rate()` renormalizes. Vendor research is done as of 2026-08-14 — FnGuide/QuantiWise are enterprise-only with no published individual tier, a sweep of 9 sites found every free consensus page structurally closed to scraping (robots.txt or explicit anti-scraping terms). The university-affiliated path (WRDS/FactSet/Capital IQ Pro) is **closed** — the Haas library's 2026-08-21 reply confirmed bulk downloading isn't generally permitted and post-graduation storage of licensed data isn't either, ruling out the one scenario (a one-time backfill kept permanently) that made it worth pursuing for a project that stores everything indefinitely. FnSpace's Academy tier (₩50,000/mo) remains the one paid path found that isn't entangled with university affiliation — see [notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md).
+**`rev_4w` was permanently dropped 2026-08-25.** [SPEC §5](SPEC.md) defined it as the 4-week change in *consensus* EPS — forward analyst estimates. pykrx's `EPS` is trailing, and substituting it would produce a number that looks like the feature and is not. The 2026-08-14 vendor sweep found nothing both free and ToS-clean: FnGuide/QuantiWise are enterprise-only, 9 free consensus pages were all structurally closed to scraping, and the university path (WRDS/FactSet/Capital IQ Pro) was confirmed closed by the Haas library on 2026-08-21 (no bulk download, no post-graduation retention). FnSpace's Academy tier (₩50,000/mo ≈ $36) was the one remaining paid path and is over Ricky's cost line, so `rev_4w` was removed from `config/rating.yaml` outright rather than left deferred. `rate()` never read `deferred_weights`, so no computed rating changed. Design weight total: 0.95. See [notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md) and [MANUAL-TASKS §11](MANUAL-TASKS.md).
 
 **`valuation_band` will turn itself on, and a four-year backfill only buys time.** It is a 756-session PBR percentile; the stored window held 732 sessions as of 2026-08-07 and grows by one per KRX session, so it crosses 756 on **2026-09-11** for 30 tickers with no backfill at all. Extending the backfill by a year turns it on about four weeks earlier, for 124 KRX requests. Weight 0.05 — which is what makes waiting the obvious default.
 
@@ -341,35 +367,48 @@ SPEC §2.2⑥ read "every watchlist ticker gets a rating," but `render.py`'s rat
 
 ### Why step 9 came before steps 6–8, and step 10 before them too
 
-`news_polarity` (0.20) is the only rating feature that needs an LLM. The five built at step 9 carry 0.75 of 1.10 total weight, above `min_weight_coverage: 0.5`, so a real deterministic rating is reachable without the embedding pipeline, the golden set or the bake-off. That is why the order was inverted.
+`news_polarity` (0.20) is the only rating feature that needs an LLM. The five built at step 9 carry 0.75 of the 0.95 total weight, above `min_weight_coverage: 0.5`, so a real deterministic rating is reachable without the embedding pipeline, the golden set or the bake-off. That is why the order was inverted.
 
 The [2026-08-06 review](notes/review-2026-08-06.md) extended the same reasoning to step 10. PREREGISTRATION splits the two-week validation into metrics needing **steps 10–12** — pipeline integrity, data consistency, entity accuracy, whether the briefing is read — and metrics needing steps 6–8. Building the LLM stages first leaves that clock unstarted.
 
 ### What is blocking
 
-Open items are tracked in [MANUAL-TASKS.md](MANUAL-TASKS.md), ordered by what they block. As of 2026-08-15:
+Open items are tracked in [MANUAL-TASKS.md](MANUAL-TASKS.md), ordered by what they block. As of the pending 2026-08-28 change:
 
-| # | Task | Blocks |
+| Task | Blocks | Owner |
 |---|---|---|
-| 1 | ~~One-time ~$4.44 gate-measurement spend~~ | ✅ run 2026-08-15, **passed** at real cost $5.04 — [PREREGISTRATION §R](PREREGISTRATION.md) |
-| 2 | `rev_4w` data source decision | The one rating feature besides `news_polarity` with no source — vendor research done, [notes/rev4w-vendor-research.md](notes/rev4w-vendor-research.md) |
-| 3 | `config/rating.yaml` calibration | Trustworthy ratings — planned for 2026-08-23, ~11 days of real distributions by then |
-| 4 | ~~KIS application~~ | ✅ done 2026-08-05; keys held, nothing consumes them yet |
+| Review, rebase, and land the pending guard/workflow/scoring/renderer change | Makes the tested safeguards the code production runs | Ricky + Codex |
+| Register `OPENAI_API_KEY` + `ANTHROPIC_API_KEY` as Actions secrets after that change lands | All LLM scoring, §2.2⑤, §2.2⑧, the `news_polarity` chain | Ricky |
+| Verify one Actions run persisted filings, score checkpoints, ③ aggregation, and guarded ⑤/⑧ output | Production evidence; offline tests do not prove workflow secrets or artifact commits | Codex |
+| Approve the historical news-score backfill after persistence is observed | Builds the recoverable `news_polarity` history without risking repeated paid calls | Ricky |
+| `config/rating.yaml` calibration | Trustworthy ratings — planned 2026-08-23, **overdue** | Ricky (MANUAL-TASKS §6) |
+| `valuation_band` backfill decision | Nothing hard; self-closes 2026-09-11 | Ricky (MANUAL-TASKS §11) |
 
-**Nothing blocks step 6 any more, and step 6 no longer blocks anything either** — `src/entity/resolve.py` alone already produces 92–148 (article, ticker) pairs/day, inside SPEC §6.1's own 60–100 target band.
+Closed: the ~$5 gate-measurement spend (2026-08-15, passed); `rev_4w` (2026-08-25, dropped); KIS keys (2026-08-05, held, unconsumed).
 
-### Defects from the 2026-08-07 review
+**Step 6 blocks nothing and is blocked by nothing** — `src/entity/resolve.py` alone already produces 92–148 (article, ticker) pairs/day, inside SPEC §6.1's own 60–100 target band.
 
-Tracked in [notes/review-2026-08-07.md](notes/review-2026-08-07.md), kept here so their state is visible without opening the note.
+Before the 2026-11-13 gate, four recorded defects also need closure:
+`kr_filings` must handle filings dated on KRX-closed business days; the shadow
+portfolio must exclude low-confidence ratings forced to 관망; report filenames
+must follow the resolved session rather than a late runner's reading date; and
+raw revision comparison must stop minting identical calendar/filings `-vN`
+files. None changes today's published rating arithmetic, but the shadow issue
+can invalidate the 3-month P&L read if left open.
 
-| | Defect | State |
-|---|---|---|
-| H1 | Rating archive | ✅ fixed 2026-08-08 |
-| H2 | Phantom weights | ✅ fixed 2026-08-08 |
-| M1 | News-failure reporting | 🟡 partly closed — a failed check in the standalone news run exits non-zero, so GitHub mails the failure instead of leaving it in a log nobody reads. The detail still requires opening the run |
-| L1 | — | ⬜ open, costs nothing |
+The infrastructure direction is narrower than a migration: keep collection on
+GitHub Actions, where realised RSS loss remains low, but reconsider the
+twice-daily **report trigger** if correlated multi-hour delays recur. A
+persistent scheduler buys timeliness at the cost of another host, credential
+store, and deployment surface.
 
-An earlier open item here was that `forwardness` disagreed with itself twice as much as the other four golden-set dimensions and needed re-measuring. That measurement ran on 2026-08-13 and failed; see [Evaluation](#evaluation-and-what-a-failed-measurement-looks-like) above and [PREREGISTRATION §R](PREREGISTRATION.md).
+### Review history
+
+| Review | Findings, and their state |
+|---|---|
+| [2026-08-06](notes/review-2026-08-06.md) | Retracted three alarming-but-wrong news-loss measurements; decided against moving collection off GitHub Actions |
+| [2026-08-07](notes/review-2026-08-07.md) | H1 rating archive (✅ fixed 08-08) · H2 phantom weights (✅ fixed 08-08) · M1 news-failure reporting (🟡 partly closed) · L1 duplicate `.gitignore` line (⬜ open, harmless) |
+| [2026-08-27](notes/review-2026-08-27.md) | **The current review.** Production-wiring failure (§1), code findings recorded for a later session (§2), this doc-sync pass (§3), direction still sound with four caveats (§4), data/time-gated items (§5) |
 
 </details>
 

@@ -1,5 +1,10 @@
 # US ticker ratings: plan
 
+> **Status, 2026-08-27:** the KR 2-week measurement gate passed. The deferral
+> still runs through the 3-month signal gate on 2026-11-13; no US rating work
+> starts merely because the first gate closed. The current production-wiring and
+> 3-month-evaluation defects have priority.
+
 Written 2026-08-14, not a SPEC §12 numbered step — a scope gap found while
 starting the §2.2④ calendar collector work, and settled with Ricky the same
 day.
@@ -36,8 +41,7 @@ filter:
   for KR ones (investigated 2026-08-14, see MANUAL-TASKS.md §11) — this is
   not blocked the way `rev_4w` is on the KR side.
 
-**When to revisit.** After the KR pipeline clears the 2-week gate
-(PREREGISTRATION §8.5, 2026-08-26) and the 3-month gate. Not added to the
-current queue (`rev_4w` source decision, rating calibration, the 2-week gate
-itself) — the same reasoning that pushed step 6 (embeddings) behind the gate
-measurement (MANUAL-TASKS.md §10).
+**When to revisit.** After the KR pipeline clears the 3-month gate on
+2026-11-13; the 2-week gate already passed on 2026-08-27. This remains outside
+the current queue — the system must first run its existing LLM/filings path in
+production and produce a trustworthy KR evaluation.

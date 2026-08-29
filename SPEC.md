@@ -66,7 +66,7 @@ channels:
     path: reports/
     commit: true
   - type: email          # mobile reading path
-    to: <address>
+    to_env: BRIEFING_EMAIL_TO
     smtp_secret: SMTP_PASSWORD
     body: summary        # summary | full
 # add later if needed: webhook (Slack/Discord/Kakao, etc.)
@@ -76,7 +76,7 @@ channels:
 |---|---|---|
 | `vault` | Full read on desktop | Actions commits to `reports/` → pulled via the Obsidian Git plugin |
 | `email` | Quick scan on mobile | Sent via SMTP from Actions, using a dedicated address + app password |
-| `webhook` | For later, if needed | Generic POST. Implemented but left inactive |
+| `webhook` | For later, if needed | Not implemented; adding it requires a `config/delivery.yaml` entry first |
 
 > [!important] How the Obsidian connection works
 > Since GitHub Actions runs in the cloud, it can't write directly to the vault on the Mac. The simplest setup is to keep the repo as a folder inside the vault and pull it via the Obsidian Git plugin. That's inconvenient on mobile, so email fills that role instead.
@@ -97,6 +97,9 @@ The last line appears only when the commentary was dropped. Every degradation of
 ### 2.2 Sections
 
 Content and identity. Display order is §2.3.
+
+> [!warning] Deployment status as of 2026-08-28
+> Sections ①②③④⑥⑦⑨ render from real data every run. **⑤ and ⑧ have never been published** because `ANTHROPIC_API_KEY` is not an Actions secret; their fail-closed publication guard is now covered by regression tests. **③ now consumes the score archive** and shows relevance-weighted polarity, uncertainty, and the highest-intensity article when scores exist. It honestly labels raw matched counts because deduplication remains unwired. Production scoring still awaits `OPENAI_API_KEY`; archive persistence and incremental checkpointing are wired before that key may be enabled.
 
 **① US → KR market transmission (comes first)**
 
@@ -128,6 +131,13 @@ One line per ticker, plus flags. Bold if any of the conditions below are trigger
 **③ News score aggregation**
 
 Aggregates the individual scores from the §6 schema per ticker. Displayed fields: relevance-weighted average polarity, average uncertainty, article count (post-dedup), and the headline + link of the single highest-intensity article.
+
+> **Implementation status, 2026-08-27:** the score producer and
+> `news_polarity` feature exist, but this section still renders pre-scoring
+> fallback output: raw resolved article count and the first stored headline.
+> It does not yet aggregate polarity or uncertainty, select the
+> highest-intensity article, or apply the built-but-unwired deduplicator. This is
+> a renderer gap in addition to the CI credential gap.
 
 > Quoted excerpts are capped at 15 words; everything else is summarized.
 
@@ -353,17 +363,26 @@ All features are normalized as a **252-trading-day rolling z-score** per ticker'
 
 $$z_{i,t} = \frac{x_{i,t} - \mu_{i,t-252:t-1}}{\sigma_{i,t-252:t-1}}$$
 
-| Feature | Definition |
-|---|---|
-| `foreign_flow_5d` | 5-day cumulative foreign net buying ÷ 5-day cumulative trading value |
-| `inst_flow_5d` | Same, for institutional investors |
-| `short_ratio` | Short-interest balance ÷ shares outstanding |
-| `rel_strength_20d` | Ticker 20-day return − sector 20-day return |
-| `rv_20d` | 20-day realized volatility (stdev of log returns × √252) |
-| `news_volume_z` | z-score of daily article count **after deduplication** |
-| `us_kr_beta_60d` | 60-day rolling beta against the corresponding US sector ETF |
+| Feature | Definition | Built? |
+|---|---|---|
+| `foreign_flow_5d` | 5-day cumulative foreign net buying ÷ 5-day cumulative trading value | ✅ rating weight 0.30 |
+| `inst_flow_5d` | Same, for institutional investors | ✅ 0.15 |
+| `short_ratio` | Short-interest balance ÷ shares outstanding | ✅ −0.10 |
+| `rel_strength_20d` | Ticker 20-day return − sector 20-day return | ✅ 0.15 |
+| `valuation_band` | 3-year (756-session) PBR percentile — low = cheap = positive | ✅ 0.05; produces no value until the window reaches 756 sessions (≈ 2026-09-11) |
+| `news_polarity` | Relevance-weighted mean article polarity per ticker, from the §6.2 LLM scores | ✅ producer built 2026-08-27 (`src/llm/daily_scoring.py`); weight 0.20 held in `deferred_weights` and frozen out of the active rating through the 2026-11-13 three-month gate |
+| `rv_20d` | 20-day realized volatility (stdev of log returns × √252) | ⚠ not a rating feature (not in `FEATURES`, no weight). The §2.2② `volatility` flag computes 20-day realized-vol z inline |
+| `news_volume_z` | z-score of daily article count **after deduplication** | ⚠ not a rating feature. The §2.2② `news_spike` flag computes a mention-volume z inline from the resolved articles |
+| `us_kr_beta_60d` | 60-day rolling beta against the corresponding US sector ETF | ⚠ not a rating feature. §2.2① carries the transmission signal as a trailing 60-day rolling correlation instead |
 
-> `rev_4w` (4-week change in consensus EPS, weight 0.15) was defined here but **permanently dropped 2026-08-25** for lack of a data source — no vendor was found that is both free and ToS-clean, and the one academic path closed. See `MANUAL-TASKS.md` §11 and `notes/rev4w-vendor-research.md`.
+`src/features/compute.py`'s `FEATURES` tuple is the authority on what feeds the
+§2.2⑥ rating: `foreign_flow_5d`, `inst_flow_5d`, `short_ratio`,
+`rel_strength_20d`, `valuation_band`, `news_polarity`. The three ⚠ rows were
+defined here in v0.1 as rating inputs and never became weighted features; where
+their signal is used at all it is computed directly in the section that needs
+it, not as a normalized rating term. No decision to promote them has been made.
+
+> `rev_4w` (4-week change in consensus EPS, weight 0.15) was defined here but **permanently dropped 2026-08-25** — no vendor both free and ToS-clean, the academic path (WRDS/FactSet/Capital IQ Pro) closed 2026-08-21, and FnSpace Academy (₩50,000/mo) is over budget. Removed from `config/rating.yaml` outright, not deferred. Design weight total is now **0.95**. See `MANUAL-TASKS.md` §11 and `notes/rev4w-vendor-research.md`.
 
 **Medium-term features (added v0.5).** Everything above tops out at 4 weeks for fundamentals and 20 days for price; 252 days appeared only as the normalization window, never as a signal. These three supply the missing horizon and are cross-sectional, so unlike the §2.2⑨ regime indicators they can enter the ⑥ composite and be measured by IC.
 
@@ -386,9 +405,9 @@ All three are computable from the day the 3-year backfill lands (§12 step 4), s
     │
     ├─ Stage 0: Entity matching (§4)         — deterministic, zero cost
     │      ↓
-    ├─ Stage 1: Embedding (bge-m3, local)     — zero cost, 100% reproducible
-    │      ├─ Re-report detection: cosine similarity > 0.92 → keep only 1 cluster representative
-    │      └─ Relevance filter: cut the bottom tail of similarity against ticker profile sentences
+    ├─ Stage 1: Embedding (bge-m3, local)     — built, calibrated, not deployed
+    │      ├─ Re-report detection: title cosine similarity > 0.85 → keep only 1 cluster representative
+    │      └─ Topicality filter: deployment held; no threshold beat the no-filter baseline
     │      ↓
     │   top 60–100 articles
     │      ↓
@@ -403,7 +422,7 @@ All three are computable from the day the 3-year backfill lands (§12 step 4), s
 > 2. **Reproducibility**: embeddings are deterministic. Even at `temperature=0`, the LLM isn't perfectly identical run to run
 > 3. **Re-report detection accuracy**: for Korean media's re-reporting pattern, sentence-level similarity catches it more accurately than LLM judgment does
 >
-> The embedding model is `BAAI/bge-m3` (handles Korean/English simultaneously, MIT license). Runs locally on the Mac via `sentence-transformers`. The 0.92 similarity threshold is an initial value, to be tuned against the §7 golden set.
+> The embedding model is `BAAI/bge-m3` (handles Korean/English simultaneously, MIT license). The initial 0.92 placeholder was calibrated on 2026-08-15 and replaced by **0.85**: 0.92 missed 2 of 5 non-trivial known cross-outlet duplicates. The topicality half was calibrated on 149 hand labels on 2026-08-22; AUC was 0.74, but no threshold beat the `everything topical` baseline, so deployment is held. Production currently sends alias-resolved pairs directly to Stage 2. This deliberate bypass keeps weak filtering from creating false negatives; it also means ③ article counts are not post-dedup yet. Full evidence: `notes/step6-plan.md`.
 
 ### 6.2 Stage 2 output schema (fixed)
 
@@ -451,7 +470,7 @@ All three are computable from the day the 3-year backfill lands (§12 step 4), s
 >
 > **Where the guarantee actually lives.** Reproducibility here comes from keeping what the model said, not from asking it to say the same thing twice — the pattern already used everywhere else in this project (`data/raw/` is never overwritten, ratings archive with a `-v2` suffix, the golden set is committed because it cannot be regenerated). Two mechanisms carry it:
 >
-> 1. **The archive.** §3's `data/scores/{date}__{model_id}__{prompt_version}.jsonl` is the record a re-run reads instead of re-scoring. ✅ **Built 2026-08-27** (`src/llm/daily_scoring.py`, wired into `scripts/collect_daily.py`), `.gitignore` excepts `data/scores/`. `news_polarity` (SPEC §2.2③) is computed and z-scored from it, though its weight stays deferred pending a separate, distributionally-informed reweight decision (`config/rating.yaml`).
+> 1. **The archive.** §3's `data/scores/{date}__{model_id}__{prompt_version}.jsonl` is the record a re-run reads instead of re-scoring. ✅ **Built and wired 2026-08-27; production persistence hardened 2026-08-28** (`src/llm/daily_scoring.py`, registered in both runs of `scripts/collect_daily.py`). `.gitignore` excepts `data/scores/`, `report.yml` stages the directory, and scoring writes bounded checkpoints instead of holding the full sequential backlog until the end. `news_polarity` is computed and z-scored only from the configured active model/prompt archive; its rating weight stays deferred until after the 2026-11-13 gate (`config/rating.yaml`, PREREGISTRATION §8.4). The stage has still never scored an article in production because `OPENAI_API_KEY` is not an Actions secret, so persistence requires a first post-merge workflow verification before any backfill. See `notes/next-steps-2026-08-28.md`.
 > 2. **The measurement.** §7.4's self-consistency σ, which this bullet list now makes load-bearing.
 >
 > PREREGISTRATION §8.3 defines what "LLM output reproducibility" means operationally, and records that it is **not** a §8.5 gate criterion — the four gate criteria are unchanged by this.
@@ -614,6 +633,7 @@ market-briefing/
     models.yaml               # model selection
     news_feeds.yaml           # §3.1 — RSS sources; coverage equals this file
     rating.yaml               # §2.2⑥ — weights and cut points for the directional rating
+    filing_ids.yaml           # DART corp codes for kr_filings.py (added with the filings collectors, 2026-08-25)
     delivery.yaml             # §2.0 — the only place a channel may be declared
   src/
     util/
@@ -627,32 +647,32 @@ market-briefing/
       kr_index.py             # ✅ KODEX 200 — §8.5's shadow-portfolio benchmark
       us_price.py             # ✅ Tiingo EOD, kept as the cross-check
       us_price_alpaca.py      # ✅ the US source in use — multi-symbol, SIP
-      us_filings.py            # ✅ SEC EDGAR — filings.recent only, no filings.files pagination
-      kr_filings.py            # ✅ DART OpenAPI, §2.2② `filing` flag
+      us_filings.py            # ✅ built (SEC EDGAR, filings.recent only); env mapping + non-session fallback fixed 2026-08-28, production recheck pending
+      kr_filings.py            # ✅ built (DART OpenAPI, §2.2② `filing` flag); env mapping + non-session fallback fixed 2026-08-28, production recheck pending
       macro.py                # ✅
       calendar.py             # ✅ §2.2④ — CPI/employment/FOMC/options-expiry, partial
     entity/
       resolve.py              # ✅ §4
     embed/
-      encode.py                # ✅ local bge-m3 wrapper
-      dedup.py                # ✅ re-report clustering, calibrated
+      encode.py                # ✅ local bge-m3 wrapper — ⚠ not wired into the daily run (tests/ only)
+      dedup.py                # ✅ re-report clustering, calibrated — ⚠ not wired into the daily run
       topicality.py            # ✅ built + calibrated 2026-08-22; deployment held, see notes/step6-plan.md
     features/
-      compute.py              # §5 — 5 of 7 rating features; see notes/step9-plan.md
+      compute.py              # §5 — FEATURES: 5 active + news_polarity (deferred); see notes/step9-plan.md
       normalize.py            # 252-session rolling z-score, window ends at t-1
     llm/
       adapter.py              # vendor-neutral layer
       score.py
-      synthesize.py            # ✅ §2.2⑤/⑧ — Stage 3 red-team + synthesis, wired into render.py
-      daily_scoring.py         # ✅ §6.2/§6.3 scores archive + news_polarity producer, wired into collect_daily.py
+      synthesize.py            # ✅ §2.2⑤/⑧ built + wired into render.py (2026-08-25) — ⚠ never published: ANTHROPIC_API_KEY not an Actions secret
+      daily_scoring.py         # ✅ §6.2/§6.3 built + wired; checkpoints and workflow staging added 2026-08-28 — ⚠ never scored in production: OPENAI_API_KEY not an Actions secret
       prompts/
         v1_scoring.md
         v1_redteam.md          # §2.2⑤ — paired with report/consistency.py, model never shown §2.2⑥
         v1_synthesis.md       # §2.2⑧ — paired with report/consistency.py
     report/
       rating.py               # ✅ §2.2⑥ — the deterministic directional rating
-      consistency.py          # ✅ built; §2.2⑤/⑧ contradiction check — wired into render.py 2026-08-25
-      render.py               # ✅ §2 markdown; loading and rendering split; ⑤/⑧ generated, not absent
+      consistency.py          # ✅ wired + fail-closed against the 2026-08-27 publication bypasses; production prose not yet observed
+      render.py               # ✅ §2 markdown + ③ score aggregation; honestly labels raw pre-dedup counts while dedup remains unwired
     notify/
       base.py                 # ✅ Channel interface + summary routing
       vault.py                # ✅ reports/{date}-{run}.md
@@ -670,29 +690,29 @@ market-briefing/
     collect_daily.py          # ✅ §1 — the two scheduled runs' collection driver
     golden.py                 # ✅ §7.3 — sample / triage / label / recheck / verify
     topicality_labels.py      # ✅ MANUAL-TASKS #18 — topicality label set, separate from golden.py's
+    resolve_filing_ids.py     # ✅ populates config/filing_ids.yaml from DART's corp-code index
   data/
     golden/v1.jsonl
-  tests/
+  tests/                       # 35 test files, 921 offline + 20 network as of 2026-08-28
     test_session.py
     test_validate.py
     test_config.py
     test_rating.py
     test_consistency.py
-    test_kr_price.py
-    test_kr_news.py
-    test_us_price.py
-    test_macro.py
-    test_collectors.py
-    test_entity.py
-    test_features.py
+    ...                        # one test_*.py per module; `uv run pytest --collect-only` for the live list
   .github/workflows/
-    briefing.yml
+    report.yml               # the two scheduled report runs (§1). NOT `briefing.yml` — that name never existed
     collect-news.yml          # the only schedule that is a correctness requirement
 ```
 
 ---
 
-## 11. CLAUDE.md draft
+## 11. Historical CLAUDE.md draft — superseded
+
+> This block is the pre-implementation draft retained as design history. It is
+> not an instruction source and intentionally still describes the narrower v0.1
+> LLM rule. Current project instructions live in `CLAUDE.md` and `AGENTS.md`,
+> including the §2.2⑤/⑧ exceptions and the 2026-08-27 guard-enforcement status.
 
 ````markdown
 # Project Conventions

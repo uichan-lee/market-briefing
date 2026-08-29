@@ -1,5 +1,13 @@
 # Step 11 — daily collection, delivery, and the Actions schedule: plan
 
+> **Status updated 2026-08-29 (pre-build snapshot retained below).** The pending
+> local change maps all four credentials into `report.yml`, stages
+> `data/scores/`, checkpoints the score loop in bounded chunks, and keys report
+> filenames to the resolved session. These changes have not yet run in Actions.
+> A late 2026-08-27 run also showed that all three morning backstop crons can be
+> delayed together. Keep collection on Actions; if correlated multi-hour delays
+> recur after deployment, reconsider only the twice-daily report trigger.
+
 Written before implementation, on 2026-08-06. SPEC §12 step 11, SPEC §1.
 
 Step 10 produced a readable briefing from the backfill. Step 11 makes it happen

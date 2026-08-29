@@ -1,5 +1,13 @@
 # Calendar collector (§2.2④): plan
 
+> **Status, 2026-08-29:** the scoped collector shipped. CPI, Employment
+> Situation, FOMC, and options-expiry events render; US company earnings and KR
+> ex-dividend/IPO remain named absent. The pending local F2/F3 fix excludes
+> collection-time-only `known_at_utc` changes and normalizes datetime columns
+> containing `NaT` before comparison, stopping new false revisions. Existing
+> raw files remain immutable. Production behavior is pending merge and the next
+> scheduled collection.
+
 Written 2026-08-14, before implementation. Not a SPEC §12 numbered step —
 `step10-plan.md` (line 38) already named ④ as "no earnings/FOMC/IPO collector
 exists," and `step11-plan.md` confirms it stayed a stated absence through the

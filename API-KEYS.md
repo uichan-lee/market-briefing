@@ -513,6 +513,18 @@ The first command is a dry run against five articles — it proves the keys work
 
 GitHub secrets are only needed once scoring runs in Actions, which is after the model is chosen.
 
+> **Status 2026-08-29: that point has arrived and the secrets are not set.** The model was chosen (`gpt-5.4`, 2026-08-13), and `src/llm/daily_scoring.py` (scoring) + `src/llm/synthesize.py` (§2.2⑤/⑧) are wired into the daily run. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are in local `.env` but were never pushed with `gh secret set`, so production still has no output from these stages.
+>
+> Registration order is load-bearing. The pending 2026-08-28 local change fixes
+> and tests the known `src/report/consistency.py` bypasses, maps all four
+> credentials in `report.yml`, stages `data/scores`, and checkpoints successful
+> scoring records in bounded chunks. Ricky registers `ANTHROPIC_API_KEY` and
+> `OPENAI_API_KEY` only after that change is reviewed, rebased, and deployed.
+> Codex then verifies one workflow's score archive and guarded prose before any
+> historical backfill. Enabling the keys earlier still runs the previous code.
+> Full order: `MANUAL-TASKS.md` task 19 and
+> `notes/next-steps-2026-08-28.md`.
+
 ---
 
 ## Handling

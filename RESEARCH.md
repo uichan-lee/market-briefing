@@ -249,7 +249,15 @@ Against the §5 audit table, stated plainly because it is the reason to keep the
 | Contaminated backtests | News record starts after every candidate model's cutoff |
 | Hallucinated narrative | `src/report/consistency.py` compares prose against the computed rating |
 
-Two honest qualifications. First, the consistency guard is **written but not yet wired into `render.py`** — it has no caller outside tests, so the row above describes a capability, not a running check. Second, none of this is evidence the signal works; it is evidence that if the signal does not work, this project will be able to tell.
+Two honest qualifications, updated 2026-08-29. First, the consistency guard is
+wired into `render.py`, and the pending 2026-08-28 change closes the reproduced
+`checked_lines == 0`, unrated-subject inheritance, and compound-recommendation
+bypasses with fail-closed regression tests. It has still never checked published
+production prose because the Anthropic key is absent and the change is not yet
+deployed. The row above is therefore a tested control, not yet a
+production-proven one; the key must not be enabled before the pending change
+lands. Second, none of this is evidence the signal works; it is evidence that if
+the signal does not work, this project is designed to be able to tell.
 
 ---
 

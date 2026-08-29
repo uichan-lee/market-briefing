@@ -14,6 +14,11 @@ which is also how a stale `RATE_LIMITS["gemini"]` (still paced at the free
 tier's 5 RPM two days after billing was enabled) got caught and fixed to the
 paid tier's real 1,000 RPM before the full run.
 
+**Full-gate update, 2026-08-27:** criteria 1–3 were read after the window
+closed and also passed, so the complete 2-week gate is now closed. The canonical
+record is PREREGISTRATION §R 2026-08-27; this file remains the criterion-4
+measurement plan and execution record only.
+
 Kept below as the implementation record — the code it describes is what
 actually ran, unchanged except for the `--model` filter and the rate fix.
 

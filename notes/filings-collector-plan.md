@@ -6,7 +6,7 @@ before any code existed. `notes/calendar-collector-plan.md` left the DART
 DS001 gap (the actual filing-list endpoint) unread; this closes it, and
 builds `src/collectors/us_filings.py` / `src/collectors/kr_filings.py`.
 
-## Status: done, both collectors validate clean against real data
+## Status: built and fixture/live-validated; production re-verification and backfill remain
 
 Ran live 2026-08-25 against the full watchlist (31 KR, 40 US tickers, 8-day
 window): `kr_filings` — 122 rows, 3/3 checks pass. `us_filings` — 1550 rows,
@@ -14,6 +14,14 @@ window): `kr_filings` — 122 rows, 3/3 checks pass. `us_filings` — 1550 rows,
 on real, correct data (see below). The `filing` flag renders correctly —
 verified against a live `render_scan()` call the same day, 8 of 31 KR
 tickers flagged.
+
+**Update 2026-08-29.** The pending local change maps the already-registered
+`DART_API_KEY` / `SEC_USER_AGENT` secrets into `report.yml`. It also handles a
+date-only filing on a closed market day at the next tradeable open, applies the
+same fallback when SEC `acceptanceDateTime` is absent, and fixes the shared
+NaT comparison defect. Fixture tests cover the KRX and US holiday cases.
+Production recovery and a deliberate backfill still require merge + CI
+verification; no live success is inferred from the local tests.
 
 ## The four decisions this plan fixes, and why
 

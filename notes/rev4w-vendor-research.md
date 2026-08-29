@@ -8,10 +8,12 @@ isn't lost to chat history, following the same "engineering research
 belongs in notes/" principle as
 [model-bakeoff-decision.md](model-bakeoff-decision.md).
 
-`rev_4w` (weight 0.15 in `config/rating.yaml`, currently in `deferred_weights`)
-needs Korean-listed companies' **consensus EPS estimates** — forward analyst
-forecasts, not the trailing figures pykrx provides. No free, ToS-clean source
-was found. Below is the full sweep.
+`rev_4w` (weight 0.15) needed Korean-listed companies' **consensus EPS
+estimates** — forward analyst forecasts, not the trailing figures pykrx
+provides. No free, ToS-clean source was found, and on 2026-08-25 the line was
+**removed from `config/rating.yaml` outright** (not left in `deferred_weights`,
+because "deferred" implies a path back and this is permanent). Below is the full
+sweep that led there.
 
 ## Paid vendors
 

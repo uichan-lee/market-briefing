@@ -12,6 +12,14 @@ was reached.
 Chosen 2026-08-12 as `gpt-5.1`, replaced by `gpt-5.4` one day later. Below is
 why.
 
+> **Production status, 2026-08-29:** the model decision is unchanged, but the
+> selected scorer has not run in Actions because `OPENAI_API_KEY` is not a
+> repository secret. The pending 2026-08-28 change adds `data/scores` staging,
+> bounded checkpointing, and active-model filtering; it must be reviewed,
+> rebased, and deployed before the key is registered. `news_polarity` may then
+> accumulate as a diagnostic, but its rating weight is frozen until after the
+> 2026-11-13 gate.
+
 ## Round 1 (2026-08-12)
 
 1,117 calls run. `claude-sonnet-5` and `gpt-5.1` both passed the bar, and per

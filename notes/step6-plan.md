@@ -1,5 +1,14 @@
 # Step 6 — embedding pipeline: plan
 
+> **Current disposition, 2026-08-27:** both halves remain deliberately unwired.
+> Dedup is calibrated at 0.85 and reproducible with a pinned model revision;
+> topicality deployment is held because no threshold beat the no-filter
+> baseline. Production scoring currently consumes alias-resolved pairs directly
+> and already lands near the target volume. References to 0.92 and open design
+> questions below are the pre-calibration record, not current settings. Stage 1
+> is an optional cost/duplication optimization, not a blocker for scoring or the
+> 3-month gate.
+
 **Status (2026-08-15): half shipped.** The dedup half (`src/embed/encode.py`,
 `src/embed/dedup.py`) is built, calibrated, and tested — see the module
 docstrings for the numbers, not repeated here. Both of this plan's flagged
