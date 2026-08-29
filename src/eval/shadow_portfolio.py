@@ -81,7 +81,10 @@ def holdings(
     rows = []
     for day, group in scoped.dropna(subset=["score"]).groupby("date", observed=True):
         if "low_confidence" in group:
-            eligible = group[~group["low_confidence"].fillna(False)]
+            # `.eq(True)` rather than `.fillna(False)`: the archived column comes
+            # back from parquet as object dtype, and `.fillna` on it raises a
+            # downcasting FutureWarning. Only an explicit True excludes a row.
+            eligible = group[~group["low_confidence"].eq(True)]
         elif {"rating", "weight_coverage"}.issubset(group.columns):
             # Archives written before the explicit field still carry enough
             # evidence to recover the same publication guard.
