@@ -193,9 +193,18 @@ def _differs(stored: pd.DataFrame, fetched: pd.DataFrame, key: list[str]) -> boo
         return True
     if set(stored.columns) != set(fetched.columns):
         return True
-    columns = sorted(stored.columns)
+    # `known_at_utc` records when this particular collection run learned an
+    # event. It is provenance, not an event revision: comparing it would mint
+    # a new immutable raw file on every refetch of otherwise identical rows.
+    columns = sorted(column for column in stored.columns if column != "known_at_utc")
     left = stored.sort_values(key)[columns].reset_index(drop=True)
     right = fetched.sort_values(key)[columns].reset_index(drop=True)
+    for column in columns:
+        if pd.api.types.is_datetime64_any_dtype(left[column]):
+            # Parquet may restore datetime64[s] as datetime64[ms]. Convert both
+            # sides to one UTC representation before comparing, including NaT.
+            left[column] = pd.to_datetime(left[column], utc=True)
+            right[column] = pd.to_datetime(right[column], utc=True)
     try:
         pd.testing.assert_frame_equal(left, right, check_dtype=False)
     except AssertionError:

@@ -243,6 +243,21 @@ def test_a_parquet_dtype_roundtrip_is_not_a_revision(tmp_path):
     assert not (tmp_path / "2026-08-05-v2.parquet").exists()
 
 
+def test_a_changed_collection_timestamp_is_not_an_event_revision(tmp_path):
+    first = frame(known_at_utc=[pd.Timestamp("2026-08-05 06:00", tz="UTC")])
+    refetch = frame(known_at_utc=[pd.Timestamp("2026-08-06 06:00", tz="UTC")])
+
+    assert write_daily("kr_price", first, directory=tmp_path) == (1, 0)
+    assert write_daily("kr_price", refetch, directory=tmp_path) == (0, 0)
+
+
+def test_nat_datetime_roundtrip_is_not_an_event_revision(tmp_path):
+    original = frame(report_date=[pd.NaT])
+
+    assert write_daily("kr_price", original, directory=tmp_path) == (1, 0)
+    assert write_daily("kr_price", original, directory=tmp_path) == (0, 0)
+
+
 def test_a_grown_fetch_still_revises(tmp_path):
     """The inverse must keep working — that is the T+2 short-balance case."""
     partial = frame(ticker=["005930"], close=[79600], date=[pd.Timestamp("2026-08-05")])
