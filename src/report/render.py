@@ -1805,7 +1805,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     for result in deliver(
         report,
         channels,
-        day=reading_date,
+        # The vault key must describe the resolved market session, not a late
+        # runner's wall-clock date. Otherwise an after-midnight evening run
+        # overwrites the next session's report and gate readers mis-key it.
+        day=day,
         label=label,
         summary=summary,
         summary_html=summary_html,
