@@ -66,6 +66,10 @@ jobs:
       ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
       ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
       TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
+      DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       # Not a secret in the credential sense — a personal inbox kept out of a
       # public tracked file. config/delivery.yaml names it via `to_env`, and an
@@ -107,8 +111,9 @@ jobs:
           fi
 
       # What makes the duplicate morning crons free. The renderer writes
-      # `reports/<KST date>-<run>.md`, so an existing file for today's run means
-      # a briefing already went out and this firing has nothing to add.
+      # `reports/<resolved KR session>-<run>.md`, so an existing file means a
+      # briefing for that session already went out and this firing has nothing
+      # to add.
       #
       # Read from the remote, not the working tree, and this is the whole
       # subtlety: `actions/checkout` fetches the commit the run was *created*
@@ -141,7 +146,7 @@ jobs:
             exit 0
           fi
 
-          day="$(TZ=Asia/Seoul date +%F)"
+          day="$(uv run python -c 'from src.report.render import resolve_run; from src.util.session import now_utc; print(resolve_run("morning", now_utc())[0])')"
           target="reports/${day}-${{ steps.which.outputs.run }}.md"
           git fetch --depth=1 origin "${GITHUB_REF_NAME}"
 
@@ -194,7 +199,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add data/raw data/ratings reports
+          git add data/raw data/ratings data/scores reports
           if git diff --cached --quiet; then
             echo "nothing new to commit"
             exit 0
