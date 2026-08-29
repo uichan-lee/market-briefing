@@ -66,18 +66,17 @@ def test_commentary_with_no_rating_label_passes():
     assert report.checked_lines == 0
 
 
-def test_a_market_level_statement_with_no_ticker_is_not_attributed():
-    """Nothing to compare against, so nothing to fail."""
+def test_an_unattributed_rating_claim_is_unverifiable():
     text = "오늘 밤 FOMC. 그 전 신규 매수는 정보가 아니라 도박."
     report = check_commentary(text, BUY, ALIASES)
-    assert report.ok
-    assert report.checked_lines == 0
+    assert not report.ok
+    assert report.unverifiable[0].reason == "unattributed rating claim"
 
 
-def test_a_ticker_absent_from_the_ratings_is_skipped():
+def test_an_unrecognized_ticker_does_not_make_a_rating_claim_safe():
     text = "- 012450 한화에어로스페이스 (매수) — 수주 확대."
     report = check_commentary(text, BUY, ALIASES)
-    assert report.ok
+    assert not report.ok
     assert report.checked_lines == 0
 
 
@@ -168,6 +167,8 @@ def test_a_label_written_without_its_space_still_matches():
         "기관 순매도 전환",
         "매수세가 약하다",
         "매도호가 잔량 증가",
+        "외국인 매도 우위 전환",
+        "기관 매수 우위 지속",
         "매수량 급감",
         "차익 실현 매도세",
     ],
@@ -192,28 +193,28 @@ def test_a_label_with_a_trailing_particle_is_still_a_claim(particle):
 # --- entity resolution ---------------------------------------------------
 
 
-def test_an_excluded_name_does_not_attribute_to_the_parent_ticker():
-    """삼성전자우 is a different security. Attributing its line to 005930 would
-    manufacture a contradiction out of a correct sentence."""
+def test_an_excluded_name_cannot_be_safely_attributed_to_the_parent_ticker():
+    """삼성전자우 is a different security, so its rating claim must not pass by
+    pretending to be a statement about 삼성전자."""
     report = check_commentary("삼성전자우는 매도 구간.", BUY, ALIASES)
-    assert report.ok
+    assert not report.ok
     assert report.checked_lines == 0
 
 
-def test_a_line_naming_two_tickers_is_ambiguous_not_a_failure():
-    text = "005930 삼성전자는 하이닉스 대비 강세, 매수 우위."
+def test_a_line_naming_two_tickers_is_unverifiable_and_a_failure():
+    text = "005930 삼성전자는 하이닉스 대비 강세, 강한 매수 의견."
     report = check_commentary(text, {**BUY, **SELL}, ALIASES)
 
-    assert report.ok
-    (ambiguous,) = report.ambiguous
-    assert set(ambiguous.tickers) == {"005930", "000660"}
+    assert not report.ok
+    (unverifiable,) = report.unverifiable
+    assert set(unverifiable.tickers) == {"005930", "000660"}
     assert report.checked_lines == 0
 
 
-def test_ambiguous_lines_are_counted_in_the_summary():
-    text = "005930 삼성전자는 하이닉스 대비 강세, 매수 우위."
+def test_unverifiable_lines_are_counted_in_the_summary():
+    text = "005930 삼성전자는 하이닉스 대비 강세, 강한 매수 의견."
     report = check_commentary(text, {**BUY, **SELL}, ALIASES)
-    assert "1 ambiguous" in report.summary()
+    assert "1 unverifiable rating claim" in report.summary()
 
 
 # --- the report ----------------------------------------------------------
@@ -293,23 +294,22 @@ def test_a_label_on_the_next_line_inherits_the_paragraph_subject():
 
 
 def test_a_blank_line_ends_the_paragraph_and_clears_the_subject():
-    """Otherwise a subject would leak into a later paragraph about the market."""
+    """A later bare rating claim must not inherit a prior paragraph's ticker."""
     ratings = {"005930": _rated("005930", -2.5)}  # 강한 매도
     text = "005930 삼성전자의 수급이 개선됐다.\n\n전반적으로 강한 매수 국면이다."
 
     report = check_commentary(text, ratings, ALIASES)
-    assert report.ok
+    assert not report.ok
     assert report.checked_lines == 0
 
 
-def test_a_paragraph_naming_two_tickers_attributes_nothing_to_its_bare_lines():
-    """Same 'drop rather than guess' stance the per-line case took, one scope out."""
+def test_a_paragraph_naming_two_tickers_makes_its_bare_claim_unverifiable():
     ratings = {"005930": _rated("005930", -2.5), "000660": _rated("000660", 2.5)}
     text = "005930 삼성전자와 000660 SK하이닉스를 비교하면.\n강한 매수 의견이다."
 
     report = check_commentary(text, ratings, ALIASES)
-    assert report.ok
-    assert report.ambiguous
+    assert not report.ok
+    assert report.unverifiable
 
 
 def test_a_line_naming_its_own_ticker_wins_over_the_paragraph_subject():
@@ -337,5 +337,36 @@ def test_excluded_forms_are_masked_without_bridging_an_alias():
     ratings = {"005930": _rated("005930", -2.5)}
     # "삼성X전자" is not a mention; blanking X to a space would forge "삼성 전자".
     report = check_commentary("삼성X전자 강한 매수", ratings, {"005930": entry})
-    assert report.ok
+    assert not report.ok
     assert report.checked_lines == 0
+
+
+@pytest.mark.parametrize("compound", ["저가매수", "분할매수", "추격매수"])
+def test_explicit_recommendation_compounds_are_rating_claims(compound):
+    report = check_commentary(f"000660 하이닉스 {compound} 의견.", SELL, ALIASES)
+    assert not report.ok
+    assert report.contradictions[0].stated is Rating.BUY
+
+
+def test_an_unrated_recognized_ticker_clears_the_previous_subject():
+    aliases = {
+        **ALIASES,
+        "AAPL": AliasEntry(
+            ticker="AAPL",
+            canonical="Apple",
+            aliases=("Apple",),
+            exclude=(),
+            ambiguous_parents=(),
+        ),
+    }
+    text = "005930 삼성전자는 긍정적이다.\nAAPL Apple도 주목한다.\n매수 의견이다."
+
+    report = check_commentary(text, BUY, aliases)
+    assert not report.ok
+    assert report.unverifiable[0].tickers == ("AAPL",)
+
+
+def test_no_computed_ratings_is_never_a_passing_execution():
+    report = check_commentary("005930 삼성전자 매수", {}, ALIASES)
+    assert not report.ok
+    assert report.unverifiable[0].reason == "no computed KR ratings"

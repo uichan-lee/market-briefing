@@ -530,14 +530,15 @@ def test_llm_section_reports_a_raised_exception_without_crashing():
 
 
 def test_llm_section_publishes_on_a_clean_pass():
-    body, warning = _llm_section("⑧", "AI 총평", "총평", "§2.2⑧", lambda: "본문", {}, {})
+    ratings = {"005930": rate("005930", {"foreign_flow_5d": 2.0}, RATING_CONFIG)}
+    body, warning = _llm_section("⑧", "AI 총평", "총평", "§2.2⑧", lambda: "본문", ratings, {})
     assert body == "## ⑧ AI 총평\n\n본문\n"
     assert warning is None
 
 
 def test_the_commentary_section_is_rendered_from_the_injected_synthesize_fn():
     page = render(
-        inputs(),
+        _known_rating_inputs(),
         synthesize_fn=lambda text: "**오늘의 한 줄:** 진짜 총평",
         redteam_fn=_stub_redteam,
     )
@@ -547,7 +548,7 @@ def test_the_commentary_section_is_rendered_from_the_injected_synthesize_fn():
 
 def test_the_redteam_section_is_rendered_from_the_injected_redteam_fn():
     page = render(
-        inputs(),
+        _known_rating_inputs(),
         synthesize_fn=_stub_synthesis,
         redteam_fn=lambda text: "- **테스트** — 진짜 반증",
     )
@@ -645,8 +646,28 @@ def test_render_defaults_to_the_real_synthesize_functions_when_not_injected(monk
     monkeypatch.setattr(adapter, "_call", fake_call)
     monkeypatch.setattr(adapter, "_cost", lambda response: None)
 
-    page = render(inputs())
+    page = render(_known_rating_inputs())
     assert page.count("실제 함수 경로 확인") == 2  # both ⑤ and ⑧
+
+
+def test_unverifiable_commentary_is_dropped_with_a_distinct_header_warning():
+    page = render(
+        _known_rating_inputs(),
+        synthesize_fn=lambda text: "강한 매수 의견이다.",
+        redteam_fn=_stub_redteam,
+    )
+    assert "⚠ 총평 생략: 등급 검증 불가 — 1건 (§2.2⑧)" in page
+    assert "## ⑧ AI 총평\n\n> **이 섹션은 이번 실행에서 생략됐습니다.**" in page
+
+
+def test_empty_rating_execution_drops_both_llm_sections():
+    page = render(
+        inputs(),
+        synthesize_fn=_stub_synthesis,
+        redteam_fn=_stub_redteam,
+    )
+    assert "⚠ 총평 생략: 등급 검증 불가 — 1건 (§2.2⑧)" in page
+    assert "⚠ 반증 생략: 등급 검증 불가 — 1건 (§2.2⑤)" in page
 
 
 # --- ordering and persistence ---------------------------------------------

@@ -58,6 +58,25 @@ _LABEL_PATTERNS: tuple[tuple[Rating, re.Pattern[str]], ...] = tuple(
     for rating in sorted(Rating, key=lambda r: len(r.value), reverse=True)
 )
 
+# These are explicit recommendation compounds, not an open-ended morphology
+# rule.  The ordinary market vocabulary around 매수/매도 is deliberately broad;
+# expanding this list by substring would turn routine flow commentary into a
+# rating claim.  Each compound therefore needs a review and a test before it is
+# added here.
+_RECOMMENDATION_COMPOUNDS = ("저가매수", "분할매수", "추격매수")
+_COMPOUND_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(rf"(?<![{_HANGUL}]){compound}(?:(?![{_HANGUL}])|(?=(?:{_PARTICLES})))")
+    for compound in _RECOMMENDATION_COMPOUNDS
+)
+
+# Ordinary flow terms that contain a rating word but are not a recommendation.
+# Keep this a closed, reviewed list: it protects known false positives without
+# turning the guard into an open-ended morphology rule.
+_MARKET_VOCABULARY = re.compile(
+    rf"(?<![{_HANGUL}])(?:순매수|순매도|매수세|매도세|매수량|매도량|매수호가|매도호가|"
+    rf"매수\s+우위|매도\s+우위)(?![{_HANGUL}])"
+)
+
 
 @dataclass(frozen=True)
 class Contradiction:
@@ -76,18 +95,13 @@ class Contradiction:
 
 
 @dataclass(frozen=True)
-class AmbiguousLine:
-    """A line carrying a rating label but more than one ticker.
-
-    Not a failure. CLAUDE.md's entity-resolution rule is to drop an ambiguous
-    match rather than guess, and guessing here would manufacture contradictions
-    out of ordinary comparative sentences ("005930 is stronger than 000660").
-    Recorded so the ratio stays visible rather than silently discarded.
-    """
+class UnverifiableLine:
+    """A rating claim that cannot be uniquely checked against a KR rating."""
 
     tickers: tuple[str, ...]
     labels: tuple[Rating, ...]
     line: str
+    reason: str
 
 
 @dataclass
@@ -95,26 +109,26 @@ class ConsistencyReport:
     """Outcome of checking one commentary against one day's ratings."""
 
     contradictions: list[Contradiction] = field(default_factory=list)
-    ambiguous: list[AmbiguousLine] = field(default_factory=list)
+    unverifiable: list[UnverifiableLine] = field(default_factory=list)
     checked_lines: int = 0
 
     @property
     def ok(self) -> bool:
         """Whether the commentary may be published."""
-        return not self.contradictions
+        return not self.contradictions and not self.unverifiable
 
     def summary(self) -> str:
         """One line, suitable for the briefing header (SPEC §2.1)."""
         if self.ok:
             detail = f"{self.checked_lines} attributed lines consistent"
-            if self.ambiguous:
-                detail += f", {len(self.ambiguous)} ambiguous"
             return f"commentary: {detail}"
-        names = ", ".join(sorted({c.ticker for c in self.contradictions}))
-        return (
-            f"commentary: DROPPED — {len(self.contradictions)} "
-            f"contradiction(s) with §2.2⑥ ({names})"
-        )
+        parts: list[str] = []
+        if self.contradictions:
+            names = ", ".join(sorted({c.ticker for c in self.contradictions}))
+            parts.append(f"{len(self.contradictions)} contradiction(s) with §2.2⑥ ({names})")
+        if self.unverifiable:
+            parts.append(f"{len(self.unverifiable)} unverifiable rating claim(s)")
+        return f"commentary: DROPPED — {'; '.join(parts)}"
 
 
 def _tickers_in(line: str, aliases: Mapping[str, AliasEntry]) -> tuple[str, ...]:
@@ -148,12 +162,14 @@ def _tickers_in(line: str, aliases: Mapping[str, AliasEntry]) -> tuple[str, ...]
 
 def _labels_in(line: str) -> tuple[Rating, ...]:
     """Which rating labels this line states, longest match first."""
-    remaining = line
+    remaining = _MARKET_VOCABULARY.sub(lambda m: " " * len(m.group()), line)
     found: list[Rating] = []
     for rating, pattern in _LABEL_PATTERNS:
         if pattern.search(remaining):
             found.append(rating)
             remaining = pattern.sub(lambda m: " " * len(m.group()), remaining)
+    if any(pattern.search(remaining) for pattern in _COMPOUND_PATTERNS):
+        found.append(Rating.BUY)
     return tuple(found)
 
 
@@ -164,10 +180,8 @@ def check_commentary(
 ) -> ConsistencyReport:
     """Check LLM commentary against the computed ratings.
 
-    A line mentioning exactly one ticker is checked against that ticker's
-    rating; every label it states must be that rating. A line mentioning
-    several is ambiguous and is recorded rather than guessed at, per
-    CLAUDE.md's entity rule.
+    A rating claim passes only when it can be attributed to exactly one ticker
+    with a computed KR rating and every stated label matches that rating.
 
     **A line stating a label but naming no ticker inherits the subject of its
     paragraph.** Attribution used to be strictly per line, which left the guard
@@ -182,42 +196,69 @@ def check_commentary(
     rule 3 names as the reason §2.2⑧ is permitted at all, a hole that a
     paragraph break walks through is not an acceptable state to wire ⑧ into.
 
-    The subject carries only while it is unambiguous, and a blank line ends the
-    paragraph and clears it. A paragraph that has named two rated tickers
-    attributes nothing to its unattributed lines — those become
-    :class:`AmbiguousLine`, which is the same "drop rather than guess" stance the
-    per-line case already took, extended one scope outward.
+    The subject carries only while it is uniquely rated, and a blank line ends
+    the paragraph and clears it.  A multiple-ticker comparison, an ungraded
+    recognized ticker (for example a US ticker), and an unattributed label are
+    unsafe to publish rather than merely informational: dropping the section is
+    the only fail-closed outcome.  The same applies when this execution has no
+    computed ratings at all.
     """
     report = ConsistencyReport()
 
-    # The paragraph's subject: None until a line names exactly one rated ticker,
-    # and a sentinel once a paragraph has named more than one, which is not the
-    # same state as "none named yet" and must not attribute.
+    if not ratings:
+        return ConsistencyReport(
+            unverifiable=[
+                UnverifiableLine(
+                    tickers=(),
+                    labels=(),
+                    line="",
+                    reason="no computed KR ratings",
+                )
+            ]
+        )
+
+    # The paragraph's subject carries only from a line naming exactly one
+    # computed KR rating.  ``context_tickers`` remembers why it was cleared so
+    # a later bare claim is recorded as unverifiable rather than silently read
+    # as a market-level sentence.
     subject: str | None = None
-    contested = False
+    context_tickers: tuple[str, ...] = ()
 
     for line in text.splitlines():
         if not line.strip():
-            subject, contested = None, False
+            subject, context_tickers = None, ()
             continue
 
-        rated = tuple(t for t in _tickers_in(line, aliases) if t in ratings)
-        if len(rated) == 1:
-            subject, contested = rated[0], False
-        elif len(rated) > 1:
-            subject, contested = None, True
+        mentioned = _tickers_in(line, aliases)
+        rated = tuple(ticker for ticker in mentioned if ticker in ratings)
+        if len(mentioned) == 1 and len(rated) == 1:
+            subject, context_tickers = rated[0], ()
+        elif mentioned:
+            # Crucially, this also clears a previously rated subject when an
+            # ungraded ticker appears, preventing subject leakage across US
+            # ticker commentary.
+            subject, context_tickers = None, mentioned
 
         labels = _labels_in(line)
         if not labels:
             continue
 
-        if len(rated) > 1 or (not rated and contested):
-            report.ambiguous.append(AmbiguousLine(tickers=rated, labels=labels, line=line))
+        if mentioned and not (len(mentioned) == 1 and len(rated) == 1):
+            reason = (
+                "multiple recognized tickers"
+                if len(mentioned) > 1
+                else "ticker has no computed KR rating"
+            )
+            report.unverifiable.append(UnverifiableLine(mentioned, labels, line, reason))
             continue
 
         ticker = rated[0] if rated else subject
         if ticker is None:
-            continue  # market-level statement; nothing to attribute
+            reason = "unattributed rating claim"
+            if context_tickers:
+                reason = "unattributable after recognized ticker context"
+            report.unverifiable.append(UnverifiableLine(context_tickers, labels, line, reason))
+            continue
 
         computed = ratings[ticker].rating
         report.checked_lines += 1

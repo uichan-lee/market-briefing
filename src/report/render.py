@@ -214,8 +214,13 @@ def _llm_section(
 
     report = check_commentary(text, ratings, aliases)
     if not report.ok:
-        tickers = ", ".join(sorted({c.ticker for c in report.contradictions}))
-        reason = f"등급과 모순 — {tickers}"
+        reasons: list[str] = []
+        if report.contradictions:
+            tickers = ", ".join(sorted({c.ticker for c in report.contradictions}))
+            reasons.append(f"등급과 모순 — {tickers}")
+        if report.unverifiable:
+            reasons.append(f"등급 검증 불가 — {len(report.unverifiable)}건")
+        reason = "; ".join(reasons)
         body = _llm_section_unavailable(section, heading, reason)
         return body, f"⚠ {warning_label} 생략: {reason} ({spec_ref})"
 
