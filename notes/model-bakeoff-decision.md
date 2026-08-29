@@ -93,6 +93,30 @@ repository cannot detect if it turns off. If the free pool disappears,
 scoring costs is the signal to re-open this decision (`MANUAL-TASKS.md §5`'s
 rule would then select `gpt-5.1` again).
 
+## "Effectively $0" holds per steady-state day, not per run — added 2026-08-29
+
+The free pool is a **250K-token daily** allowance (~140 pairs, ~77% of the
+cap on a normal weekday spread over four scheduled runs). A single run that
+clears a multi-day backlog blows straight through it: the first production
+run with the key (2026-08-29, evening) scored a 4-day cold-start backlog of
+536 pairs, and 326 of them spilled to billed usage — **$1.37**, entirely
+gpt-5.4 default-tier input tokens.
+
+Two guards, both added after that run:
+
+- **`MAX_PAIRS_PER_RUN = 180`** in `src/llm/daily_scoring.py` — a run scores
+  at most this many pairs, newest first, and leaves the rest for the day's
+  later runs. A Monday-after-a-weekend backlog clears across that day's four
+  runs without any single run leaving the free pool. Pairs that age out of
+  the 4-day window before a run reaches them are dropped, which is
+  acceptable: `news_polarity` is frozen out of the composite until after the
+  3-month gate, and the backfill of pre-2026-08-29 history was abandoned on
+  cost grounds. A deferral shows as a passing `scoring_budget` check and as a
+  lower matched/scored count in §2.2③.
+- **OpenAI project hard monthly limit** (Ricky, account setting — `MANUAL-TASKS`
+  task 19) — the actual $ guarantee. Once hit, scoring calls 429 and the run
+  records the failure in its report header rather than billing.
+
 ## Noise floor, as read on 2026-08-13
 
 Before ranking models on any bake-off table, check

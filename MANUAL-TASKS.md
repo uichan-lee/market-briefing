@@ -22,7 +22,7 @@ Claude가 대신할 수 없는 작업. Ricky가 직접 하는 것들이고, 이 
 | ~~6~~ | ~~`config/aliases.yaml` 작성~~            | ✅ **완료 2026-08-05** | [§3](#3-별칭-사전--완료)      |
 | ~~7~~ | ~~`rev_4w` 데이터 소스 결정~~             | ✅ **완료 2026-08-25 — 영구 드랍** | [§11](#11-rev_4w-소스-결정--백필-확장) |
 | **8** | **`valuation_band`용 백필 4년 확장 여부** | **판단**               | [§11](#11-rev_4w-소스-결정--백필-확장) |
-| **19** | **미커밋 변경 검토·반영 뒤 `OPENAI_API_KEY` + `ANTHROPIC_API_KEY`를 Actions secret으로 등록** | **5분 — 코드 반영 대기** | [§1](#1-계정과-인증-정보) |
+| **19** | ~~`OPENAI_API_KEY` + `ANTHROPIC_API_KEY` Actions secret 등록~~ ✅ **완료 2026-08-29, CI 검증됨** — 남은 것: **OpenAI 프로젝트 월 지출 한도 $1~2 설정** | **3분 — 계정 설정** | [§1](#1-계정과-인증-정보) |
 | **20** | **`config/rating.yaml` 캘리브레이션** (원래 08-23 예정, 지연) | **판단** | [§6](#6-등급-캘리브레이션--claude가-아니라-ricky의-판단) |
 | **21** | **리포트 cron 수시간 지연이 반복되면 report trigger만 외부 스케줄러로 분리할지 판단** | **조건부 판단 — 지금 이전하지 않음** | [§13](#13-이제-매일-오는-것) |
 | ~~14~~ | ~~1회성 게이트 측정 비용(~$4.44) 승인~~ | ✅ **완료 2026-08-15 — 통과** (실비 $5.04) | [PREREGISTRATION §R](PREREGISTRATION.md) |
@@ -169,12 +169,12 @@ Ricky가 Yahoo Finance Historical Data로 확인 → **일치.** 독립된 출�
 DART_API_KEY  FRED_API_KEY  KRX_ID  KRX_PW  SEC_USER_AGENT  SMTP_PASSWORD  TIINGO_API_KEY  BRIEFING_EMAIL_TO
 ```
 
-> **🟡 2026-08-28 상태: 키 등록 전 코드 구멍은 로컬에서 닫혔고, 변경 반영을 기다린다 (task 19).**
-> 1. **`report.yml`의 `DART_API_KEY`·`SEC_USER_AGENT` 전달은 수정됐다.** secret은 이미 등록돼 있다. 변경 반영 뒤 첫 CI 실행에서 공시 수집기 복구를 확인한다.
-> 2. **`OPENAI_API_KEY`·`ANTHROPIC_API_KEY`는 secret 자체가 없다.** 로컬 `.env`에는 있지만(task 13, 2026-08-11) `gh secret set`으로 push된 적이 없다. 이게 없어서 `news_polarity` 스코어링(§6.2)과 ⑤·⑧(§2.2⑤/⑧)이 배선된 뒤로 한 번도 안 돌았다. **Ricky가 등록해야 한다 (task 19).** 등록 시 `data/scores/`를 `report.yml`의 `git add` 줄에도 넣어야 한다(아래 위 §5 참조).
+> **✅ 2026-08-29 상태: 변경 10커밋 반영됨, 네 키 모두 등록됨, CI 1회 검증 완료 (task 19 거의 끝).**
+> 1. **`DART_API_KEY`·`SEC_USER_AGENT`** — `report.yml` `env:`에 추가됨. 2026-08-29 CI 실행에서 KR/US 공시 수집기 복구 확인 (`us_filings` 1759행, `kr_filings` 164행).
+> 2. **`OPENAI_API_KEY`·`ANTHROPIC_API_KEY`** — Ricky가 등록함. 같은 실행에서 `news_scores` 536쌍 채점 → `data/scores/2026-08-29__gpt-5.4__v1.jsonl` 커밋됨, §2.2③·⑤·⑧ 정상 렌더.
+> 3. **🔴 남은 것 — OpenAI 프로젝트 월 지출 한도.** 그 첫 실행이 4일치 밀린 백로그를 한 번에 채점해 free pool(250K 토큰/일)을 넘겨 **$1.37 과금**됐다. 코드 측 `MAX_PAIRS_PER_RUN=180` 가드가 들어갔지만, 확실한 보루는 계정 한도다. OpenAI 대시보드 → Settings → Limits → 해당 프로젝트에 **월 $1~2 hard limit** 설정. 한도 도달 시 채점이 429로 멈추고 리포트 헤더에 실패로 뜬다(정상).
 >
-> **아래 명령은 현재 로컬 변경이 검토·rebase·반영된 뒤에만 실행한다.** 가드와
-> 스코어링 보존 수정은 완료됐지만, Actions가 아직 그 코드를 실행하지 않는다.
+> 등록 명령 (참고용, 이미 실행됨 — `.env` 값 갱신 시 재실행):
 >
 > ```bash
 > set -a; source .env; set +a
