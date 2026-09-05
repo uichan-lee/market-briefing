@@ -88,8 +88,8 @@ export async function handleScheduled(cron, now, env, fetchImpl = fetch) {
   if (cron === "17,47 0-6 * * *" || cron === "17 7-23 * * *") {
     return dispatch(fetchImpl, token, COLLECT);
   }
-  if (cron === "7 22 * * 0-4") return dispatch(fetchImpl, token, REPORT, { run: "morning" });
-  if (cron === "37 12 * * 1-5") return dispatch(fetchImpl, token, REPORT, { run: "evening" });
+  if (cron === "7 22 * * SUN-THU") return dispatch(fetchImpl, token, REPORT, { run: "morning" });
+  if (cron === "37 12 * * MON-FRI") return dispatch(fetchImpl, token, REPORT, { run: "evening" });
 
   if (cron !== "15,25,40 * * * *") return { ok: true };
   const minute = now.getUTCMinutes();

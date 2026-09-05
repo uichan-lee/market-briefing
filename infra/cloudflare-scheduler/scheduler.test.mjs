@@ -31,7 +31,7 @@ test("each production cron dispatches its one intended workflow", async () => {
   };
   const now = new Date("2026-09-07T22:07:00Z");
 
-  for (const cron of ["17,47 0-6 * * *", "17 7-23 * * *", "7 22 * * 0-4", "37 12 * * 1-5"]) {
+  for (const cron of ["17,47 0-6 * * *", "17 7-23 * * *", "7 22 * * SUN-THU", "37 12 * * MON-FRI"]) {
     await handleScheduled(cron, now, env, fetchImpl);
   }
 
