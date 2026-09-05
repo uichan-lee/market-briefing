@@ -47,13 +47,13 @@ Twice a day, a GitHub Actions run collects market data and news, turns the news 
 It has run unattended since 2026-08-03. More than 30 briefings are committed in [`reports/`](reports/) — those are real output, not samples.
 
 > [!WARNING]
-> **The LLM stages are code-complete but have not run in production.** Sections ⑤ (red team) and ⑧ (AI 총평) were wired into `render()` on 2026-08-25, and `news_polarity` scoring into the daily run on 2026-08-27. The pending 2026-08-28 change maps all four required credentials into `report.yml`, stages `data/scores/`, checkpoints paid scoring calls, closes the commentary guard bypasses, and renders ③ from archived scores. `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` are still absent from Actions, and the change has not yet completed a production run. Today's committed briefings therefore remain the deterministic flow-and-price model only. Current sequence: [notes/next-steps-2026-08-28.md](notes/next-steps-2026-08-28.md).
->
-> **Do not register the keys until this pending change lands.** The guard,
-> score staging/checkpointing, and ③ score aggregation are implemented and
-> covered by the 921-test offline suite, but production evidence still requires
-> one Actions run after the change is merged. `news_polarity` remains excluded
-> from the rating composite until after the 2026-11-13 gate.
+> **LLM spending is deliberately constrained.** Production scoring has a 180-pair
+> cap and a $5 account backstop; historical scoring is not authorized. Synthesis
+> (⑤/⑧) is now disabled in `config/models.yaml`, so no Anthropic call is made.
+> Re-enabling it, raising a cap, or using paid backfill requires Ricky's explicit
+> budget approval. `news_polarity` remains excluded from the rating composite
+> until after the 2026-11-13 gate. Current operational sequence:
+> [notes/next-steps-2026-09-05.md](notes/next-steps-2026-09-05.md).
 
 ### What the output actually looks like
 
@@ -165,7 +165,7 @@ The guard is string matching, not a second LLM — a checker that needed judgmen
 The interesting part of the matcher is what it *doesn't* match: 순매수, 매수세, 매도호가 are ordinary market vocabulary, not rating claims, so a label glued to an adjacent Hangul syllable is rejected — with an allowlist for trailing particles (매수는, 매수로), which are a closed class where compound nouns are not.
 
 > [!NOTE]
-> The 2026-08-27 review found bypass cases in this guard; the 2026-08-28 fail-closed fix now drops uncheckable rating claims, clears an inherited subject after an ungraded ticker, and detects reviewed recommendation compounds such as 저가매수. ⑤/⑧ still await Ricky's Actions-secret registration; details are in [notes/review-2026-08-27.md](notes/review-2026-08-27.md) §2 F1.
+> The 2026-08-27 review found bypass cases in this guard; the 2026-08-28 fail-closed fix now drops uncheckable rating claims, clears an inherited subject after an ungraded ticker, and detects reviewed recommendation compounds such as 저가매수. The current working-tree configuration disables ⑤/⑧ before a vendor call, so registering an Anthropic secret is neither needed nor authorized. See [notes/review-2026-09-05.md](notes/review-2026-09-05.md).
 
 ### Two rules that prevent self-deception
 
@@ -223,7 +223,7 @@ The full entry, including what it cost the model selection, is in [PREREGISTRATI
 
 **"Zero data-consistency errors" means contradiction, not absence.** Four checks count — `schema`, `structural_invariants`, `flow_identity`, and the Alpaca-vs-Tiingo close comparison — read off the committed report headers. `missing_ratio` and `trading_day_continuity` are excluded with reasons given in [§8.5](PREREGISTRATION.md), the second because 25 of them once fired from a single Tiingo rate-limit. The list was written before the count was known; over the record to date it stands at zero.
 
-**The schedule is best-effort, and that is measured, not assumed.** GitHub fires roughly a third of the declared runs: over 2026-08-03..07 the news workflow declared 31 runs a day and delivered 6–10, for 42.6% hourly coverage. Everything downstream is built to survive it — `last_closed_session()` resolves a run from the clock rather than the date, and `check_feed_continuity` measures what a gap actually cost instead of guessing. With `etnews_economy` removed, 1 of 45 observed gaps (2.2%) exceeded the fastest remaining feed buffer, so the coverage number is alarming but the realised loss is not.
+**GitHub cron was best-effort, and the stored record measured the loss.** Over 2026-08-03..07 the news workflow declared 31 runs a day and delivered 6–10, for 42.6% hourly coverage. The current working tree replaces its cron declarations with a versioned Cloudflare Worker dispatcher and watchdog; it is **not deployed yet**, so GitHub remains the live scheduler until the Worker secret and deployment are complete. Everything downstream still measures what a gap actually cost rather than guessing. See [notes/next-steps-2026-09-05.md](notes/next-steps-2026-09-05.md).
 
 </details>
 
@@ -270,7 +270,7 @@ market-briefing/
 <details>
 <summary><b>What the built modules actually do</b></summary>
 
-**`src/embed/`** — Built and calibrated, **not wired into the daily run.** The dedup half (title cosine > 0.85) and the held topicality half are imported only by `tests/`; the production pipeline takes its (article, ticker) candidates straight from `src/entity/resolve.py`, which alone lands inside SPEC §6.1's 60–100 target band. So "the embedding pipeline" is not what blocks `news_polarity` — the LLM scoring credentials in CI are.
+**`src/embed/`** — Built and calibrated, **not wired into the daily run.** The dedup half (title cosine > 0.85) and the held topicality half are imported only by `tests/`; the production pipeline takes its (article, ticker) candidates straight from `src/entity/resolve.py`, which alone lands inside SPEC §6.1's 60–100 target band. It does not block `news_polarity`; scoring has production evidence, while its rating weight remains frozen through the gate.
 
 **`src/util/session.py`** — Everything is stored in UTC and displayed in KST. Market sessions come from `pandas_market_calendars`, never a hardcoded holiday list, which matters because Korean lunar holidays shift every year. It carries a removal-only correction for two 2026 KRX closures the library still reports as sessions (지방선거일, 제헌절), found by diffing against KRX itself and re-derived by a network test so it fails rather than rots. The US close is *derived*, so it correctly lands at 05:00 KST during daylight saving and 06:00 KST outside it without either number appearing in the code.
 
@@ -293,7 +293,7 @@ market-briefing/
 
 ```bash
 uv sync                          # install dependencies
-uv run pytest -m "not network"   # the default test run — 902 tests
+uv run pytest -m "not network"   # the default test run — 925 tests
 uv run ruff check . && uv run ruff format .
 
 cp .env.example .env             # then fill in credentials (see API-KEYS.md)
@@ -309,7 +309,7 @@ Tests that hit the network are marked `@pytest.mark.network` and excluded by def
 
 **Running stage; 2-week gate passed 2026-08-27.** The deterministic pipeline collects, resolves, computes, rates, renders and delivers twice a day without supervision, and has done so since 2026-08-03. `data/raw/` holds a 3-year backfill plus a live news record. The golden set and the model bake-off are finished.
 
-**What is not yet production-proven: the LLM half and the repaired filings path.** `src/llm/daily_scoring.py` (news → `news_polarity`) and `src/llm/synthesize.py` (§2.2⑤/⑧) are wired into the daily run. The pending 2026-08-28 change maps the workflow credentials, persists `data/scores/`, checkpoints scoring, aggregates scores into ③, and repairs non-session filing timestamps. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are still not Actions secrets, so production activation and a first successful archived-score run remain open. This is not blocked by the embedding pipeline (`daily_scoring.py` reads `src/entity/resolve.py` directly).
+**Production evidence exists for scoring and the repaired filings path.** The 2026-08-29 manual report run scored and committed 536 pairs, rendered ③ from the archive, published guarded prose, and recovered both filing collectors. The working tree now disables optional ⑤/⑧ synthesis to prevent Anthropic spend; scoring remains capped and `news_polarity` remains outside the frozen composite. The unresolved operational item is the scheduler cutover: its Cloudflare Worker source is tested but not yet deployed.
 
 §2.2④ (calendar) went from fully absent to partial on 2026-08-14 — CPI/employment/FOMC release dates and options expiration are now real collected data; US individual-company earnings and KR ex-dividend/IPO dates stay named-absent, and §2.2⑥'s directional rating stays scoped to the 31 KR tickers only, both by deliberate decision rather than oversight — see [notes/calendar-collector-plan.md](notes/calendar-collector-plan.md) and [notes/us-rating-plan.md](notes/us-rating-plan.md).
 
@@ -319,16 +319,16 @@ Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it ca
 |---|---|---|
 | 1 | Repo + SPEC / PREREGISTRATION / CLAUDE | ✅ |
 | 2 | `watchlist.yaml` + `aliases.yaml` | ✅ 31 KR + 40 US tickers; 31 alias entries |
-| 3 | Collectors + validation tests | ✅ 10 collectors, 921 offline tests, 20 network. Filing credentials and non-session fallbacks are fixed locally; first production verification remains in step 11 |
+| 3 | Collectors + validation tests | ✅ 10 collectors, 925 offline tests, 20 network. Filing credentials and non-session fallbacks have production evidence |
 | 4 | 3-year backfill into `data/raw/` | ✅ macro · us_price · kr_price · kr_flow, 2023-08-03 → 2026-08-07 |
 | 5 | Entity resolution + ambiguous ratio | ✅ ambiguous ~9% over the gate window (threshold 30%) |
 | 6 | Embedding pipeline (dedup + relevance) | 🟡 dedup half built + calibrated 2026-08-15 (title-only, cos>0.85). Topicality half built, then calibrated 2026-08-22 against 149 real labels — negative result: AUC 0.74 but the two classes overlap too much for any threshold to beat the "everything is topical" baseline (0.752 acc), so **Stage 1 topicality deployment is held**; `src/embed/topicality.py` stays as a tested, unwired base — [notes/step6-plan.md](notes/step6-plan.md). Neither half is wired into the daily run, and neither blocks anything |
 | 7 | Golden set — 100 hand-labelled articles | ✅ done; `relevance` fully re-labelled 2026-08-12 after a mid-run definition change |
 | 8 | Model adapter + bake-off | ✅ done 2026-08-13 — `gpt-5.4` selected |
 | 9 | Feature computation | ✅ 5 active rating features (0.75 weight) + `news_polarity` producer built 2026-08-27, weight deferred. Design total 0.95 (was 1.10 before `rev_4w` dropped) |
-| 10 | Report renderer + delivery | 🟡 vault + email live; 30+ briefings rendered. ③ score aggregation and the fail-closed ⑤/⑧ guard are implemented; LLM output still awaits Actions secrets and production verification |
-| 11 | Daily collection + report workflow | 🟡 full cloud round trip 2026-08-06. The pending change maps all four credentials, stages `data/scores`, checkpoints calls, and keys report filenames to the resolved session; merge + first CI verification remain |
-| 12 | Schedule burn-in | ✅ cron fired unattended through the full gate window |
+| 10 | Report renderer + delivery | 🟡 vault + email live; ③ score aggregation and guarded prose have production evidence. Working-tree policy disables optional ⑤/⑧ synthesis before any Anthropic call |
+| 11 | Daily collection + report workflow | 🟡 scoring archive and filing recovery verified in CI. Cloudflare scheduler cutover is code-ready but awaits Ricky's Worker/PAT setup |
+| 12 | Schedule burn-in | ✅ historical gate window complete; future run delivery depends on the pending Cloudflare cutover |
 | 13 | Two-week gate | ✅ **passed 2026-08-27** — criterion 4 measured 2026-08-15 (0.81–0.88 vs. a 0.5 bar), criteria 1–3 read against the full window via `src/eval/gate_2week.py` ([PREREGISTRATION §R](PREREGISTRATION.md), 2026-08-27) |
 
 <details>
@@ -373,14 +373,14 @@ The [2026-08-06 review](notes/review-2026-08-06.md) extended the same reasoning 
 
 ### What is blocking
 
-Open items are tracked in [MANUAL-TASKS.md](MANUAL-TASKS.md), ordered by what they block. As of the pending 2026-08-28 change:
+Open items are tracked in [MANUAL-TASKS.md](MANUAL-TASKS.md), ordered by what they block. Current working-tree state:
 
 | Task | Blocks | Owner |
 |---|---|---|
-| Review, rebase, and land the pending guard/workflow/scoring/renderer change | Makes the tested safeguards the code production runs | Ricky + Codex |
-| Register `OPENAI_API_KEY` + `ANTHROPIC_API_KEY` as Actions secrets after that change lands | All LLM scoring, §2.2⑤, §2.2⑧, the `news_polarity` chain | Ricky |
-| Verify one Actions run persisted filings, score checkpoints, ③ aggregation, and guarded ⑤/⑧ output | Production evidence; offline tests do not prove workflow secrets or artifact commits | Codex |
-| Approve the historical news-score backfill after persistence is observed | Builds the recoverable `news_polarity` history without risking repeated paid calls | Ricky |
+| Review and land the scheduler/cost-control change | Makes the tested Worker source and fail-closed synthesis policy the deployed code | Ricky + Codex |
+| Create Cloudflare Free Worker + 90-day `Actions: write` PAT | Restores scheduled collection/report dispatch once GitHub cron is removed | Ricky |
+| Verify one naturally scheduled news dispatch, then each report slot | Operational evidence without triggering a paid report test | Ricky + Codex |
+| Do not approve historical news-score backfill | Preserves the no-new-cost policy until a separate explicit approval | Ricky |
 | `config/rating.yaml` calibration | Trustworthy ratings — planned 2026-08-23, **overdue** | Ricky (MANUAL-TASKS §6) |
 | `valuation_band` backfill decision | Nothing hard; self-closes 2026-09-11 | Ricky (MANUAL-TASKS §11) |
 
@@ -396,11 +396,10 @@ raw revision comparison must stop minting identical calendar/filings `-vN`
 files. None changes today's published rating arithmetic, but the shadow issue
 can invalidate the 3-month P&L read if left open.
 
-The infrastructure direction is narrower than a migration: keep collection on
-GitHub Actions, where realised RSS loss remains low, but reconsider the
-twice-daily **report trigger** if correlated multi-hour delays recur. A
-persistent scheduler buys timeliness at the cost of another host, credential
-store, and deployment surface.
+The infrastructure direction is now a dispatch-only cutover: Cloudflare owns
+the clock while GitHub Actions still runs the collectors and report. This adds a
+Worker and a narrowly scoped credential store, but addresses the recorded RSS
+loss risk without moving pipeline execution or data storage.
 
 ### Review history
 
@@ -408,7 +407,8 @@ store, and deployment surface.
 |---|---|
 | [2026-08-06](notes/review-2026-08-06.md) | Retracted three alarming-but-wrong news-loss measurements; decided against moving collection off GitHub Actions |
 | [2026-08-07](notes/review-2026-08-07.md) | H1 rating archive (✅ fixed 08-08) · H2 phantom weights (✅ fixed 08-08) · M1 news-failure reporting (🟡 partly closed) · L1 duplicate `.gitignore` line (⬜ open, harmless) |
-| [2026-08-27](notes/review-2026-08-27.md) | **The current review.** Production-wiring failure (§1), code findings recorded for a later session (§2), this doc-sync pass (§3), direction still sound with four caveats (§4), data/time-gated items (§5) |
+| [2026-08-27](notes/review-2026-08-27.md) | Historical review: production-wiring failure and code findings |
+| [2026-09-05](notes/review-2026-09-05.md) | **Current review.** Cloudflare cutover code, no-cost synthesis policy, and manual deployment boundary |
 
 </details>
 

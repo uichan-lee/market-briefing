@@ -15,13 +15,10 @@ on real, correct data (see below). The `filing` flag renders correctly —
 verified against a live `render_scan()` call the same day, 8 of 31 KR
 tickers flagged.
 
-**Update 2026-08-29.** The pending local change maps the already-registered
-`DART_API_KEY` / `SEC_USER_AGENT` secrets into `report.yml`. It also handles a
-date-only filing on a closed market day at the next tradeable open, applies the
-same fallback when SEC `acceptanceDateTime` is absent, and fixes the shared
-NaT comparison defect. Fixture tests cover the KRX and US holiday cases.
-Production recovery and a deliberate backfill still require merge + CI
-verification; no live success is inferred from the local tests.
+**Update 2026-09-05.** `DART_API_KEY` / `SEC_USER_AGENT` were mapped into
+`report.yml`, and the closed-market-day / absent-acceptance-time fallbacks plus
+the shared NaT comparison fix were verified in the 2026-08-29 CI report run.
+No filing backfill is part of the current scheduler/cost-control change.
 
 ## The four decisions this plan fixes, and why
 

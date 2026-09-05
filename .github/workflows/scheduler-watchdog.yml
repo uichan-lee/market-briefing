@@ -1,0 +1,41 @@
+name: scheduler-watchdog
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: concise scheduler or freshness failure reason
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      BRIEFING_EMAIL_TO: ${{ secrets.BRIEFING_EMAIL_TO }}
+      SCHEDULER_REASON: ${{ inputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Email scheduler alert
+        run: |
+          uv run python - <<'PY'
+          import datetime as dt
+          import os
+
+          from src.notify.base import deliver
+          from src.util.config import load_delivery
+
+          reason = os.environ["SCHEDULER_REASON"]
+          notice = f"# ⚠ 스케줄러 경고\n\n{reason}\n"
+          channels = [item for item in load_delivery()["channels"] if item["type"] == "email"]
+          for result in deliver(notice, channels, day=dt.date.today(), label="SCHEDULER"):
+              print(result)
+          PY

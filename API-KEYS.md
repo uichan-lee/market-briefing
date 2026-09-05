@@ -474,6 +474,11 @@ The recipient address is **not** a secret and does not belong in `.env`. It goes
 
 ## 8. LLM provider keys
 
+> **Current cost policy (2026-09-05).** `synthesis.enabled: false` disables
+> Anthropic-backed ⑤/⑧ before any vendor call. Scoring remains capped at 180
+> pairs per run with a $5 account backstop; no historical scoring/backfill is
+> authorized. Creating or holding a key does not authorize a paid call.
+
 **Now in `.env.example`.** The adapter was written on 2026-08-11, so the names below are what it actually reads rather than a guess — that is why this section was deferred until it existed.
 
 Three keys, one per SPEC §7.4 bake-off candidate in `config/models.yaml`. **All three are needed to run the comparison; only the winner is needed afterwards.**
@@ -513,17 +518,17 @@ The first command is a dry run against five articles — it proves the keys work
 
 GitHub secrets are only needed once scoring runs in Actions, which is after the model is chosen.
 
-> **Status 2026-08-29: that point has arrived and the secrets are not set.** The model was chosen (`gpt-5.4`, 2026-08-13), and `src/llm/daily_scoring.py` (scoring) + `src/llm/synthesize.py` (§2.2⑤/⑧) are wired into the daily run. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are in local `.env` but were never pushed with `gh secret set`, so production still has no output from these stages.
+> **Status 2026-09-05.** The 2026-08-29 manual report run verified production
+> scoring, archive persistence (536 pairs), guarded prose, and filing recovery.
+> `OPENAI_API_KEY` is therefore an existing production dependency, subject to
+> the 180-pair run cap and $5 account backstop. Do **not** use it for historical
+> backfill or manual report tests without a new explicit budget approval.
 >
-> Registration order is load-bearing. The pending 2026-08-28 local change fixes
-> and tests the known `src/report/consistency.py` bypasses, maps all four
-> credentials in `report.yml`, stages `data/scores`, and checkpoints successful
-> scoring records in bounded chunks. Ricky registers `ANTHROPIC_API_KEY` and
-> `OPENAI_API_KEY` only after that change is reviewed, rebased, and deployed.
-> Codex then verifies one workflow's score archive and guarded prose before any
-> historical backfill. Enabling the keys earlier still runs the previous code.
-> Full order: `MANUAL-TASKS.md` task 19 and
-> `notes/next-steps-2026-08-28.md`.
+> `ANTHROPIC_API_KEY` is not needed for the current production posture:
+> `synthesis.enabled: false` prevents ⑤/⑧ from reaching a provider. Do not add
+> or rotate its Actions secret merely because the key exists locally. Re-enable
+> only after Ricky records a usefulness case, monthly budget, and stop condition.
+> Current operational order: `notes/next-steps-2026-09-05.md`.
 
 ---
 

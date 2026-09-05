@@ -209,7 +209,13 @@ def _llm_section(
     try:
         text = generate()
     except Exception as exc:  # noqa: BLE001 — reported via the header, not raised
-        reason = f"LLM 호출 실패: {exc}"
+        from src.llm.synthesize import SynthesisDisabledError
+
+        reason = (
+            str(exc)
+            if isinstance(exc, SynthesisDisabledError)
+            else f"LLM 호출 실패: {type(exc).__name__}"
+        )
         body = _llm_section_unavailable(section, heading, reason)
         return body, f"⚠ {warning_label} 생략: {reason} ({spec_ref})"
 
@@ -726,8 +732,8 @@ def render_news(inputs: ReportInputs) -> str:
         return "\n".join(lines + ["> 이 날짜에 워치리스트 종목과 매칭된 기사가 없습니다.", ""])
 
     lines += [
-        "| 종목 | 매칭/채점 기사 | polarity | uncertainty | 최고 intensity 기사 |",
-        "|---|---:|---:|---:|---|",
+        "| 종목 | 매칭/채점 기사 | 채점 상태 | polarity | uncertainty | 최고 intensity 기사 |",
+        "|---|---:|---|---:|---:|---|",
     ]
     ranked = sorted(inputs.news_counts.items(), key=lambda kv: -kv[1])
     names = {entry.ticker: (entry.name or "") for entry in inputs.watchlist}
@@ -740,6 +746,9 @@ def render_news(inputs: ReportInputs) -> str:
             else pd.DataFrame()
         )
         scored_count = len(scored)
+        score_state = (
+            "완료" if scored_count == count else ("부분 채점" if scored_count else "미채점")
+        )
         if scored_count:
             relevance = pd.to_numeric(scored["relevance"], errors="coerce").fillna(0.0)
             polarity = pd.to_numeric(scored["polarity"], errors="coerce")
@@ -764,7 +773,7 @@ def render_news(inputs: ReportInputs) -> str:
             shown = f"[{headline}]({link})" if headline and link else (headline or "—")
             polarity_text = uncertainty_text = "미채점"
         lines.append(
-            f"| {ticker} {names.get(ticker, '')} | {count}/{scored_count} | "
+            f"| {ticker} {names.get(ticker, '')} | {count}/{scored_count} | {score_state} | "
             f"{polarity_text} | {uncertainty_text} | {shown} |"
         )
 
@@ -773,6 +782,16 @@ def render_news(inputs: ReportInputs) -> str:
             "",
             "> **점수 아카이브에 이 날짜의 채점 결과가 없습니다.** "
             "매칭 기사 수와 대표 헤드라인만 표시합니다.",
+            "",
+        ]
+    elif any(
+        0 < len(inputs.news_scores[inputs.news_scores["ticker"] == ticker]) < count
+        for ticker, count in inputs.news_counts.items()
+    ):
+        lines += [
+            "",
+            "> **중복 제거 전 매칭 기사 기준입니다.** 부분 채점 수치는 전체 매칭 기사의 "
+            "완전한 대표값이 아니며 등급에는 반영되지 않습니다.",
             "",
         ]
     else:

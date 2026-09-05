@@ -5,16 +5,15 @@ Written before implementation, on 2026-08-06. SPEC §12 step 10, consuming
 
 Direction and ordering rationale: [review-2026-08-06.md](review-2026-08-06.md).
 
-> **Status updated 2026-08-29 (pre-build snapshot kept as history below).** The
+> **Status updated 2026-09-05 (pre-build snapshot kept as history below).** The
 > renderer ships; more than 30 briefings are in `reports/`. The rendered-section examples
 > below showing `0.75/1.10` and `미구현 섹션: ④⑤⑧` are stale — ④ went partial
 > 2026-08-14, ⑤/⑧ were wired 2026-08-25, and the design weight total is 0.95
-> after `rev_4w` was dropped. The pending 2026-08-28 change closes the known
-> consistency-guard bypasses and renders ③ polarity, uncertainty, and the
-> highest-intensity article from the active score archive. It labels the count
-> as pre-dedup while dedup remains unwired. Production LLM output still awaits
-> merge, Actions secrets, and a verified workflow run. Current sequence:
-> `notes/next-steps-2026-08-28.md`.
+> after `rev_4w` was dropped. The 2026-08-29 CI run verified the guard and ③
+> from the active score archive. It labels the count as pre-dedup while dedup
+> remains unwired; the current change adds complete/partial/unscored status.
+> Optional ⑤/⑧ are now deliberately disabled before a vendor call. Current
+> sequence: `notes/next-steps-2026-09-05.md`.
 
 ## Assumptions
 

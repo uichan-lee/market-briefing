@@ -1,12 +1,12 @@
 # Step 11 — daily collection, delivery, and the Actions schedule: plan
 
-> **Status updated 2026-08-29 (pre-build snapshot retained below).** The pending
-> local change maps all four credentials into `report.yml`, stages
-> `data/scores/`, checkpoints the score loop in bounded chunks, and keys report
-> filenames to the resolved session. These changes have not yet run in Actions.
-> A late 2026-08-27 run also showed that all three morning backstop crons can be
-> delayed together. Keep collection on Actions; if correlated multi-hour delays
-> recur after deployment, reconsider only the twice-daily report trigger.
+> **Status updated 2026-09-05 (pre-build snapshot retained below).** The
+> credential mapping, archive staging, bounded score checkpoints, resolved
+> report filenames, filings recovery, and guarded prose were verified in the
+> 2026-08-29 CI run. The current working tree responds to correlated cron loss
+> with a tested Cloudflare dispatcher for both collection and report triggers;
+> it remains undeployed until Ricky sets the Worker secret and narrowly scoped
+> GitHub PAT. GitHub Actions continues to run all pipeline work.
 
 Written before implementation, on 2026-08-06. SPEC §12 step 11, SPEC §1.
 

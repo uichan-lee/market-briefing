@@ -563,7 +563,8 @@ def test_llm_section_reports_a_raised_exception_without_crashing():
 
     body, warning = _llm_section("⑧", "AI 총평", "총평", "§2.2⑧", boom, {}, {})
     assert "이번 실행에서 생략됐습니다" in body
-    assert warning == "⚠ 총평 생략: LLM 호출 실패: vendor down (§2.2⑧)"
+    assert warning == "⚠ 총평 생략: LLM 호출 실패: RuntimeError (§2.2⑧)"
+    assert "vendor down" not in body
 
 
 def test_llm_section_publishes_on_a_clean_pass():
@@ -619,7 +620,7 @@ def test_an_llm_failure_in_the_commentary_degrades_to_a_stated_absence_not_a_cra
         raise RuntimeError("vendor down")
 
     page = render(inputs(), synthesize_fn=boom, redteam_fn=_stub_redteam)
-    assert "⚠ 총평 생략: LLM 호출 실패: vendor down (§2.2⑧)" in page
+    assert "⚠ 총평 생략: LLM 호출 실패: RuntimeError (§2.2⑧)" in page
 
 
 def test_an_llm_failure_in_the_redteam_degrades_to_a_stated_absence_not_a_crash():
@@ -627,7 +628,7 @@ def test_an_llm_failure_in_the_redteam_degrades_to_a_stated_absence_not_a_crash(
         raise RuntimeError("vendor down")
 
     page = render(inputs(), synthesize_fn=_stub_synthesis, redteam_fn=boom)
-    assert "⚠ 반증 생략: LLM 호출 실패: vendor down (§2.2⑤)" in page
+    assert "⚠ 반증 생략: LLM 호출 실패: RuntimeError (§2.2⑤)" in page
 
 
 def test_the_redteam_input_never_includes_the_ratings_section():
@@ -666,7 +667,7 @@ def test_render_defaults_to_the_real_synthesize_functions_when_not_injected(monk
     """Proves the `None` -> lazy import -> real function wiring actually works,
     at the lowest seam (adapter._call) rather than by trusting the default
     parameter resolves correctly."""
-    from src.llm import adapter
+    from src.llm import adapter, synthesize
 
     class _Response:
         def __init__(self, content: str) -> None:
@@ -680,6 +681,11 @@ def test_render_defaults_to_the_real_synthesize_functions_when_not_injected(monk
         return _Response(json.dumps({key: "실제 함수 경로 확인"}))
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    monkeypatch.setattr(
+        synthesize,
+        "load_models",
+        lambda: {"synthesis": {"enabled": True, "provider": "anthropic", "model": "x"}},
+    )
     monkeypatch.setattr(adapter, "_call", fake_call)
     monkeypatch.setattr(adapter, "_cost", lambda response: None)
 

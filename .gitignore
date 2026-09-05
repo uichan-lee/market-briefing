@@ -70,6 +70,7 @@ data/*
 __pycache__/
 *.pyc
 .venv/
+node_modules/
 venv/
 .pytest_cache/
 .ruff_cache/

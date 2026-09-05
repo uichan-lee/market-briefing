@@ -254,6 +254,9 @@ def load_models(path: Path | None = None) -> dict[str, Any]:
         missing = {"provider", "model"} - raw[stage].keys()
         if missing:
             raise ConfigError(f"{path.name}: stage {stage!r} is missing {sorted(missing)}")
+        enabled = raw[stage].get("enabled")
+        if enabled is not None and not isinstance(enabled, bool):
+            raise ConfigError(f"{path.name}: stage {stage!r} has non-boolean enabled")
     return raw
 
 

@@ -1,0 +1,12 @@
+{
+  "name": "market-briefing-infra",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:scheduler": "wrangler deploy --dry-run --config infra/cloudflare-scheduler/wrangler.toml",
+    "test:scheduler": "node --test infra/cloudflare-scheduler/scheduler.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.129.0"
+  }
+}

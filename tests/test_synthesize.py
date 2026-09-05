@@ -14,7 +14,7 @@ import pytest
 from src.llm import adapter
 from src.llm.adapter import CREDENTIALS, CredentialError
 from src.llm.score import PromptError
-from src.llm.synthesize import load_prompt, run_redteam, run_synthesis
+from src.llm.synthesize import SynthesisDisabledError, load_prompt, run_redteam, run_synthesis
 
 MODELS = {
     "synthesis": {"provider": "anthropic", "model": "claude-sonnet-5", "temperature": 0.3},
@@ -79,11 +79,23 @@ def test_both_functions_route_through_the_synthesis_stage(monkeypatch, keyed):
     run_synthesis("s", models=MODELS)
     assert captured["model"] == "anthropic/claude-sonnet-5"
     assert captured["temperature"] == 0.3
-
     captured.clear()
     _answer(monkeypatch, json.dumps({"redteam": "x"}), captured)
     run_redteam("s", models=MODELS)
     assert captured["model"] == "anthropic/claude-sonnet-5"
+
+
+def test_disabled_synthesis_never_calls_a_vendor(monkeypatch):
+    models = {"synthesis": {"enabled": False, "provider": "anthropic", "model": "claude-sonnet-5"}}
+
+    def forbidden(**kwargs):
+        raise AssertionError(f"vendor call must not happen: {kwargs}")
+
+    monkeypatch.setattr(adapter, "_call", forbidden)
+    with pytest.raises(SynthesisDisabledError, match="비용 절약"):
+        run_synthesis("rendered", models=models)
+    with pytest.raises(SynthesisDisabledError, match="비용 절약"):
+        run_redteam("rendered", models=models)
 
 
 def test_a_credential_error_propagates_uncaught(monkeypatch):

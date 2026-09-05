@@ -1,42 +1,10 @@
 # The two daily report runs. SPEC §1, §12 step 11.
 name: report
 
-# Cron minutes follow the lesson recorded in collect-news.yml: `0 * * * *`
-# lost three of its first four firings, so nothing here schedules on :00.
-# Korea has no DST, so KST = UTC+9 year-round and these lines never move.
-#
-#   morning  22:07 UTC Sun–Thu = 07:07 KST Mon–Fri, ~2h before the KOSPI open.
-#            No KRX call (kr_flow costs 124 requests against a block near 250,
-#            and the session being reported on has not opened). US data comes
-#            from the Tiingo preview path; Alpaca refuses the current UTC day.
-#   evening  12:37 UTC Mon–Fri = 21:37 KST, six hours after the KRX close.
-#            The canonical run: KRX + Alpaca, and the one that persists ratings.
-#
-# The morning run is declared three times because a briefing that arrives after
-# the opening bell has missed its entire purpose, and both scheduled report runs
-# on record were late: the evening one by 2h19m on 2026-08-06, the morning one
-# by 3h25m on 2026-08-07, which put a pre-open briefing in the inbox at 10:35
-# KST — an hour and a half after the market opened.
-#
-# Each cron is an independent draw against whatever makes GitHub drop or delay a
-# firing, so three of them turn one bad draw into a late report instead of a
-# useless one. The `Already published` step below makes the extra firings free:
-# whichever one lands first publishes, the rest exit before spending anything.
-#
-# All three sit between the US close and the KOSPI open. The lower bound is the
-# *winter* US close of 06:00 KST rather than the 05:00 DST one, since a cron
-# line cannot move with DST — and the upper bound is 09:00 KST.
-#
-# The evening run gets no backstop on purpose. Its collectors include kr_flow,
-# at 124 KRX requests against a block observed near 250, so two evening runs in
-# one day is the one schedule change that could take out the data source. The
-# morning run touches no KRX endpoint, which is what makes duplicating it safe.
+# Cloudflare Workers owns the wall-clock schedule. GitHub's best-effort cron
+# repeatedly delayed or dropped both runs; infra/cloudflare-scheduler/ is the
+# versioned caller and records the UTC trigger times.
 on:
-  schedule:
-    - cron: "7 22 * * 0-4" # morning   07:07 KST — primary
-    - cron: "47 22 * * 0-4" # morning   07:47 KST — backstop
-    - cron: "23 23 * * 0-4" # morning   08:23 KST — last chance before the open
-    - cron: "37 12 * * 1-5" # evening
   workflow_dispatch:
     inputs:
       run:
@@ -69,7 +37,6 @@ jobs:
       DART_API_KEY: ${{ secrets.DART_API_KEY }}
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       # Not a secret in the credential sense — a personal inbox kept out of a
       # public tracked file. config/delivery.yaml names it via `to_env`, and an
@@ -104,10 +71,9 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "run=${{ inputs.run }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "37 12 * * 1-5" ]; then
-            echo "run=evening" >> "$GITHUB_OUTPUT"
           else
-            echo "run=morning" >> "$GITHUB_OUTPUT"
+            echo "workflow_dispatch input is required" >&2
+            exit 1
           fi
 
       # What makes the duplicate morning crons free. The renderer writes
@@ -139,24 +105,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${{ github.event_name }}" != "schedule" ] \
-            || [ "${{ steps.which.outputs.run }}" != "morning" ]; then
-            echo "guard applies only to the scheduled morning run"
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          day="$(uv run python -c 'from src.report.render import resolve_run; from src.util.session import now_utc; print(resolve_run("morning", now_utc())[0])')"
-          target="reports/${day}-${{ steps.which.outputs.run }}.md"
-          git fetch --depth=1 origin "${GITHUB_REF_NAME}"
-
-          if git cat-file -e "FETCH_HEAD:${target}" 2>/dev/null; then
-            echo "${target} already published; nothing to do"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "${target} not published yet; proceeding"
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "manual dispatches intentionally re-render; Cloudflare emits one run per slot"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Collect
         if: steps.published.outputs.skip != 'true'

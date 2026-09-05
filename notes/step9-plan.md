@@ -3,19 +3,15 @@
 Written before implementation, on 2026-08-05. SPEC §12 step 9, feeding
 `src/report/rating.py`.
 
-> **Status updated 2026-08-29 (this is a pre-build snapshot, kept as history).**
+> **Status updated 2026-09-05 (this is a pre-build snapshot, kept as history).**
 > Five features are live (`foreign_flow_5d`, `inst_flow_5d`, `short_ratio`,
 > `rel_strength_20d`, `valuation_band`). `news_polarity`'s "❌ stage does not
-> exist" below is out of date — the stage was built and wired 2026-08-27
-> (`src/llm/daily_scoring.py`), `news_polarity` is in `compute.FEATURES`, but
-> its weight stays deferred and it has produced nothing in CI for want of
-> `OPENAI_API_KEY`. The weight is now explicitly frozen until after the
-> 2026-11-13 gate so the composite does not change mid-window. The pending
-> 2026-08-28 change stages `data/scores`, checkpoints successful calls in
-> bounded chunks, and filters feature loading to the configured model/prompt.
-> Production scoring still awaits merge, the Actions secret, and one verified
-> workflow run. `rev_4w` was permanently dropped 2026-08-25. Current sequence:
-> `notes/next-steps-2026-08-28.md`.
+> exist" below is out of date — the stage was built and wired 2026-08-27 and
+> produced 536 archived pairs in the 2026-08-29 CI run. Its weight remains
+> explicitly frozen until after the 2026-11-13 gate so the composite does not
+> change mid-window. No historical backfill is authorized. `rev_4w` was
+> permanently dropped 2026-08-25. Current sequence:
+> `notes/next-steps-2026-09-05.md`.
 
 ## What this has to produce
 

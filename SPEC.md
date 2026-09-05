@@ -35,7 +35,7 @@
 | `COLLECT_NEWS` | 09:00–15:30 twice an hour, otherwise hourly | Korean outlet RSS | Not a report run — see below |
 
 > [!important] The news collection schedule is a correctness requirement
-> RSS holds a rolling 50–120 item buffer with no history, so an hour not collected is gone permanently — unlike prices, which pykrx will re-serve years later. `.github/workflows/collect-news.yml` runs on its own schedule, separate from the two report runs, and writes nothing but `data/raw/kr/news/`.
+> RSS holds a rolling 50–120 item buffer with no history, so an hour not collected is gone permanently — unlike prices, which pykrx will re-serve years later. `collect-news.yml` is invoked separately from the two report runs and writes nothing but `data/raw/kr/news/`. The current working tree moves the wall clock to `infra/cloudflare-scheduler/`; until that Worker is deployed, GitHub's existing production schedule remains live.
 >
 > **The cadence follows a measurement, not a round number.** A buffer is a fixed item count, so it holds less *time* the faster the outlet publishes. Measured 2026-08-03 at 22:30 KST: 한국경제 경제 held 4.0 hours of history, 전자신문 4.5, 연합뉴스 10.3, 뉴시스 17.9, 인포스탁 101.6. The fast feeds hold materially less during the KRX session, which is why the session is polled twice an hour and the rest of the day once.
 >
@@ -46,10 +46,11 @@
 > [!warning] Daylight saving time
 > US market close is 05:00 KST during DST and 06:00 KST outside it. Fix the schedule in UTC and determine the session with a market calendar. Use `pandas_market_calendars`.
 
-> [!warning] GitHub Actions scheduled runs are dropped, not merely delayed
+> [!warning] GitHub Actions scheduled runs were dropped, not merely delayed
 > Observed 2026-08-03: of the first four `0 * * * *` firings, **three never ran at all** and the fourth started 50 minutes late. Scheduled workflows are queued best-effort and shed under load, and the top of the hour is the most contended minute.
 >
-> Two consequences, both applied: never schedule on `:00`, and never treat a schedule as a guarantee of coverage. On run failure, retry once; if it still fails, send a failure notice through the configured delivery channels and **publish a partial report anyway** — a silent failure is the worst outcome.
+>
+> The current working tree applies the stronger consequence: a Cloudflare Worker dispatches the same GitHub workflows at the recorded UTC slots and invokes an email-only watchdog for stale or failed runs. The Worker is code-ready but not deployed; no new data or report execution moves out of GitHub Actions.
 
 ---
 
@@ -98,8 +99,8 @@ The last line appears only when the commentary was dropped. Every degradation of
 
 Content and identity. Display order is §2.3.
 
-> [!warning] Deployment status as of 2026-08-28
-> Sections ①②③④⑥⑦⑨ render from real data every run. **⑤ and ⑧ have never been published** because `ANTHROPIC_API_KEY` is not an Actions secret; their fail-closed publication guard is now covered by regression tests. **③ now consumes the score archive** and shows relevance-weighted polarity, uncertainty, and the highest-intensity article when scores exist. It honestly labels raw matched counts because deduplication remains unwired. Production scoring still awaits `OPENAI_API_KEY`; archive persistence and incremental checkpointing are wired before that key may be enabled.
+> [!warning] Deployment status as of 2026-09-05
+> Sections ①②③④⑥⑦⑨ render from real data every run. The 2026-08-29 manual report run scored and committed 536 pairs, rendered ③ from the score archive, published guarded ⑤/⑧ prose, and recovered the filings paths. The current working tree deliberately disables ⑤/⑧ before any Anthropic call; this is a cost control, not a rating change. ③ labels each ticker as complete, partially scored, or unscored, and `news_polarity` remains outside the frozen composite. The scheduler cutover is code-ready but not deployed.
 
 **① US → KR market transmission (comes first)**
 
@@ -470,7 +471,7 @@ All three are computable from the day the 3-year backfill lands (§12 step 4), s
 >
 > **Where the guarantee actually lives.** Reproducibility here comes from keeping what the model said, not from asking it to say the same thing twice — the pattern already used everywhere else in this project (`data/raw/` is never overwritten, ratings archive with a `-v2` suffix, the golden set is committed because it cannot be regenerated). Two mechanisms carry it:
 >
-> 1. **The archive.** §3's `data/scores/{date}__{model_id}__{prompt_version}.jsonl` is the record a re-run reads instead of re-scoring. ✅ **Built and wired 2026-08-27; production persistence hardened 2026-08-28** (`src/llm/daily_scoring.py`, registered in both runs of `scripts/collect_daily.py`). `.gitignore` excepts `data/scores/`, `report.yml` stages the directory, and scoring writes bounded checkpoints instead of holding the full sequential backlog until the end. `news_polarity` is computed and z-scored only from the configured active model/prompt archive; its rating weight stays deferred until after the 2026-11-13 gate (`config/rating.yaml`, PREREGISTRATION §8.4). The stage has still never scored an article in production because `OPENAI_API_KEY` is not an Actions secret, so persistence requires a first post-merge workflow verification before any backfill. See `notes/next-steps-2026-08-28.md`.
+> 1. **The archive.** §3's `data/scores/{date}__{model_id}__{prompt_version}.jsonl` is the record a re-run reads instead of re-scoring. ✅ **Built and wired 2026-08-27; production persistence verified 2026-08-29** (`src/llm/daily_scoring.py`, registered in both runs of `scripts/collect_daily.py`). `.gitignore` excepts `data/scores/`, `report.yml` stages the directory, and scoring writes bounded checkpoints instead of holding the full sequential backlog until the end. `news_polarity` is computed and z-scored only from the configured active model/prompt archive; its rating weight stays deferred until after the 2026-11-13 gate (`config/rating.yaml`, PREREGISTRATION §8.4). The 2026-08-29 run committed 536 pairs. No historical backfill is authorized; see `notes/next-steps-2026-09-05.md`.
 > 2. **The measurement.** §7.4's self-consistency σ, which this bullet list now makes load-bearing.
 >
 > PREREGISTRATION §8.3 defines what "LLM output reproducibility" means operationally, and records that it is **not** a §8.5 gate criterion — the four gate criteria are unchanged by this.
@@ -663,15 +664,15 @@ market-briefing/
     llm/
       adapter.py              # vendor-neutral layer
       score.py
-      synthesize.py            # ✅ §2.2⑤/⑧ built + wired into render.py (2026-08-25) — ⚠ never published: ANTHROPIC_API_KEY not an Actions secret
-      daily_scoring.py         # ✅ §6.2/§6.3 built + wired; checkpoints and workflow staging added 2026-08-28 — ⚠ never scored in production: OPENAI_API_KEY not an Actions secret
+      synthesize.py            # ✅ §2.2⑤/⑧ built + guarded; current config disables vendor calls before dispatch
+      daily_scoring.py         # ✅ §6.2/§6.3 built + archived; 536 pairs scored in the 2026-08-29 CI run
       prompts/
         v1_scoring.md
         v1_redteam.md          # §2.2⑤ — paired with report/consistency.py, model never shown §2.2⑥
         v1_synthesis.md       # §2.2⑧ — paired with report/consistency.py
     report/
       rating.py               # ✅ §2.2⑥ — the deterministic directional rating
-      consistency.py          # ✅ wired + fail-closed against the 2026-08-27 publication bypasses; production prose not yet observed
+      consistency.py          # ✅ wired + fail-closed against the 2026-08-27 publication bypasses; prose observed 2026-08-29
       render.py               # ✅ §2 markdown + ③ score aggregation; honestly labels raw pre-dedup counts while dedup remains unwired
     notify/
       base.py                 # ✅ Channel interface + summary routing
@@ -693,7 +694,7 @@ market-briefing/
     resolve_filing_ids.py     # ✅ populates config/filing_ids.yaml from DART's corp-code index
   data/
     golden/v1.jsonl
-  tests/                       # 35 test files, 921 offline + 20 network as of 2026-08-28
+  tests/                       # 35 test files, 925 offline + 20 network as of 2026-09-05
     test_session.py
     test_validate.py
     test_config.py
@@ -701,8 +702,10 @@ market-briefing/
     test_consistency.py
     ...                        # one test_*.py per module; `uv run pytest --collect-only` for the live list
   .github/workflows/
-    report.yml               # the two scheduled report runs (§1). NOT `briefing.yml` — that name never existed
-    collect-news.yml          # the only schedule that is a correctness requirement
+    report.yml               # dispatch-only report workflow (§1). NOT `briefing.yml` — that name never existed
+    collect-news.yml          # dispatch-only RSS collector workflow
+    scheduler-watchdog.yml    # email-only alert invoked by the Cloudflare scheduler
+  infra/cloudflare-scheduler/ # tested Worker cron dispatcher; deployment is Ricky's manual task
 ```
 
 ---

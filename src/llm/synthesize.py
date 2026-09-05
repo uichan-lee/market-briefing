@@ -19,8 +19,26 @@ from typing import Any
 
 from src.llm.adapter import Completion, complete
 from src.llm.score import Prompt, PromptError, load_prompt
+from src.util.config import load_models
 
-__all__ = ["Prompt", "PromptError", "load_prompt", "run_redteam", "run_synthesis"]
+__all__ = [
+    "Prompt",
+    "PromptError",
+    "SynthesisDisabledError",
+    "load_prompt",
+    "run_redteam",
+    "run_synthesis",
+]
+
+
+class SynthesisDisabledError(RuntimeError):
+    """Configured absence of display-only LLM prose, never a vendor failure."""
+
+
+def _enabled(models: dict[str, Any] | None) -> None:
+    config = models if models is not None else load_models()
+    if not config["synthesis"].get("enabled", True):
+        raise SynthesisDisabledError("비용 절약을 위해 비활성화됨")
 
 
 def _prose_schema(key: str) -> dict[str, Any]:
@@ -56,6 +74,7 @@ def run_synthesis(
     the "reads the rendered deterministic sections" property CLAUDE.md names
     for ⑧.
     """
+    _enabled(models)
     prompt = load_prompt("v1", kind="synthesis")
     completion: Completion = complete(
         "synthesis",
@@ -84,6 +103,7 @@ def run_redteam(
     ①-④'s conclusions on their own evidence, per SPEC's literal
     "counterarguments only against the conclusions from ①-④".
     """
+    _enabled(models)
     prompt = load_prompt("v1", kind="redteam")
     completion: Completion = complete(
         "synthesis",

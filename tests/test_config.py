@@ -269,9 +269,22 @@ def test_a_stage_missing_its_provider_is_rejected(tmp_path):
         load_models(path)
 
 
+def test_a_non_boolean_stage_enabled_flag_is_rejected(tmp_path):
+    path = write(
+        tmp_path,
+        "models.yaml",
+        "embedding:\n  provider: local\n  model: x\n"
+        "scoring:\n  provider: openai\n  model: y\n"
+        "synthesis:\n  provider: anthropic\n  model: z\n  enabled: disabled\n",
+    )
+    with pytest.raises(ConfigError, match="non-boolean"):
+        load_models(path)
+
+
 def test_committed_models_names_all_three_stages():
     models = load_models()
     assert {"embedding", "scoring", "synthesis"} <= models.keys()
+    assert models["synthesis"]["enabled"] is False
     # None means "send no temperature at all" (config/models.yaml's own
     # convention) rather than "send zero". gpt-5.4 (2026-08-13, superseding
     # gpt-5.1) rejects an explicit 0 the same way every gpt-5.x-and-later

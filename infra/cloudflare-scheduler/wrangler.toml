@@ -1,0 +1,12 @@
+name = "market-briefing-scheduler"
+main = "scheduler.mjs"
+compatibility_date = "2026-09-05"
+
+[triggers]
+crons = [
+  "17,47 0-6 * * *",
+  "17 7-23 * * *",
+  "7 22 * * 0-4",
+  "37 12 * * 1-5",
+  "15,25,40 * * * *",
+]

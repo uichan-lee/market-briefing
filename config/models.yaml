@@ -290,11 +290,14 @@ candidates:
   # OpenAI model has shown so far.
 
 synthesis:
+  # Disabled 2026-09-05: ⑤/⑧ are display-only prose, not part of the rating,
+  # score archive, or evaluation. Keep the stage off until Ricky explicitly
+  # approves both a budget and a usefulness review. See MANUAL-TASKS.md §5.
+  enabled: false
   provider: anthropic
   model: claude-sonnet-5
   temperature: null            # verified live 2026-08-25: rejects any value, see below
-  # Call volume is low enough that cost is immaterial here; SPEC §7.2 says
-  # prioritize quality.
+  # This must not be re-enabled merely because a key or credit balance exists.
   #
   # Drives the red-team section (SPEC §2.2⑤) and the AI 총평 (SPEC §2.2⑧).
   # 총평 output is checked by src/report/consistency.py before publication: any
