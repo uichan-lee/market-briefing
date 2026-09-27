@@ -17,6 +17,8 @@ const RETRIES = 3;
 
 function headers(token) {
   return {
+    // GitHub rejects requests without an application identity, even with a valid PAT.
+    "User-Agent": "market-briefing-scheduler",
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
@@ -24,31 +26,64 @@ function headers(token) {
   };
 }
 
+async function githubFailureDetail(response, token) {
+  if (!response) return "HTTP unknown";
+
+  let message;
+  try {
+    const text = await response.clone().text();
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // GitHub's missing-User-Agent rejection is plain text, not JSON.
+      body = { message: text };
+    }
+    if (typeof body?.message === "string") {
+      message = body.message.replaceAll(token, "[redacted]").replace(/\s+/g, " ").trim().slice(0, 200);
+    }
+  } catch {
+    message = undefined;
+  }
+  return `HTTP ${response.status}${message ? `: ${message}` : ""}`;
+}
+
 async function github(fetchImpl, token, path, init) {
   let response;
-  for (let attempt = 1; attempt <= RETRIES; attempt += 1) {
+  // A dispatch may already have been accepted when its response is lost.
+  // Retry only reads; POST retries can duplicate scoring and delivery.
+  const attempts = init.method === "GET" ? RETRIES : 1;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       response = await fetchImpl(`${API}/${path}`, {
         ...init,
         headers: { ...headers(token), ...(init.headers || {}) },
       });
     } catch (error) {
-      if (attempt === RETRIES) return { ok: false, detail: `network ${error.name}` };
+      if (attempt === attempts) return { ok: false, detail: `network ${error.name}` };
       continue;
     }
     if (response.ok) return { ok: true, response };
     if (response.status < 500 && response.status !== 429) {
-      return { ok: false, detail: `HTTP ${response.status}` };
+      return { ok: false, detail: await githubFailureDetail(response, token) };
     }
   }
-  return { ok: false, detail: `HTTP ${response?.status ?? "unknown"}` };
+  return { ok: false, detail: await githubFailureDetail(response, token) };
 }
 
 export async function dispatch(fetchImpl, token, workflow, inputs = {}) {
-  return github(fetchImpl, token, `${workflow}/dispatches`, {
+  const result = await github(fetchImpl, token, `${workflow}/dispatches`, {
     method: "POST",
     body: JSON.stringify({ ref: REF, inputs }),
   });
+  if (result.ok) {
+    console.log(JSON.stringify({
+      event: "github_dispatch",
+      workflow,
+      http_status: result.response.status,
+    }));
+  }
+  return result;
 }
 
 async function latestRun(fetchImpl, token, workflow) {
@@ -57,7 +92,16 @@ async function latestRun(fetchImpl, token, workflow) {
   });
   if (!result.ok) return result;
   const body = await result.response.json();
-  return { ok: true, run: body.workflow_runs?.[0] };
+  const run = body.workflow_runs?.[0];
+  console.log(JSON.stringify({
+    event: "github_latest_run",
+    workflow,
+    run_id: run?.id ?? null,
+    created_at: run?.created_at ?? null,
+    status: run?.status ?? null,
+    conclusion: run?.conclusion ?? null,
+  }));
+  return { ok: true, run };
 }
 
 function minutesSince(now, value) {
@@ -78,10 +122,19 @@ async function checkFresh(fetchImpl, token, workflow, now, allowedMinutes, label
   if (latest.run.status === "completed" && latest.run.conclusion !== "success") {
     return alert(fetchImpl, token, `${label}: 최신 실행 실패 (${latest.run.conclusion})`);
   }
+  if (latest.run.status !== "completed") {
+    return alert(fetchImpl, token, `${label}: 점검 시각까지 실행 미완료 (${latest.run.status})`);
+  }
   return { ok: true };
 }
 
 export async function handleScheduled(cron, now, env, fetchImpl = fetch) {
+  const result = await routeScheduled(cron, now, env, fetchImpl);
+  if (!result.ok) throw new Error(`Scheduled GitHub request failed: ${result.detail}`);
+  return result;
+}
+
+async function routeScheduled(cron, now, env, fetchImpl) {
   const token = env.GITHUB_DISPATCH_TOKEN;
   if (!token) throw new Error("GITHUB_DISPATCH_TOKEN is not configured");
 
