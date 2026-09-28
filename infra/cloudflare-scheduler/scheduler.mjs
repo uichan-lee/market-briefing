@@ -57,6 +57,7 @@ async function github(fetchImpl, token, path, init) {
     try {
       response = await fetchImpl(`${API}/${path}`, {
         ...init,
+        ...(init.method === "GET" ? { cache: "no-store" } : {}),
         headers: { ...headers(token), ...(init.headers || {}) },
       });
     } catch (error) {
@@ -86,21 +87,37 @@ export async function dispatch(fetchImpl, token, workflow, inputs = {}) {
   return result;
 }
 
-async function latestRun(fetchImpl, token, workflow) {
-  const result = await github(fetchImpl, token, `${workflow}/runs?event=workflow_dispatch&per_page=1`, {
+async function latestRun(fetchImpl, token, workflow, now, since) {
+  const query = new URLSearchParams({ event: "workflow_dispatch", branch: REF, per_page: "20" });
+  if (since) query.set("created", `>=${since.toISOString()}`);
+  const result = await github(fetchImpl, token, `${workflow}/runs?${query}`, {
     method: "GET",
   });
   if (!result.ok) return result;
-  const body = await result.response.json();
-  const run = body.workflow_runs?.[0];
-  console.log(JSON.stringify({
-    event: "github_latest_run",
-    workflow,
-    run_id: run?.id ?? null,
-    created_at: run?.created_at ?? null,
-    status: run?.status ?? null,
-    conclusion: run?.conclusion ?? null,
-  }));
+  let body;
+  try {
+    body = await result.response.json();
+  } catch {
+    return { ok: false, detail: "invalid JSON" };
+  }
+  if (!Array.isArray(body?.workflow_runs)) return { ok: false, detail: "invalid run list" };
+  const statuses = new Set(["completed", "queued", "in_progress", "waiting", "requested", "pending"]);
+  const conclusions = new Set(["success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required", "stale", "startup_failure"]);
+  for (const item of body.workflow_runs) {
+    const time = typeof item?.created_at === "string" && /Z$|[+-]\d\d:\d\d$/.test(item.created_at)
+      ? Date.parse(item.created_at) : NaN;
+    if (!Number.isSafeInteger(item?.id) || item.id <= 0 || !Number.isFinite(time)
+      || time > now.getTime() || (since && time < since.getTime())
+      || item.head_branch !== REF || item.event !== "workflow_dispatch"
+      || !statuses.has(item.status)
+      || (item.status === "completed" && !conclusions.has(item.conclusion))) {
+      return { ok: false, detail: "invalid run metadata" };
+    }
+  }
+  const run = body.workflow_runs.reduce((latest, item) =>
+    !latest || Date.parse(item.created_at) > Date.parse(latest.created_at)
+      || (Date.parse(item.created_at) === Date.parse(latest.created_at) && item.id > latest.id)
+      ? item : latest, null);
   return { ok: true, run };
 }
 
@@ -108,24 +125,68 @@ function minutesSince(now, value) {
   return (now.getTime() - new Date(value).getTime()) / 60_000;
 }
 
-async function alert(fetchImpl, token, reason) {
-  return dispatch(fetchImpl, token, WATCHDOG, { reason: reason.slice(0, 240) });
+async function alert(fetchImpl, token, reason, details) {
+  return dispatch(fetchImpl, token, WATCHDOG, {
+    reason: reason.replaceAll(token, "[redacted]").slice(0, 240),
+    details: details.replaceAll(token, "[redacted]").slice(0, 4000),
+  });
+}
+
+function classify(latest, now, allowedMinutes) {
+  if (!latest.ok) return "unknown";
+  if (!latest.run) return "missing";
+  if (minutesSince(now, latest.run.created_at) > allowedMinutes) {
+    return "stale";
+  }
+  if (latest.run.status === "completed" && latest.run.conclusion !== "success") {
+    return "failed";
+  }
+  return latest.run.status === "completed" ? "healthy" : "unfinished";
 }
 
 async function checkFresh(fetchImpl, token, workflow, now, allowedMinutes, label) {
-  const latest = await latestRun(fetchImpl, token, workflow);
-  if (!latest.ok) return alert(fetchImpl, token, `${label}: GitHub 상태 조회 실패 (${latest.detail})`);
-  if (!latest.run) return alert(fetchImpl, token, `${label}: workflow 실행 기록 없음`);
-  if (minutesSince(now, latest.run.created_at) > allowedMinutes) {
-    return alert(fetchImpl, token, `${label}: 최신 실행이 ${allowedMinutes}분을 초과함`);
+  const observations = [];
+  async function read(stage, since) {
+    const latest = await latestRun(fetchImpl, token, workflow, now, since);
+    const run = latest.run;
+    const observation = {
+      stage, run_id: run?.id ?? null, created_at: run?.created_at ?? null,
+      age_minutes: run ? Math.round(minutesSince(now, run.created_at) * 100) / 100 : null,
+      status: run?.status ?? null, conclusion: run?.conclusion ?? null,
+      error: latest.ok ? null : latest.detail.replaceAll(token, "[redacted]"),
+    };
+    observations.push(observation);
+    console.log(JSON.stringify({ event: "github_latest_run", workflow,
+      checked_at: now.toISOString(), allowed_minutes: allowedMinutes, ...observation }));
+    return latest;
   }
-  if (latest.run.status === "completed" && latest.run.conclusion !== "success") {
-    return alert(fetchImpl, token, `${label}: 최신 실행 실패 (${latest.run.conclusion})`);
+  let latest = await read("initial");
+  const initialDecision = classify(latest, now, allowedMinutes);
+  if (initialDecision !== "healthy") {
+    const since = ["stale", "missing"].includes(initialDecision)
+      ? new Date(now.getTime() - allowedMinutes * 60_000) : undefined;
+    latest = await read("confirmation", since);
   }
-  if (latest.run.status !== "completed") {
-    return alert(fetchImpl, token, `${label}: 점검 시각까지 실행 미완료 (${latest.run.status})`);
-  }
-  return { ok: true };
+  const decision = classify(latest, now, allowedMinutes);
+  console.log(JSON.stringify({ event: "watchdog_decision", workflow,
+    checked_at: now.toISOString(), allowed_minutes: allowedMinutes,
+    initial_decision: initialDecision, decision, alert: decision !== "healthy", observations }));
+  if (decision === "healthy") return { ok: true };
+  const reasons = {
+    unknown: "GitHub 상태 확인 실패 (실행 지연 여부 미확인)",
+    missing: `최근 ${allowedMinutes}분 내 workflow 실행 기록 없음 (재조회 확인)`,
+    stale: `최신 실행이 ${allowedMinutes}분을 초과함 (재조회 확인)`,
+    failed: `최신 실행 실패 (${latest.run?.conclusion})`,
+    unfinished: `점검 시각까지 실행 미완료 (${latest.run?.status})`,
+  };
+  const evidence = observations.map(item =>
+    `${item.stage}: run=${item.run_id ?? "미확인"}, created_at=${item.created_at ?? "미확인"}, `
+    + `age_minutes=${item.age_minutes ?? "미확인"}, status=${item.status ?? "미확인"}, `
+    + `conclusion=${item.conclusion ?? "미확인"}, error=${item.error ?? "없음"}`
+    + (item.run_id ? `\nhttps://github.com/${OWNER}/${REPOSITORY}/actions/runs/${item.run_id}` : ""));
+  return alert(fetchImpl, token, `${label}: ${reasons[decision]}`,
+    `workflow=${workflow}\nchecked_at_utc=${now.toISOString()}\nthreshold_minutes=${allowedMinutes}\n`
+    + evidence.join("\n"));
 }
 
 export async function handleScheduled(cron, now, env, fetchImpl = fetch) {

@@ -1,187 +1,174 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
 import { dispatch, handleScheduled } from "./scheduler.mjs";
 
 const env = { GITHUB_DISPATCH_TOKEN: "test-token" };
-
+const now = new Date("2026-09-28T20:25:00Z");
+const cron = "15,25,40 * * * *";
 function response(status = 204, body = {}) {
   return new Response(status === 204 ? null : JSON.stringify(body), { status });
 }
-
-test("dispatch sends only ref and requested inputs to the GitHub workflow endpoint", async () => {
-  const calls = [];
-  const logs = [];
-  const originalLog = console.log;
-  console.log = (message) => logs.push(JSON.parse(message));
-  const fetchImpl = async (url, init) => {
-    calls.push({ url, init });
-    return response();
-  };
-
-  let result;
+function run(overrides = {}) {
+  return { id: 36478113582, created_at: "2026-09-28T20:17:15Z",
+    head_branch: "main", event: "workflow_dispatch",
+    status: "completed", conclusion: "success", ...overrides };
+}
+async function check(replies, at = now) {
+  const calls = [], logs = [];
+  const original = console.log;
+  console.log = message => logs.push(JSON.parse(message));
+  let index = 0;
   try {
-    result = await dispatch(fetchImpl, env.GITHUB_DISPATCH_TOKEN, "report.yml", { run: "morning" });
+    await handleScheduled(cron, at, env, async (url, init) => {
+      calls.push({ url, init });
+      if (init.method === "POST") return response();
+      assert.ok(index < replies.length, "unexpected additional read");
+      const reply = replies[index++];
+      if (reply instanceof Error) throw reply;
+      return reply instanceof Response ? reply : response(200, { workflow_runs: reply });
+    });
   } finally {
-    console.log = originalLog;
+    console.log = original;
   }
-  assert.equal(result.ok, true);
-  assert.match(calls[0].url, /market-briefing\/actions\/workflows\/report.yml\/dispatches$/);
-  assert.deepEqual(JSON.parse(calls[0].init.body), { ref: "main", inputs: { run: "morning" } });
-  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
-  assert.deepEqual(logs, [{ event: "github_dispatch", workflow: "report.yml", http_status: 204 }]);
-});
+  return { calls, logs, alerts: calls.filter(c => c.init.method === "POST").map(c => JSON.parse(c.init.body).inputs) };
+}
 
-test("each production cron dispatches its one intended workflow", async () => {
+test("dispatch preserves ref, inputs, identity headers and one POST", async () => {
   const calls = [];
-  const fetchImpl = async (url, init) => {
-    calls.push({ url, init });
-    return response();
-  };
-  const now = new Date("2026-09-07T22:07:00Z");
-
-  for (const cron of ["17,47 0-6 * * *", "17 7-23 * * *", "7 22 * * SUN-THU", "37 12 * * MON-FRI"]) {
-    await handleScheduled(cron, now, env, fetchImpl);
+  await dispatch(async (url, init) => { calls.push({url, init}); return response(); },
+    env.GITHUB_DISPATCH_TOKEN, "report.yml", {run: "morning"});
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /report.yml\/dispatches$/);
+  assert.deepEqual(JSON.parse(calls[0].init.body), {ref: "main", inputs: {run: "morning"}});
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+  assert.equal(calls[0].init.headers["User-Agent"], "market-briefing-scheduler");
+});
+test("all production crons retain their single intended dispatch", async () => {
+  const calls = [];
+  for (const value of ["17,47 0-6 * * *", "17 7-23 * * *", "7 22 * * SUN-THU", "37 12 * * MON-FRI"]) {
+    await handleScheduled(value, now, env, async (url, init) => {calls.push({url, init}); return response();});
   }
-
   assert.equal(calls.length, 4);
   assert.match(calls[0].url, /collect-news.yml/);
   assert.match(calls[1].url, /collect-news.yml/);
-  assert.deepEqual(JSON.parse(calls[2].init.body).inputs, { run: "morning" });
-  assert.deepEqual(JSON.parse(calls[3].init.body).inputs, { run: "evening" });
+  assert.deepEqual(JSON.parse(calls[2].init.body).inputs, {run:"morning"});
+  assert.deepEqual(JSON.parse(calls[3].init.body).inputs, {run:"evening"});
 });
-
-test("watchdog alerts when the latest news dispatch is stale", async () => {
-  const calls = [];
-  const logs = [];
-  const originalLog = console.log;
-  console.log = (message) => logs.push(JSON.parse(message));
-  const fetchImpl = async (url, init) => {
-    calls.push({ url, init });
-    if (url.includes("/runs?")) {
-      return response(200, {
-        workflow_runs: [
-          { created_at: "2026-09-07T00:00:00Z", status: "completed", conclusion: "success" },
-        ],
-      });
-    }
-    return response();
-  };
-
-  try {
-    await handleScheduled("15,25,40 * * * *", new Date("2026-09-07T03:25:00Z"), env, fetchImpl);
-  } finally {
-    console.log = originalLog;
-  }
-  assert.equal(calls.length, 2);
-  assert.match(calls[1].url, /scheduler-watchdog.yml\/dispatches$/);
-  assert.match(JSON.parse(calls[1].init.body).inputs.reason, /뉴스 수집/);
-  assert.deepEqual(logs, [
-    {
-      event: "github_latest_run",
-      workflow: "collect-news.yml",
-      run_id: null,
-      created_at: "2026-09-07T00:00:00Z",
-      status: "completed",
-      conclusion: "success",
-    },
-    { event: "github_dispatch", workflow: "scheduler-watchdog.yml", http_status: 204 },
-  ]);
+test("eight-minute-old success suppresses alert and records a healthy decision", async () => {
+  const result = await check([[run()]]);
+  assert.equal(result.alerts.length, 0);
+  const query = new URL(result.calls[0].url).searchParams;
+  assert.equal(query.get("branch"), "main");
+  assert.equal(query.get("event"), "workflow_dispatch");
+  assert.equal(query.get("per_page"), "20");
+  assert.equal(result.calls[0].init.cache, "no-store");
+  assert.equal(result.logs.at(-1).decision, "healthy");
+  assert.equal(result.logs[0].run_id, 36478113582);
+  assert.equal(result.logs[0].age_minutes, 7.75);
 });
-
-test("dispatch does not retry an ambiguous server failure", async () => {
-  let attempts = 0;
-  const fetchImpl = async () => {
-    attempts += 1;
-    return attempts === 1 ? response(503) : response();
-  };
-  const result = await dispatch(fetchImpl, env.GITHUB_DISPATCH_TOKEN, "collect-news.yml");
-  assert.equal(result.ok, false);
-  assert.equal(attempts, 1);
+test("unsorted list selects latest creation, not first or latest successful run", async () => {
+  const failed = run({id: 42, created_at:"2026-09-28T20:18:00Z", conclusion:"failure"});
+  const result = await check([[run(), failed], [run(), failed]]);
+  assert.match(result.alerts[0].reason, /실패.*failure/);
+  assert.match(result.alerts[0].details, /runs\/42/);
 });
-
-test("scheduled dispatch failure rejects without exposing the token", async () => {
-  await assert.rejects(
-    handleScheduled("17 7-23 * * *", new Date(), env, async () => response(503)),
-    { message: "Scheduled GitHub request failed: HTTP 503" },
-  );
+test("stale first response is confirmed with created filter and fresh result suppresses alert", async () => {
+  const result = await check([[run({created_at:"2026-09-28T10:00:00Z"})], [run()]]);
+  assert.equal(result.alerts.length, 0);
+  assert.equal(new URL(result.calls[1].url).searchParams.get("created"), ">=2026-09-28T18:25:00.000Z");
+  assert.equal(result.logs.at(-1).initial_decision, "stale");
+  assert.equal(result.logs.at(-1).decision, "healthy");
+  assert.ok(result.calls.every(c => c.init.cache === "no-store"));
 });
-
-test("scheduled dispatch failure includes GitHub's message without exposing the token", async () => {
-  const requestError = "Resource not accessible by personal access token";
-  await assert.rejects(
-    handleScheduled("17 7-23 * * *", new Date(), env,
-      async () => response(403, { message: `  ${requestError}\n`, token: env.GITHUB_DISPATCH_TOKEN })),
-    { message: `Scheduled GitHub request failed: HTTP 403: ${requestError}` },
-  );
+test("real gap alerts with both observations and threshold", async () => {
+  const result = await check([[run({created_at:"2026-09-28T10:00:00Z"})], []]);
+  assert.equal(result.alerts.length, 1);
+  assert.match(result.alerts[0].reason, /120분.*기록 없음/);
+  assert.match(result.alerts[0].details, /initial: run=36478113582/);
+  assert.match(result.alerts[0].details, /confirmation: run=미확인/);
+  assert.match(result.alerts[0].details, /threshold_minutes=120/);
 });
-
-test("dispatch does not retry a lost response", async () => {
-  let attempts = 0;
-  const result = await dispatch(async () => {
-    attempts += 1;
-    throw new TypeError("response lost");
-  }, env.GITHUB_DISPATCH_TOKEN, "report.yml");
-  assert.equal(result.ok, false);
-  assert.equal(attempts, 1);
+test("missing list then current run recovers; twice empty alerts", async () => {
+  assert.equal((await check([[], [run()]])).alerts.length, 0);
+  assert.match((await check([[], []])).alerts[0].reason, /기록 없음/);
 });
-
-test("watchdog retries reads and alerts on unfinished runs at the check time", async () => {
-  for (const status of ["queued", "in_progress", "waiting"]) {
-    let reads = 0;
-    const alerts = [];
-    await handleScheduled("15,25,40 * * * *", new Date("2026-09-07T03:25:00Z"), env,
-      async (url, init) => {
-        if (init.method === "GET") {
-          reads += 1;
-          if (reads === 1) return response(503);
-          return response(200, { workflow_runs: [
-            { created_at: "2026-09-07T03:17:00Z", status },
-          ] });
-        }
-        alerts.push(JSON.parse(init.body).inputs.reason);
-        return response();
-      });
-    assert.equal(reads, 2);
-    assert.equal(alerts.length, 1);
-    assert.match(alerts[0], new RegExp(status));
+test("exactly 120 minutes is healthy; one millisecond older requires confirmation", async () => {
+  assert.equal((await check([[run({created_at:"2026-09-28T18:25:00Z"})]])).alerts.length, 0);
+  assert.equal((await check([[run({created_at:"2026-09-28T18:24:59.999Z"})], []])).alerts.length, 1);
+});
+test("unfinished statuses are rechecked and completion suppresses alert", async () => {
+  for (const status of ["queued", "in_progress", "waiting", "requested", "pending"]) {
+    assert.equal((await check([[run({status, conclusion:null})], [run()]])).alerts.length, 0);
+    const result = await check([[run({status, conclusion:null})], [run({status, conclusion:null})]]);
+    assert.match(result.alerts[0].reason, /미완료/);
   }
 });
-
-test("watchdog delivery failure rejects the scheduled task", async () => {
-  await assert.rejects(handleScheduled("15,25,40 * * * *",
-    new Date("2026-09-07T03:25:00Z"), env,
-    async (url, init) => init.method === "GET"
-      ? response(200, { workflow_runs: [] }) : response(403)),
-  { message: "Scheduled GitHub request failed: HTTP 403" });
-});
-
-test("GitHub dispatches and watchdog reads identify the scheduler", async () => {
-  const methods = [];
-  await handleScheduled("15,25,40 * * * *", new Date("2026-09-23T08:25:00Z"), env,
-    async (_url, init) => {
-      assert.equal(init.headers["User-Agent"], "market-briefing-scheduler");
-      methods.push(init.method);
-      return init.method === "GET"
-        ? response(200, { workflow_runs: [] }) : response();
-    });
-  assert.deepEqual(methods, ["GET", "POST"]);
-});
-
-test("plain-text GitHub rejection explains the missing header", async () => {
-  const detail = "Request forbidden by administrative rules. Please make sure your request has a User-Agent header";
-  await assert.rejects(handleScheduled("17 7-23 * * *", new Date(), env,
-    async () => new Response(`\r\n${detail}\r\n`, { status: 403 })),
-  { message: `Scheduled GitHub request failed: HTTP 403: ${detail}` });
-});
-
-test("GitHub errors redact the credential before logging or truncation", async () => {
-  for (const reply of [
-    response(403, { message: `Rejected ${env.GITHUB_DISPATCH_TOKEN}` }),
-    new Response(`Rejected ${env.GITHUB_DISPATCH_TOKEN}`, { status: 403 }),
-  ]) {
-    await assert.rejects(handleScheduled("17 7-23 * * *", new Date(), env,
-      async () => reply),
-    { message: "Scheduled GitHub request failed: HTTP 403: Rejected [redacted]" });
+test("malformed JSON, missing list, null and invalid timestamps fail closed", async () => {
+  for (const first of [new Response("{"), response(200, {}), [null],
+    [run({created_at:"nonsense"})], [run({created_at:"2026-09-28T20:17:00"})],
+    [run({created_at:"2026-09-28T20:26:00Z"})], [run({id:-1})],
+    [run({head_branch:"other"})], [run({event:"push"})],
+    [run({status:"unrecognized"})], [run({conclusion:null})]]) {
+    const result = await check([first, response(200, {})]);
+    assert.match(result.alerts[0].reason, /확인 실패/);
+    assert.doesNotMatch(result.alerts[0].reason, /초과함/);
   }
+});
+test("confirmation query returning out-of-window rows is unknown, not confirmed stale", async () => {
+  const old = run({created_at:"2026-09-28T10:00:00Z"});
+  const result = await check([[old], [old]]);
+  assert.match(result.alerts[0].reason, /확인 실패/);
+});
+test("failed revalidation reports unknown rather than confirmed outage", async () => {
+  const result = await check([[run({created_at:"2026-09-28T10:00:00Z"})], response(403, {message:"forbidden"})]);
+  assert.match(result.alerts[0].reason, /미확인/);
+  assert.match(result.alerts[0].details, /HTTP 403/);
+});
+test("GET retries 429 and 5xx, never adds POST retry", async () => {
+  const result = await check([response(429), response(503), [run()]]);
+  assert.equal(result.calls.length, 3);
+  assert.equal(result.alerts.length, 0);
+});
+test("exhausted transport retries are revalidated and surfaced", async () => {
+  const result = await check(Array.from({length:6}, () => new TypeError("unreachable")));
+  assert.match(result.alerts[0].reason, /확인 실패/);
+  assert.equal(result.calls.length, 7);
+});
+test("HTTP errors cannot leak token in structured logs or alert details", async () => {
+  const result = await check([response(403, {message:"bad test-token"}), new Response("bad test-token", {status:403})]);
+  assert.doesNotMatch(JSON.stringify(result.logs), /test-token/);
+  assert.doesNotMatch(JSON.stringify(result.alerts), /test-token/);
+  assert.match(result.alerts[0].details, /redacted/);
+});
+test("lost POST response and 503 are never retried", async () => {
+  for (const error of [false, true]) {
+    let calls = 0;
+    const result = await dispatch(async () => {calls++; if(error) throw new TypeError("lost"); return response(503);},
+      env.GITHUB_DISPATCH_TOKEN, "report.yml");
+    assert.equal(result.ok, false);
+    assert.equal(calls, 1);
+  }
+});
+test("scheduled dispatch and alert dispatch failure reject", async () => {
+  await assert.rejects(handleScheduled("17 7-23 * * *", now, env, async () => response(503)),
+    /HTTP 503/);
+  await assert.rejects(handleScheduled(cron, now, env, async (_url, init) =>
+    init.method === "GET" ? response(200, {workflow_runs:[]}) : response(403)), /HTTP 403/);
+});
+test("morning and evening watchdog thresholds and routing stay unchanged", async () => {
+  const morning = await check([[], []], new Date("2026-09-28T23:40:00Z"));
+  assert.match(morning.alerts[0].reason, /아침 리포트/);
+  assert.match(morning.alerts[0].details, /threshold_minutes=120/);
+  const evening = await check([[], []], new Date("2026-09-28T13:15:00Z"));
+  assert.match(evening.alerts[0].reason, /저녁 리포트/);
+  assert.match(evening.alerts[0].details, /threshold_minutes=40/);
+});
+test("unrelated watchdog slots do not call GitHub", async () => {
+  const result = await check([], new Date("2026-09-28T20:40:00Z"));
+  assert.equal(result.calls.length, 0);
+});
+test("plain text rejection and token-bearing errors retain safe diagnosis", async () => {
+  await assert.rejects(handleScheduled("17 7-23 * * *", now, env,
+    async () => new Response("User-Agent required; test-token", {status:403})),
+    /HTTP 403: User-Agent required; \[redacted\]/);
 });
