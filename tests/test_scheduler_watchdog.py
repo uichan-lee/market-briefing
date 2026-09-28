@@ -1,13 +1,14 @@
 """Execute the workflow's email assembly without network or delivery side effects."""
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import yaml
 
 
-@pytest.mark.parametrize("details", [None, "", "run=42\ncreated_at=2026-09-28T20:17:15Z", "x" * 5000])
+@pytest.mark.parametrize(
+    "details", [None, "", "run=42\ncreated_at=2026-09-28T20:17:15Z", "x" * 5000]
+)
 def test_watchdog_evidence_is_optional(monkeypatch, details):
     from src.notify import base
     from src.util import config
@@ -22,7 +23,7 @@ def test_watchdog_evidence_is_optional(monkeypatch, details):
 
     def deliver(notice, selected, **kwargs):
         sent.append((notice, selected, kwargs["label"]))
-        return [SimpleNamespace(ok=True)]
+        return [base.DeliveryResult("email", True, "mock")]
 
     monkeypatch.setattr(base, "deliver", deliver)
     workflow = yaml.safe_load(Path(".github/workflows/scheduler-watchdog.yml").read_text())
