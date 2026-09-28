@@ -1,5 +1,11 @@
 # market-briefing
 
+> **September 28 watchdog update:** false gap alerts now trigger confirmation reads
+> and carry run/timing evidence. Worker `a777dc88` is deployed; two natural
+> post-deployment checks are still pending. News and the September 28 evening
+> report have resumed, but calendar validation remains degraded. See
+> [operating evidence](notes/review-2026-09-05.md) and [next checks](notes/next-steps-2026-09-05.md).
+
 **A daily Korean/US equity briefing that states a directional opinion on every ticker it tracks, shows the arithmetic behind it — and then stops.**
 
 This system does not execute trades. It produces a document a human reads and acts on.

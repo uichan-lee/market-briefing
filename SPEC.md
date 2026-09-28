@@ -1,5 +1,12 @@
 # Daily Market Briefing Pipeline — Design Spec v0.6
 
+> **2026-09-28 watchdog contract:** freshness reads use main/dispatch filtering,
+> explicit latest-created selection, no-store and confirmation before an alert.
+> Optional watchdog `details` carries safe run/timing evidence; lookup failure
+> is unknown, not proven staleness. Existing schedules and thresholds remain.
+> Worker `a777dc88` is deployed; natural acceptance is pending. See
+> [dated operating evidence](notes/review-2026-09-05.md).
+
 > [!abstract] Purpose of this document
 > The input spec fed directly to Claude Code. The goal is to **fix the output shape and evaluation criteria before writing code**, so we don't waste effort collecting data that never gets used, and don't move the goalposts after the fact (= self-deception).
 
