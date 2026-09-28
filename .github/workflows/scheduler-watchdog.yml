@@ -7,6 +7,11 @@ on:
         description: concise scheduler or freshness failure reason
         required: true
         type: string
+      details:
+        description: structured watchdog evidence, without credentials
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -19,6 +24,7 @@ jobs:
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       BRIEFING_EMAIL_TO: ${{ secrets.BRIEFING_EMAIL_TO }}
       SCHEDULER_REASON: ${{ inputs.reason }}
+      SCHEDULER_DETAILS: ${{ inputs.details }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -35,6 +41,9 @@ jobs:
 
           reason = os.environ["SCHEDULER_REASON"]
           notice = f"# ⚠ 스케줄러 경고\n\n{reason}\n"
+          details = os.environ.get("SCHEDULER_DETAILS", "").strip()
+          if details:
+              notice += f"\n## 판단 근거\n\n{details[:4000]}\n"
           channels = [item for item in load_delivery()["channels"] if item["type"] == "email"]
           for result in deliver(notice, channels, day=dt.date.today(), label="SCHEDULER"):
               print(result)
