@@ -130,3 +130,18 @@ def test_dates_already_written_are_not_refetched(tmp_path):
     pending = backfill._pending("kr_price", dt.date(2026, 7, 29), dt.date(2026, 7, 31), "KR")
     assert dt.date(2026, 7, 30) not in pending
     assert dt.date(2026, 7, 29) in pending
+
+
+@pytest.mark.parametrize("revise", [False, True])
+def test_populated_window_is_noop_or_revises_explicit_bounds(monkeypatch, revise):
+    start, end = dt.date(2026, 8, 3), dt.date(2026, 8, 7)
+    monkeypatch.setattr(backfill, "_pending", lambda *args: [])
+    calls = []
+
+    def fetch(tickers, chunk_start, chunk_end):
+        calls.append((chunk_start, chunk_end))
+        return pd.DataFrame(columns=["date", "ticker"]), ValidationReport(collector="kr_price")
+
+    result = backfill._backfill_kr("kr_price", fetch, start, end, revise=revise)
+    assert calls == ([(start, end)] if revise else [])
+    assert ("nothing pending" in result) is (not revise)

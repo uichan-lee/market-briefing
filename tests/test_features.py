@@ -141,6 +141,69 @@ def test_a_gap_in_the_series_does_not_shift_the_window():
     assert len(z) == len(values)
 
 
+def test_missing_flow_session_invalidates_windows_without_creating_output_rows():
+    days = sessions(10)
+    flow = flow_frame(["005930"], days).drop(index=2)
+    out = compute(
+        flow, pd.DataFrame(), watchlist(("005930", "반도체")), valuation_window=5
+    ).set_index("date")
+    assert pd.Timestamp(days[2]) not in out.index
+    assert pd.isna(out.loc[pd.Timestamp(days[5]), "foreign_flow_5d"])
+    assert pd.isna(out.loc[pd.Timestamp(days[5]), "valuation_band"])
+    assert out.loc[pd.Timestamp(days[7]), "foreign_flow_5d"] == pytest.approx(1005 / 1_000_000)
+    # The missing D balance stays missing on D+3; D+4 uses the actual D+1.
+    assert pd.isna(out.loc[pd.Timestamp(days[5]), "short_ratio"])
+    assert out.loc[pd.Timestamp(days[6]), "short_ratio"] == pytest.approx(103 / 10_000)
+
+
+def test_missing_session_remains_in_normalization_until_window_expires():
+    days = sessions(12)
+    flow = flow_frame(["005930"], days).drop(index=5)
+    out = compute(
+        flow, pd.DataFrame(), watchlist(("005930", "반도체")), window=3, short_lag=0
+    ).set_index("date")
+    assert pd.isna(out.loc[pd.Timestamp(days[8]), "short_ratio_z"])
+    assert pd.notna(out.loc[pd.Timestamp(days[9]), "short_ratio_z"])
+
+
+def test_exchange_holiday_does_not_create_a_missing_session():
+    days = trading_days("KR", dt.date(2026, 7, 13), dt.date(2026, 7, 21))
+    assert dt.date(2026, 7, 17) not in days
+    flow = flow_frame(["005930"], days)
+    out = compute(flow, pd.DataFrame(), watchlist(("005930", "반도체")))
+    assert len(out) == len(days)
+    assert out.iloc[-1]["foreign_flow_5d"] == pytest.approx(1003 / 1_000_000)
+
+
+def test_missing_price_session_preserves_return_horizon_and_missing_endpoints():
+    days = sessions(25)
+    tickers = ["005930", "000660"]
+    closes = {"005930": [100.0 + i for i in range(25)], "000660": [100.0] * 25}
+    prices = price_frame(tickers, days, closes)
+    prices = prices[~((prices["ticker"] == "005930") & prices["date"].eq(pd.Timestamp(days[2])))]
+    flow = flow_frame(tickers, days)
+    out = compute(flow, prices, watchlist(("005930", "반도체"), ("000660", "반도체")))
+    target = out[out["ticker"].eq("005930")].set_index("date")
+    assert target.loc[pd.Timestamp(days[20]), "rel_strength_20d"] == pytest.approx(0.1)
+    assert pd.isna(target.loc[pd.Timestamp(days[22]), "rel_strength_20d"])
+    # One valid return cannot masquerade as a two-member sector benchmark.
+    peer = out[out["ticker"].eq("000660")].set_index("date")
+    assert pd.isna(peer.loc[pd.Timestamp(days[22]), "rel_strength_20d"])
+
+
+def test_missing_latest_price_is_not_forward_filled():
+    days = sessions(25)
+    tickers = ["005930", "000660"]
+    prices = price_frame(tickers, days)
+    prices.loc[
+        (prices["ticker"] == "005930") & prices["date"].eq(pd.Timestamp(days[-1])), "close"
+    ] = np.nan
+    out = compute(
+        flow_frame(tickers, days), prices, watchlist(("005930", "반도체"), ("000660", "반도체"))
+    )
+    assert out.loc[out["date"].eq(pd.Timestamp(days[-1])), "rel_strength_20d"].isna().all()
+
+
 # --- percentile -----------------------------------------------------------
 
 

@@ -338,6 +338,89 @@ reports/
 > The original split — news committed because RSS has no backfill, everything else gitignored because pykrx and FRED re-serve history — was true and still insufficient. The report workflow runs on a fresh Actions checkout, and a 252-session z-score needs the full three-year history *present*; regenerable-on-the-Mac is absent-in-the-runner, and re-fetching three years per run would spend hundreds of KRX requests daily against a block near 250. The whole backfill measures 28 MB, so it is committed, which also makes §0 principle 3 machine-independent. `data/features/` stays ignored (recomputed each render). News remains the one part that is additionally *irreplaceable*: roughly 300–450 KB/day gzipped, and an hour not collected is gone.
 `scores/` files embed the model ID and prompt version in the filename — this is the comparison unit for the §7 bake-off.
 
+**Implementation contract, September 30 — H4/M1, locally implemented; release pending.** Keep the
+smallest immutable publication record sufficient to identify the inputs actually
+used. Separate the event/session time, source availability, local ingestion or
+revision time, score completion time, and publication cutoff; none substitutes
+for another. The record must identify exact source paths/content hashes, score
+records and model/prompt identity, code/config identity, cutoff, reference
+sessions, coverage and shared warnings. Full report and email must consume the
+same selected inputs. A retry creates another record rather than overwriting one.
+
+Selection first excludes versions unavailable at the cutoff, then selects the
+latest eligible record per source key. Partial fetch omission is not a deletion:
+retain earlier keys, append newly fetched keys/corrections, and carry source
+failure warnings separately. Comparison must use the accumulated selected state,
+not only the latest partial file. Missing values explicitly returned for a key
+are not silently filled from an older revision. Legacy records without ingestion
+or completion evidence cannot claim exact historical replay; file mtime and an
+article's publication time must not be invented as missing provenance.
+
+Implement in order: writer metadata and partial-refresh regressions; shared
+cutoff-aware selector; publication record and shared render inputs; then an
+offline replay verifier. Acceptance fixtures must include a late correction with
+an old event timestamp, late scoring of an old article, an unchanged refetch,
+a partial fetch containing both changed and new keys, an exact-cutoff exclusion,
+and unavailable legacy provenance. A pinned replay must retain identical ratings
+and warnings after later files arrive. It must never call a model or replace an
+archived rating. This adds metadata and loader complexity to close a reproduced
+correctness gap; it does not introduce a general customer platform.
+
+**Local implementation, September 30.** Daily and backfill parquet writes add
+`ingested_at_utc` independently of event `date` and the collector's
+`known_at_utc`. Daily partial batches compare against accumulated per-key state;
+omissions retain older keys, explicit NA revisions remain NA, and unchanged
+subsets do not write another raw version. Comparison reads only that date's
+partitions. Missing/duplicate keys fail before writing. No existing raw file is
+migrated or replaced.
+
+`load_raw(..., as_of=..., strict=True)` excludes unknown clocks and unavailable
+versions before selecting per-key latest ingestion; permissive operational
+loading retains legacy rows with an explicit report warning.
+Supported availability evidence is an aware ISO timestamp or an aware datetime,
+normalized to UTC before filtering and revision ordering. Mixed second/fractional
+precision and offsets must preserve every valid clock. Naive, malformed, numeric
+or missing clocks are unknown: strict selection excludes them, and permissive
+selection discloses them with the same validity rule. A valid clock equal to the
+cutoff is excluded; no invalid value is silently assigned a timezone.
+Scores carry actual
+completion and archive-write times, deterministic record ID and prompt hash.
+Score/archive and article collection/availability clocks all constrain cutoff selection. The
+article's tradeable-open clock still defines the existing news diagnostic's
+session grouping; recording completion does not change the frozen composite.
+Display prices, preview, macro, calendar, filings, daily news and status now use
+the report cutoff. Macro release/vintage evidence remains unknown: ingestion
+provides a conservative additional bound, not proof of the assumed release time.
+
+Prepared records live in `data/publications/{session}-{slot}-{uuid}.json`.
+Content-addressed `blobs/` hold selected frames, report text and outcome-free
+observations, reusing identical bytes. Each record pins code/config file hashes,
+raw/score/news/status evidence paths and hashes, selected score IDs, references,
+watchlist/sector membership, cutoff, render warnings and feature/rating coverage.
+Both email formats share the report's render warnings. A separate immutable
+`receipts/` record stores dispatch completion and channel acceptance, never inbox
+confirmation. Prepared input records alone do not prove distribution.
+
+Observations identify the frozen deterministic score (not an ML expected return),
+policy/code identity, features/missingness, score/rating, cutoff and actual record
+availability. Only evening rows with complete five-feature inputs, sufficient
+rating coverage and nonlegacy core source evidence, recorded before the next
+KR open, are marked research-eligible;
+this flag does **not** authorize fitting or outcome evaluation. Legacy core history
+is conservatively ineligible until sufficient evidenced inputs exist. No return
+labels, target-selection results, fitted model or real performance are produced.
+
+Offline verifier: `uv run python -m src.report.publication <manifest-path>`.
+It reads captured frames, checks blob hashes and current code/config identity,
+then reproduces ratings and the header including warnings. Later archives do not
+enter replay; code/config mismatch fails rather than asserting equivalence.
+Full report prose is hash-verified, not regenerated, and historical shadow-P&L is
+not evaluated. Recording failure leaves a disclosed partial briefing; no-deliver
+previews create neither publications nor research observations. CI is wired to
+stage publication records when present; deployment and natural-run acceptance
+are still pending. Runtime/storage growth needs production measurement before
+extending this scaffold with scheduled learning.
+
 ---
 
 ## 4. Entity Resolution

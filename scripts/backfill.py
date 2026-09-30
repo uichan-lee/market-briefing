@@ -41,6 +41,7 @@ import pandas as pd
 from src.collectors import kr_filings, kr_flow, kr_index, kr_price, macro, us_price, us_price_alpaca
 from src.util.config import load_filing_ids, load_watchlist
 from src.util.krx import KrxSessionError
+from src.util.point_in_time import stamp_ingestion
 from src.util.session import trading_days
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,7 +92,8 @@ def _write_by_date(source: str, df: pd.DataFrame, *, revise: bool) -> int:
         path = _target(source, day, revise=revise)
         if path is None:
             continue
-        group.reset_index(drop=True).to_parquet(path, index=False)
+        with path.open("xb") as handle:
+            stamp_ingestion(group.reset_index(drop=True)).to_parquet(handle, index=False)
         written += 1
     return written
 
@@ -136,7 +138,8 @@ def _backfill_kr(source: str, fetch, start: dt.date, end: dt.date, *, revise: bo
         return f"{source:<9} nothing pending; every session already written"
 
     total_rows = written = 0
-    for chunk_start, chunk_end in _chunks(min(pending), max(pending), _KR_CHUNK_DAYS):
+    bounds = (start, end) if revise else (min(pending), max(pending))
+    for chunk_start, chunk_end in _chunks(*bounds, _KR_CHUNK_DAYS):
         try:
             df, report = fetch(tickers, chunk_start, chunk_end)
         except KrxSessionError as exc:

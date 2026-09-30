@@ -156,7 +156,7 @@ def test_the_header_names_the_features_that_do_not_exist_yet():
     better-supported than it is. This is the line that keeps it honest."""
     header = render_header(inputs())
 
-    assert "미구현 피처: news_polarity(0.20), rev_4w(0.15)" in header
+    assert "등급에 미반영 피처: news_polarity(0.20), rev_4w(0.15)" in header
     assert "설계 가중치 1.10의 32%" in header
 
 
@@ -164,8 +164,8 @@ def test_the_header_says_nothing_about_deferred_weights_when_there_are_none():
     config = {**RATING_CONFIG, "deferred_weights": {}}
     header = render_header(inputs(rating_config=config))
 
-    assert "미구현 피처" not in header
-    assert "등급 근거 충족도: 0.75/0.75 (100%)" in header
+    assert "등급에 미반영 피처" not in header
+    assert "구현된 등급 피처: 0.75/0.75 (100%)" in header
 
 
 def test_a_weight_for_a_feature_with_no_producer_is_still_flagged():
@@ -173,7 +173,7 @@ def test_a_weight_for_a_feature_with_no_producer_is_still_flagged():
     out of `weights` must not disarm the check that catches the next one."""
     header = render_header(inputs(rating_config=LEGACY_RATING_CONFIG))
 
-    assert "⚠ 등급 근거 충족도: 0.75/0.90 (83%) — rev_4w 부재" in header
+    assert "⚠ 구현된 등급 피처: 0.75/0.90 (83%) — rev_4w 부재" in header
 
 
 def test_the_data_basis_line_dates_macro_separately_from_prices():
@@ -237,7 +237,7 @@ def test_a_failed_delivery_channel_reaches_the_header():
 
 def test_the_header_states_how_much_rating_weight_is_covered():
     header = render_header(inputs())
-    assert "0.75/0.75 (100%)" in header
+    assert "구현된 등급 피처: 0.75/0.75 (100%)" in header
 
 
 def test_an_ambiguous_ratio_over_the_threshold_is_flagged():
@@ -1206,3 +1206,134 @@ def test_no_status_directory_means_no_lines(tmp_path):
     from src.report.render import read_status
 
     assert read_status(tmp_path) == ([], [])
+
+
+@pytest.mark.parametrize(
+    "outcomes, expected", [([], 1), ([False, False], 1), ([True, False], 1), ([True, True], 0)]
+)
+def test_main_surfaces_delivery_failure_and_preserves_archive(
+    tmp_path, monkeypatch, outcomes, expected
+):
+    import importlib
+
+    module = importlib.import_module("src.report.render")
+    from src.notify.base import DeliveryResult
+
+    sample = inputs()
+    sample.root = tmp_path
+    archived = []
+    monkeypatch.setattr(module, "load_inputs", lambda *args, **kwargs: sample)
+    monkeypatch.setattr(module, "rate_all", lambda _: {})
+    monkeypatch.setattr(module, "ratings_frame", lambda *args: pd.DataFrame())
+    monkeypatch.setattr(module, "write_ratings", lambda *args: archived.append(True))
+    monkeypatch.setattr(module, "load_rating_history", lambda _: pd.DataFrame())
+    monkeypatch.setattr(module, "render", lambda *args, **kwargs: "report")
+    monkeypatch.setattr(module, "build_summary", lambda *args: "summary")
+    monkeypatch.setattr(module, "to_plain_text", lambda text: text)
+    monkeypatch.setattr(module, "build_summary_html", lambda *args: "html")
+    monkeypatch.setattr("src.util.config.load_delivery", lambda: {"channels": []})
+    monkeypatch.setattr("src.notify.base.unavailable_channels", lambda _: [])
+    monkeypatch.setattr(
+        "src.notify.base.deliver",
+        lambda *args, **kwargs: [
+            DeliveryResult(str(index), ok, "test") for index, ok in enumerate(outcomes)
+        ],
+    )
+    assert module.main(["--day", DAY.isoformat(), "--data-root", str(tmp_path)]) == expected
+    assert archived == [True]
+
+
+def test_header_warns_when_all_ratings_have_no_evidence():
+    sample = inputs()
+    sample.features = pd.DataFrame({"ticker": ["005930"], "date": [pd.Timestamp(DAY)]})
+    sample.kr_prices = pd.DataFrame(
+        {"date": [pd.Timestamp("2026-07-31")], "ticker": ["005930"], "close": [1.0]}
+    )
+    header = render_header(sample)
+    assert "전 종목 근거가 0%" in header
+    assert "구현된 등급 피처" in header
+    assert "한국 시세가 기준 세션" in header
+
+
+def test_header_reports_actual_coverage_distribution():
+    entries = [(f"{i:06d}", f"Company {i}") for i in range(31)]
+    scores = {
+        ticker: {
+            "foreign_flow_5d": 1.0,
+            "inst_flow_5d": 1.0,
+            **({"rel_strength_20d": 1.0} if i < 26 else {}),
+        }
+        for i, (ticker, _) in enumerate(entries)
+    }
+    inputs = ReportInputs(
+        day=DAY,
+        as_of=AS_OF,
+        watchlist=watchlist(*entries),
+        features=features_frame(scores),
+        rating_config=RATING_CONFIG,
+    )
+    from src.report.render import build_summary_html
+
+    for output in (render_header(inputs), build_summary_html(inputs, {})):
+        assert "종목별 등급 근거: 80% 26개 · 60% 5개" in output
+        assert "구현된 등급 피처:" in output
+        assert "등급에 미반영 피처:" in output
+
+
+def test_calendar_limits_reach_full_report_and_email_header():
+    from src.report.render import build_summary_html
+
+    notice = (
+        "⚠ 캘린더 CPI: 2026-12-10까지 확인 (요청 종료 2027-01-26) — 이후 요청 구간 일정 확인 불가"
+    )
+    inputs = ReportInputs(day=DAY, as_of=AS_OF, calendar_notices=[notice])
+    for output in (render_header(inputs), render_calendar(inputs), build_summary_html(inputs, {})):
+        assert notice in output
+        assert "미발표" not in output
+
+
+def test_calendar_notices_are_cutoff_bound_and_not_carried_across_failed_fetch(tmp_path):
+    from src.report.render import read_calendar_notices
+
+    directory = tmp_path / "status"
+    directory.mkdir()
+    for stamp, outcome in [
+        ("2026-08-03T04:00:00Z", {"calendar_notices": ["old"]}),
+        ("2026-08-03T05:00:00Z", {"calendar_notices": ["visible"]}),
+        ("2026-08-03T07:00:00Z", {"calendar_notices": ["future"]}),
+    ]:
+        (directory / (stamp.replace(":", "") + ".json")).write_text(
+            json.dumps({"at": stamp, "collectors": {"calendar": outcome}})
+        )
+    assert read_calendar_notices(tmp_path, AS_OF) == ["visible"]
+    (directory / "failed.json").write_text(
+        json.dumps({"at": "2026-08-03T06:00:00Z", "collectors": {"calendar": {"ok": False}}})
+    )
+    assert read_calendar_notices(tmp_path, AS_OF) == []
+    assert read_calendar_notices(tmp_path, pd.Timestamp("2026-08-05T00:00Z")) == []
+
+
+def test_calendar_unknown_before_observation_is_visible():
+    from src.report.render import calendar_availability
+
+    inputs = ReportInputs(
+        day=DAY,
+        as_of=AS_OF,
+        calendar=pd.DataFrame(
+            [{"event": "cpi", "date": pd.Timestamp("2026-09-01"), "known_at_utc": AS_OF}]
+        ),
+    )
+    assert "기준 시각 이전" in calendar_availability(inputs)[0]
+
+
+@pytest.mark.parametrize("with_evidence", [True, False])
+def test_coverage_distribution_includes_unavailable_tickers(with_evidence):
+    inputs = ReportInputs(
+        day=DAY,
+        as_of=AS_OF,
+        watchlist=watchlist(("000001", "A"), ("000002", "B")),
+        features=features_frame({"000001": {"foreign_flow_5d": 1.0} if with_evidence else {}}),
+        rating_config=RATING_CONFIG,
+    )
+    expected = "40% 1개 · 0% 1개" if with_evidence else "0% 2개"
+    assert f"종목별 등급 근거: {expected}" in render_header(inputs)

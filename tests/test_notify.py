@@ -289,3 +289,15 @@ def test_a_non_numeric_port_is_a_refused_channel_not_a_crash():
     with pytest.raises(UnknownChannel):
         channel_for(config)
     assert unavailable_channels([config]) == ["email"]
+
+
+@pytest.mark.parametrize(
+    "outcomes, expected", [([], 1), ([False, False], 1), ([True, False], 1), ([True, True], 0)]
+)
+def test_delivery_exit_code_requires_every_destination(outcomes, expected):
+    from src.notify.base import DeliveryResult, delivery_exit_code
+
+    results = [
+        DeliveryResult(str(index), delivered, "test") for index, delivered in enumerate(outcomes)
+    ]
+    assert delivery_exit_code(results) == expected

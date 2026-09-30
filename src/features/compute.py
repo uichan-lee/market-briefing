@@ -66,7 +66,7 @@ import pandas as pd
 from src.collectors.kr_flow import SHORT_LAG_SESSIONS
 from src.features.normalize import WINDOW, rolling_percentile, rolling_z
 from src.util.config import WatchlistEntry
-from src.util.session import to_utc
+from src.util.session import trading_days
 
 # SPEC §5 windows, in trading sessions.
 FLOW_WINDOW = 5
@@ -150,9 +150,16 @@ def _visible(frame: pd.DataFrame, as_of: pd.Timestamp | None) -> pd.DataFrame:
     """
     if frame.empty or as_of is None:
         return frame
-    boundary = to_utc(as_of)
-    known = pd.to_datetime(frame["known_at_utc"], utc=True)
-    return frame[known < boundary]
+    from src.util.point_in_time import visible_versions
+
+    clocks = (
+        "known_at_utc",
+        "ingested_at_utc",
+        "score_completed_at_utc",
+        "score_archived_at_utc",
+        "collected_at_utc",
+    )
+    return visible_versions(frame, as_of, clocks=clocks)
 
 
 def _ratio(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
@@ -164,6 +171,30 @@ def _ratio(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
     num = pd.to_numeric(numerator, errors="coerce").astype("float64")
     den = pd.to_numeric(denominator, errors="coerce").astype("float64")
     return num / den.where(den != 0)
+
+
+def _session_grid(frame: pd.DataFrame) -> pd.DataFrame:
+    """Align KR inputs to sessions without inventing observations or availability.
+
+    Each ticker spans only its visible first/last row. Missing sessions remain
+    NaN so shifts and rolling windows count exchange sessions, not stored rows.
+    """
+    if frame.empty:
+        return frame
+    aligned = []
+    for ticker, group in frame.groupby("ticker", observed=True):
+        group = group.copy()
+        group["date"] = pd.to_datetime(group["date"])
+        dates = pd.DatetimeIndex(
+            trading_days("KR", group["date"].min().date(), group["date"].max().date()),
+            name="date",
+        )
+        if not group["date"].isin(dates).all():
+            raise ValueError(f"{ticker} contains a non-session KR date")
+        padded = group.set_index("date").reindex(dates).reset_index()
+        padded["ticker"] = ticker
+        aligned.append(padded)
+    return pd.concat(aligned, ignore_index=True)
 
 
 def _sector_returns(prices: pd.DataFrame, sectors: Mapping[str, str], window: int) -> pd.Series:
@@ -178,10 +209,10 @@ def _sector_returns(prices: pd.DataFrame, sectors: Mapping[str, str], window: in
     frame = prices.copy()
     frame["sector"] = frame["ticker"].map(sectors)
     frame["ret"] = frame.groupby("ticker", observed=True)["close"].transform(
-        lambda s: pd.to_numeric(s, errors="coerce").pct_change(window)
+        lambda s: pd.to_numeric(s, errors="coerce").pct_change(window, fill_method=None)
     )
 
-    members = frame.groupby(["date", "sector"], observed=True)["ticker"].transform("nunique")
+    members = frame.groupby(["date", "sector"], observed=True)["ret"].transform("count")
     sector_mean = frame.groupby(["date", "sector"], observed=True)["ret"].transform("mean")
     return sector_mean.where(members > 1)
 
@@ -214,9 +245,15 @@ def compute(
     needs only the z-score, but the MANUAL-TASKS §6 calibration cannot judge
     whether the cut points are sane without seeing the raw distributions, and a
     z-score alone cannot be checked against a broker screen.
+
+    KR exchange sessions, including missing observations, define every window.
+    Missing flow rows participate internally as NaN but are not returned as
+    observed sessions. No grid extends beyond a ticker's visible data range.
     """
     flow = _visible(flow, as_of)
-    prices = _visible(prices, as_of)
+    observed_sessions = flow[["date", "ticker"]].copy() if not flow.empty else flow
+    flow = _session_grid(flow)
+    prices = _session_grid(_visible(prices, as_of))
     if news is None:
         news = pd.DataFrame(columns=["ticker", "relevance", "polarity", "known_at_utc"])
     news = _visible(news, as_of)
@@ -292,7 +329,7 @@ def compute(
     else:
         returns = prices.copy()
         returns["ret"] = returns.groupby("ticker", observed=True)["close"].transform(
-            lambda s: pd.to_numeric(s, errors="coerce").pct_change(RETURN_WINDOW)
+            lambda s: pd.to_numeric(s, errors="coerce").pct_change(RETURN_WINDOW, fill_method=None)
         )
         returns["sector_ret"] = _sector_returns(prices, sectors, RETURN_WINDOW)
         returns["rel_strength_20d"] = returns["ret"] - returns["sector_ret"]
@@ -336,6 +373,8 @@ def compute(
             lambda s, min_periods=min_periods: rolling_z(s, window=window, min_periods=min_periods)
         )
 
+    # Padding participates in normalization, but is not a collected/rated row.
+    out = out.merge(observed_sessions, on=["date", "ticker"], how="inner")
     return out[["date", "ticker", *FEATURES, *(f"{f}_z" for f in FEATURES)]]
 
 
@@ -360,7 +399,16 @@ def z_scores_for(features: pd.DataFrame, ticker: str, day: dt.date) -> dict[str,
     return scores
 
 
-def load_raw(root: Path, source: str, *, key: Sequence[str] = ("date", "ticker")) -> pd.DataFrame:
+def load_raw(
+    root: Path,
+    source: str,
+    *,
+    key: Sequence[str] = ("date", "ticker"),
+    as_of: pd.Timestamp | None = None,
+    strict: bool = False,
+    provenance: list[dict] | None = None,
+    days: set[dt.date] | None = None,
+) -> pd.DataFrame:
     """Read every per-session parquet a collector wrote, oldest first.
 
     ``-v2`` re-run files are read alongside the originals, which CLAUDE.md rule 1
@@ -373,6 +421,8 @@ def load_raw(root: Path, source: str, *, key: Sequence[str] = ("date", "ticker")
     Parameterizing is better than a second loader: the ``-v2`` ordering rule
     below is the subtle part, and it should exist exactly once.
     """
+    if strict and as_of is None:
+        raise ValueError("Strict raw selection requires an explicit cutoff")
     directory = root / source
     if not directory.exists():
         return pd.DataFrame()
@@ -387,7 +437,24 @@ def load_raw(root: Path, source: str, *, key: Sequence[str] = ("date", "ticker")
         day, _, version = stem.partition("-v")
         return day, int(version) if version.isdigit() else 1
 
-    frames = [pd.read_parquet(path) for path in sorted(directory.glob("*.parquet"), key=order)]
+    from src.util.point_in_time import INGESTED, evidence, unknown_clocks, visible_versions
+
+    frames = []
+    for path in sorted(directory.glob("*.parquet"), key=order):
+        if days is not None and dt.date.fromisoformat(path.name[:10]) not in days:
+            continue
+        rows = visible_versions(pd.read_parquet(path), as_of, strict=strict)
+        if not rows.empty:
+            if provenance is not None:
+                provenance.append(
+                    {
+                        **evidence(path),
+                        "source": source,
+                        "eligible_rows": len(rows),
+                        "legacy": unknown_clocks(rows, (INGESTED, "known_at_utc")),
+                    }
+                )
+            frames.append(rows)
     if not frames:
         return pd.DataFrame()
 
@@ -395,4 +462,6 @@ def load_raw(root: Path, source: str, *, key: Sequence[str] = ("date", "ticker")
     missing = [column for column in key if column not in frame.columns]
     if missing:
         raise KeyError(f"{source} has no column {missing}; pass key= for this collector's shape")
+    if "ingested_at_utc" in frame:
+        frame = frame.sort_values("ingested_at_utc", kind="stable", na_position="first")
     return frame.drop_duplicates(subset=list(key), keep="last").reset_index(drop=True)

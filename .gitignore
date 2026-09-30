@@ -77,3 +77,6 @@ venv/
 
 # OS
 .DS_Store
+
+# Immutable prepared-publication inputs and outcome-free observations.
+!data/publications/

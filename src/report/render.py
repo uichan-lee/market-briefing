@@ -45,8 +45,9 @@ import datetime as dt
 import gzip
 import json
 import re
+import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pandas as pd
@@ -101,6 +102,7 @@ class ReportInputs:
     us_prices: pd.DataFrame = field(default_factory=pd.DataFrame)
     macro: pd.DataFrame = field(default_factory=pd.DataFrame)
     calendar: pd.DataFrame = field(default_factory=pd.DataFrame)
+    calendar_notices: list[str] = field(default_factory=list)
     kr_filings: pd.DataFrame = field(default_factory=pd.DataFrame)
     # Collected daily but not read by any section yet — ② scans inputs.watchlist,
     # which load_inputs populates KR-only (per-company US ratings are out of
@@ -138,6 +140,8 @@ class ReportInputs:
     # rediscovered so ⑦ reads the same archive the rest of the run did — a test
     # pointing at a tmp_path must not have one section quietly read the real one.
     root: Path = field(default_factory=lambda: Path("data"))
+    provenance: list[dict] = field(default_factory=list)
+    publication_warnings: list[str] = field(default_factory=list)
 
 
 # --- small helpers --------------------------------------------------------
@@ -318,6 +322,21 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
     if coverage_parts:
         warnings.append(f"ℹ 데이터 기준: {' · '.join(coverage_parts)}")
 
+    if not inputs.kr_prices.empty:
+        latest_kr = pd.to_datetime(inputs.kr_prices["date"]).max().date()
+        if latest_kr < inputs.day:
+            warnings.append(
+                f"⚠ 한국 시세가 기준 세션 {inputs.day.isoformat()}보다 오래됐습니다 "
+                f"(최근 {latest_kr.isoformat()}). 등급을 최신 판단으로 읽지 마세요"
+            )
+
+    rated = rate_all(inputs)
+    if rated and all(result.weight_coverage == 0 for result in rated.values()):
+        warnings.append(
+            f"⚠ 등급 계산 불가: {inputs.day.isoformat()} 세션의 전 종목 근거가 0%입니다. "
+            "관망은 시장 판단이 아닙니다"
+        )
+
     if inputs.collector_failures:
         warnings.append(f"⚠ 수집 실패: {', '.join(inputs.collector_failures)}")
     if inputs.news_gaps:
@@ -333,8 +352,20 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
         mark = "⚠" if missing else "ℹ"
         detail = f" — {', '.join(missing)} 부재" if missing else ""
         warnings.append(
-            f"{mark} 등급 근거 충족도: {present:.2f}/{total:.2f} ({present / total:.0%}){detail}"
+            f"{mark} 구현된 등급 피처: {present:.2f}/{total:.2f} ({present / total:.0%}){detail}"
         )
+
+    if rated:
+        distribution: dict[int, int] = {}
+        for result in rated.values():
+            percent = round(result.weight_coverage * 100)
+            distribution[percent] = distribution.get(percent, 0) + 1
+        counts = " · ".join(
+            f"{percent}% {count}개" for percent, count in sorted(distribution.items(), reverse=True)
+        )
+        warnings.append(f"ℹ 종목별 등급 근거: {counts}")
+
+    warnings.extend(calendar_availability(inputs, limits_only=True))
 
     # The line above can only report what the config asks for, so on its own it
     # would read 100% once the unbuilt features were taken out of `weights` —
@@ -345,7 +376,7 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
         share = sum(weight for _, weight in deferred)
         designed = share + (coverage[1] if coverage else 0.0)
         warnings.append(
-            f"⚠ 미구현 피처: {named} — 설계 가중치 {designed:.2f}의 {share / designed:.0%}"
+            f"⚠ 등급에 미반영 피처: {named} — 설계 가중치 {designed:.2f}의 {share / designed:.0%}"
         )
 
     # An all-관망 page is a legitimate outcome and an empty-feature page is a
@@ -808,6 +839,22 @@ def render_news(inputs: ReportInputs) -> str:
 # --- ④ calendar -------------------------------------------------------------
 
 
+def calendar_availability(inputs: ReportInputs, *, limits_only: bool = False) -> list[str]:
+    """Use fetch diagnostics, not retained unchanged rows, to describe source coverage."""
+    if inputs.calendar_notices:
+        return [n for n in inputs.calendar_notices if not limits_only or n.startswith("⚠")]
+    # Older statuses have no horizon metadata. Do not invent a successful fetch
+    # or its requested end from known_at_utc on unchanged archive rows.
+    if limits_only or inputs.calendar.empty or "known_at_utc" not in inputs.calendar:
+        return []
+    visible = inputs.calendar.loc[
+        pd.to_datetime(inputs.calendar["known_at_utc"], utc=True) < inputs.as_of
+    ]
+    if visible.empty:
+        return ["⚠ 캘린더: 기준 시각 이전에 확인된 일정이 없습니다"]
+    return ["ℹ 캘린더: 이번 수집의 미래 확인 범위 기록이 없습니다"]
+
+
 def render_calendar(inputs: ReportInputs) -> str:
     """SPEC §2.2④, partial. CPI/employment/FOMC/options expiry are built;
     US 개별 종목 실적 발표일 and KR 배당락·IPO are named absent inline, the
@@ -817,7 +864,7 @@ def render_calendar(inputs: ReportInputs) -> str:
     rule intact for the two sub-sources still not built
     (notes/calendar-collector-plan.md).
     """
-    lines = ["## ④ 캘린더", ""]
+    lines = ["## ④ 캘린더", "", *calendar_availability(inputs), ""]
     if inputs.calendar.empty:
         lines.append("> 캘린더 데이터가 없어 이 섹션을 만들 수 없습니다.")
     else:
@@ -1115,6 +1162,7 @@ def render(
     )
 
     extra_warnings = [w for w in (synthesis_warning, redteam_warning) if w]
+    inputs.publication_warnings = extra_warnings
     header = render_header(inputs, extra_warnings=extra_warnings)
 
     parts = [
@@ -1194,7 +1242,12 @@ def write_ratings(frame: pd.DataFrame, root: Path, day: dt.date) -> Path | None:
 
 
 def news_for_day(
-    root: Path, day: dt.date, entries: Mapping[str, object]
+    root: Path,
+    day: dt.date,
+    entries: Mapping[str, object],
+    *,
+    as_of: pd.Timestamp | None = None,
+    provenance: list[dict] | None = None,
 ) -> tuple[dict[str, int], dict[str, tuple[str, str]], float | None, int, set[tuple[str, str]]]:
     """Resolve one day's collected articles onto watchlist tickers.
 
@@ -1213,7 +1266,24 @@ def news_for_day(
     articles = []
     for path in sorted(directory.glob("*.jsonl.gz")):
         with gzip.open(path, "rt", encoding="utf-8") as handle:
-            articles.extend(json.loads(line) for line in handle)
+            from src.util.point_in_time import evidence, unknown_clocks, visible_versions
+
+            rows = [json.loads(line) for line in handle]
+            if rows:
+                selected = visible_versions(
+                    pd.DataFrame(rows), as_of, clocks=("known_at_utc", "collected_at_utc")
+                )
+                articles.extend(selected.to_dict("records"))
+                if provenance is not None:
+                    provenance.append(
+                        {
+                            **evidence(path),
+                            "source": "news",
+                            "legacy": unknown_clocks(
+                                selected, ("known_at_utc", "collected_at_utc")
+                            ),
+                        }
+                    )
     if not articles:
         return {}, {}, None, 0, set()
 
@@ -1289,14 +1359,15 @@ def load_inputs(
 
     root = root or Path("data")
     raw = root / "raw"
-    as_of = as_of or now_utc()
+    as_of = to_utc(as_of if as_of is not None else now_utc())
 
     watchlist = load_watchlist(market="KR")
     failures: list[str] = []
+    provenance: list[dict] = []
 
     def read(source: str, key: tuple[str, ...] = ("date", "ticker")) -> pd.DataFrame:
         try:
-            frame = load_raw(raw, source, key=key)
+            frame = load_raw(raw, source, key=key, as_of=as_of, provenance=provenance)
         except (OSError, KeyError, ValueError) as exc:
             failures.append(f"{source} ({type(exc).__name__})")
             return pd.DataFrame()
@@ -1323,7 +1394,7 @@ def load_inputs(
         session, and the default key would collapse those rows into one.
         """
         try:
-            return load_raw(raw, source, key=key)
+            return load_raw(raw, source, key=key, as_of=as_of, provenance=provenance)
         except (OSError, KeyError, ValueError) as exc:
             failures.append(f"{source} ({type(exc).__name__})")
             return pd.DataFrame()
@@ -1337,7 +1408,7 @@ def load_inputs(
     # (every evening run, any day before the first morning run), so no failure
     # is recorded for an empty preview.
     try:
-        preview = load_raw(raw, "us/price_preview")
+        preview = load_raw(raw, "us/price_preview", as_of=as_of, provenance=provenance)
     except (OSError, KeyError, ValueError) as exc:
         failures.append(f"us/price_preview ({type(exc).__name__})")
         preview = pd.DataFrame()
@@ -1347,7 +1418,11 @@ def load_inputs(
     try:
         scoring = load_models().get("scoring", {})
         news_scores = load_news_polarity_frame(
-            root, model_id=scoring.get("model"), prompt_version="v1"
+            root,
+            model_id=scoring.get("model"),
+            prompt_version="v1",
+            as_of=as_of,
+            provenance=provenance,
         )
     except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
         failures.append(f"scores ({type(exc).__name__})")
@@ -1358,14 +1433,19 @@ def load_inputs(
         features = compute(flow, kr_prices, watchlist, as_of=as_of, news=news_scores)
 
     aliases = load_aliases()
-    counts, headlines, ambiguous, articles, pairs = news_for_day(raw, day, aliases)
+    counts, headlines, ambiguous, articles, pairs = news_for_day(
+        raw, day, aliases, as_of=as_of, provenance=provenance
+    )
     if pairs and not news_scores.empty:
         pair_frame = pd.DataFrame(sorted(pairs), columns=["article_id", "ticker"])
         visible_scores = news_scores[pd.to_datetime(news_scores["known_at_utc"], utc=True) < as_of]
         day_scores = visible_scores.merge(pair_frame, on=["article_id", "ticker"], how="inner")
     else:
         day_scores = pd.DataFrame(columns=news_scores.columns)
-    status_failures, news_gaps = read_status(root)
+    status_failures, news_gaps = read_status(root, as_of=as_of, provenance=provenance)
+    legacy_sources = sorted({record["source"] for record in provenance if record.get("legacy")})
+    if legacy_sources:
+        failures.append("시점 증거 없음 (학습 제외): " + ", ".join(legacy_sources))
 
     return ReportInputs(
         day=day,
@@ -1376,6 +1456,7 @@ def load_inputs(
         us_prices=us_prices,
         macro=macro,
         calendar=calendar,
+        calendar_notices=read_calendar_notices(root, as_of, provenance=provenance),
         kr_filings=kr_filings,
         us_filings=us_filings,
         sector_mapping=load_sector_mapping(),
@@ -1391,6 +1472,7 @@ def load_inputs(
         us_preview_dates=preview_dates,
         vendor_disagreements=disagreements,
         root=root,
+        provenance=provenance,
     )
 
 
@@ -1452,7 +1534,36 @@ def merge_us_preview(
 _STATUS_MAX_AGE_HOURS = 20
 
 
-def read_status(root: Path) -> tuple[list[str], list[str]]:
+def read_calendar_notices(
+    root: Path, as_of: pd.Timestamp, *, provenance: list[dict] | None = None
+) -> list[str]:
+    """Read only the newest calendar outcome strictly before the report cutoff."""
+    latest_at = None
+    latest = {}
+    for path in (root / "status").glob("*.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            at = pd.Timestamp(payload["at"])
+            outcome = payload.get("collectors", {}).get("calendar")
+        except (OSError, ValueError, KeyError):
+            continue
+        if at.tzinfo is None or not isinstance(outcome, dict) or at >= as_of:
+            continue
+        if latest_at is None or at > latest_at:
+            latest_at, latest, latest_path = at, outcome, path
+    if latest_at is None or as_of - latest_at > pd.Timedelta(hours=24):
+        return []
+    if provenance is not None:
+        from src.util.point_in_time import evidence
+
+        provenance.append({**evidence(latest_path), "source": "calendar_status"})
+    notices = latest.get("calendar_notices", [])
+    return notices if isinstance(notices, list) and all(isinstance(n, str) for n in notices) else []
+
+
+def read_status(
+    root: Path, *, as_of: pd.Timestamp | None = None, provenance: list[dict] | None = None
+) -> tuple[list[str], list[str]]:
     """Check failures and news gaps from the most recent collection run.
 
     ``scripts/collect_daily.py`` writes one JSON per run under ``data/status/``.
@@ -1464,21 +1575,26 @@ def read_status(root: Path) -> tuple[list[str], list[str]]:
     if not directory.exists():
         return [], []
 
-    newest, newest_at = None, None
+    from src.util.point_in_time import evidence
+
+    boundary = to_utc(as_of) if as_of is not None else pd.Timestamp.now(tz="UTC")
+    newest, newest_at, newest_path = None, None, None
     for path in directory.glob("*.json"):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             at = pd.Timestamp(payload["at"])
         except (OSError, ValueError, KeyError):
             continue  # one malformed file must not cost the header its lines
+        if at.tzinfo is None or at >= boundary:
+            continue
         if newest_at is None or at > newest_at:
-            newest, newest_at = payload, at
+            newest, newest_at, newest_path = payload, at, path
 
-    if newest is None or (pd.Timestamp.now(tz="UTC") - newest_at).total_seconds() > (
-        _STATUS_MAX_AGE_HOURS * 3600
-    ):
+    if newest is None or (boundary - newest_at).total_seconds() > (_STATUS_MAX_AGE_HOURS * 3600):
         return [], []
 
+    if provenance is not None:
+        provenance.append({**evidence(newest_path), "source": "status"})
     counted: dict[str, int] = {}
     gaps: list[str] = []
     for name, outcome in newest.get("collectors", {}).items():
@@ -1578,7 +1694,12 @@ def build_summary(inputs: ReportInputs, results: Mapping[str, RatingResult]) -> 
     phone; the header already carries every degradation, and ⑥ is the section
     a thirty-second reader acts on. The vault copy stays complete.
     """
-    return "\n".join([render_header(inputs), render_ratings(inputs, results)])
+    return "\n".join(
+        [
+            render_header(inputs, extra_warnings=inputs.publication_warnings),
+            render_ratings(inputs, results),
+        ]
+    )
 
 
 # --- the HTML email body ---------------------------------------------------
@@ -1618,6 +1739,7 @@ def _rating_color(result: RatingResult) -> str:
 def build_summary_html(inputs: ReportInputs, results: Mapping[str, RatingResult]) -> str:
     """The same summary as HTML, for the email channel."""
     title, market, warnings = header_facts(inputs)
+    warnings = [*warnings, *inputs.publication_warnings]
     names = {entry.ticker: (entry.name or "") for entry in inputs.watchlist}
     limit = int(inputs.rating_config.get("confidence", {}).get("max_rationale_terms", 4))
 
@@ -1686,7 +1808,13 @@ def build_summary_html(inputs: ReportInputs, results: Mapping[str, RatingResult]
         out.append("</div>")
 
     if not actionable:
-        out.append("<p>오늘은 전 종목이 <b>관망</b>입니다.</p>")
+        if ordered and all(result.weight_coverage == 0 for result in ordered):
+            out.append(
+                "<p>⚠ 전 종목 근거가 0%여서 등급을 계산할 수 없습니다. "
+                "관망은 시장 판단이 아닙니다.</p>"
+            )
+        else:
+            out.append("<p>오늘은 전 종목이 <b>관망</b>입니다.</p>")
 
     out.append('<p style="margin:18px 0 6px;"><b>전체 종목</b></p>')
     out.append(
@@ -1758,7 +1886,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     import argparse
     import traceback
 
-    from src.notify.base import deliver, unavailable_channels
+    from src.notify.base import deliver, delivery_exit_code, unavailable_channels
     from src.util.config import load_delivery
     from src.util.session import now_utc
 
@@ -1790,6 +1918,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         label, persist_ratings, as_of = None, True, None
 
     root = Path(args.data_root)
+    publication: Path | None = None
     channels = load_delivery().get("channels", [])
 
     try:
@@ -1810,6 +1939,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = render(inputs, rating_history=load_rating_history(root))
         summary = to_plain_text(build_summary(inputs, results))
         summary_html = build_summary_html(inputs, results)
+        if not args.no_deliver:
+            from src.report.publication import write_publication
+
+            try:
+                publication_started = time.perf_counter()
+                publication = write_publication(
+                    inputs, results, report=report, run=label or "manual"
+                )
+                print(
+                    f"publication  {publication} "
+                    f"prepared_seconds={time.perf_counter() - publication_started:.3f}"
+                )
+            except (OSError, ValueError, TypeError) as exc:
+                # Research archival failure must not prevent a partial briefing.
+                inputs.collector_failures = [
+                    *inputs.collector_failures,
+                    f"publication ({type(exc).__name__}; 학습 기록 없음)",
+                ]
+                old_header = render_header(
+                    replace(inputs, collector_failures=inputs.collector_failures[:-1]),
+                    extra_warnings=inputs.publication_warnings,
+                )
+                report = report.replace(
+                    old_header, render_header(inputs, extra_warnings=inputs.publication_warnings), 1
+                )
+                summary = to_plain_text(build_summary(inputs, results))
+                summary_html = build_summary_html(inputs, results)
+                print(f"publication failed: {type(exc).__name__}: {exc}")
     except Exception as exc:  # noqa: BLE001 - the notice is the point: no report may pass silently
         traceback.print_exc()
         notice = _failure_notice(args.run or "manual", reading_date, f"{type(exc).__name__}: {exc}")
@@ -1822,7 +1979,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(report)
         return 0
 
-    for result in deliver(
+    delivery_results = deliver(
         report,
         channels,
         # The vault key must describe the resolved market session, not a late
@@ -1832,9 +1989,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         label=label,
         summary=summary,
         summary_html=summary_html,
-    ):
+    )
+    if publication is not None:
+        from src.report.publication import write_delivery_receipt
+
+        try:
+            receipt = write_delivery_receipt(publication, delivery_results)
+            print(f"publication receipt  {receipt}")
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"publication receipt failed: {type(exc).__name__}: {exc}")
+    for result in delivery_results:
         print(result)
-    return 0
+    return delivery_exit_code(delivery_results)
 
 
 if __name__ == "__main__":  # pragma: no cover

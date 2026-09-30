@@ -65,6 +65,7 @@ from src.collectors import (
 from src.collectors.validate import ValidationReport
 from src.llm import daily_scoring
 from src.util.config import load_filing_ids, load_news_feeds, load_watchlist
+from src.util.point_in_time import INGESTED, stamp_ingestion
 from src.util.session import now_utc
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -165,38 +166,25 @@ def _latest_version(directory: Path, day: dt.date) -> Path | None:
 
 
 def _differs(stored: pd.DataFrame, fetched: pd.DataFrame, key: list[str]) -> bool:
-    """Whether ``fetched`` says anything *more* than ``stored`` does.
+    """Compare fetched keys with accumulated state, ignoring ingestion clocks.
 
-    Three outcomes, and the asymmetry is the point:
-
-    * fetched has rows stored lacks, or common rows changed → revise.
-    * identical → nothing.
-    * **stored has rows fetched lacks → nothing.** A shrunken fetch is a fetch
-      that failed partway, not new information. Hit live on 2026-08-06: two
-      preview runs inside one Tiingo rate-limit hour, the second got 23 of 48
-      tickers before the 429, and without this rule those 23 rows were minted
-      as a ``-vN`` revision of a complete 48-row file. The validation report
-      already states the fetch problem; the dataset must not record it as a
-      correction.
-
-    Compared on **values, not dtypes**. The stored side has been through a
-    parquet round trip, which is not dtype-faithful — ``datetime64[s]`` comes
-    back ``datetime64[ms]`` — and ``DataFrame.equals`` is dtype-strict. With a
-    strict compare every run minted a fresh ``-vN`` of identical content;
-    measured live on 2026-08-06, macro reached ``-v4`` inside ten minutes.
+    Omitted keys are retained, not deletions. New keys, changed values (including
+    explicit NA), and changed schemas trigger an immutable partial revision.
+    Identical subsets and parquet dtype round trips do not create revisions.
     """
     stored_keys = {tuple(row) for row in stored[key].itertuples(index=False)}
     fetched_keys = {tuple(row) for row in fetched[key].itertuples(index=False)}
-    if stored_keys - fetched_keys:
-        return False  # shrinkage: the fetch knows less than the store
+    # Omitted keys retain their earlier revision; compare only fetched keys.
+    stored = stored[stored[key].apply(tuple, axis=1).isin(fetched_keys)].copy()
     if fetched_keys - stored_keys:
         return True
-    if set(stored.columns) != set(fetched.columns):
+    ignored = {"known_at_utc", INGESTED}
+    if set(stored.columns) - ignored != set(fetched.columns) - ignored:
         return True
     # `known_at_utc` records when this particular collection run learned an
     # event. It is provenance, not an event revision: comparing it would mint
     # a new immutable raw file on every refetch of otherwise identical rows.
-    columns = sorted(column for column in stored.columns if column != "known_at_utc")
+    columns = sorted(column for column in stored.columns if column not in ignored)
     left = stored.sort_values(key)[columns].reset_index(drop=True)
     right = fetched.sort_values(key)[columns].reset_index(drop=True)
     for column in columns:
@@ -212,11 +200,17 @@ def _differs(stored: pd.DataFrame, fetched: pd.DataFrame, key: list[str]) -> boo
     return False
 
 
-def write_daily(source: str, df: pd.DataFrame, *, directory: Path | None = None) -> tuple[int, int]:
+def write_daily(
+    source: str,
+    df: pd.DataFrame,
+    *,
+    directory: Path | None = None,
+    ingested_at: pd.Timestamp | None = None,
+) -> tuple[int, int]:
     """Write a fetched frame date by date. Returns (new files, revisions).
 
-    A date with no stored file gets its base file. A date whose newest stored
-    version differs from the fetch gets the next ``-vN`` — never an overwrite.
+    A date with no stored file gets its base file. A date whose accumulated stored
+    per-key state differs from the fetch gets the next ``-vN`` — never an overwrite.
     A date that matches what is stored gets nothing, which is the common case
     and what keeps the nightly re-fetch from producing daily ``-vN`` noise.
 
@@ -228,20 +222,29 @@ def write_daily(source: str, df: pd.DataFrame, *, directory: Path | None = None)
     directory.mkdir(parents=True, exist_ok=True)
     key = KEYS[source]
 
+    if df[key].isna().any().any() or df.duplicated(key).any():
+        raise ValueError(f"{source}: missing or duplicate source keys")
+    at = ingested_at if ingested_at is not None else now_utc()
     new = revised = 0
     for day, group in df.groupby(pd.to_datetime(df["date"]).dt.date):
-        group = group.reset_index(drop=True)
+        group = stamp_ingestion(group.reset_index(drop=True), at)
         newest = _latest_version(directory, day)
         if newest is None:
-            group.to_parquet(directory / f"{day.isoformat()}.parquet", index=False)
+            with (directory / f"{day.isoformat()}.parquet").open("xb") as handle:
+                group.to_parquet(handle, index=False)
             new += 1
             continue
-        if not _differs(pd.read_parquet(newest), group, key):
+        from src.features.compute import load_raw
+
+        stored = load_raw(directory.parent, directory.name, key=key, days={day})
+        stored = stored[pd.to_datetime(stored["date"]).dt.date == day]
+        if not _differs(stored, group, key):
             continue
         version = 2
         while (target := directory / f"{day.isoformat()}-v{version}.parquet").exists():
             version += 1
-        group.to_parquet(target, index=False)
+        with target.open("xb") as handle:
+            group.to_parquet(handle, index=False)
         revised += 1
     return new, revised
 

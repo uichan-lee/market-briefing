@@ -440,3 +440,5 @@ loss risk without moving pipeline execution or data storage.
 ## License
 
 No license is granted. The code is published to be read, not reused.
+
+Immutable prepared inputs, dispatch receipts and outcome-free score observations are stored in `data/publications/`. Availability uses aware ISO clocks normalized to UTC; unknown legacy clocks are disclosed and excluded from strict research. Verify pinned ratings/header without a model call with `uv run python -m src.report.publication <manifest-path>`. Natural-run storage/runtime acceptance is pending; this scaffold does not fit a model or authorize outcome evaluation.

@@ -37,6 +37,7 @@ import glob
 import gzip
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -65,16 +66,11 @@ SCORE_WINDOW_DAYS = 4
 CONTINUITY_MAX_AGE_HOURS = 30.0
 CHECKPOINT_SIZE = 25
 
-# Hard ceiling on scored pairs per run, so a run cannot spill past OpenAI's
-# ~250K-token/day free pool into billed usage. A steady weekday sits near
-# 140 pairs across four scheduled runs; only a multi-day backlog (a Monday
-# after a weekend of RSS, a stretch of missed runs) reaches this cap, and
-# then the newest pairs are scored and the rest are left for the day's later
-# runs. Pairs the cap defers are not a continuity failure — they are dropped
-# on purpose — and their absence is already visible in §2.2③'s
-# matched/scored count. news_polarity is frozen out of the composite until
-# after the 3-month gate, so a few permanently-unscored old pairs cost nothing.
+# Separate limits on selected pairs and scorer attempts, including retries and
+# the golden-set check. Neither limit guarantees a token budget or free usage.
+# Unattempted pairs deferred by the budget remain visible in validation output.
 MAX_PAIRS_PER_RUN = 180
+MAX_CALLS_PER_RUN = 180
 
 # Which golden-set example check_known_scoring re-scores every run. Fixed
 # rather than random, so a drift is comparable run to run.
@@ -95,6 +91,7 @@ SCORE_SCHEMA = {
     # NaN when the stage sent no temperature at all (SPEC §6.3's "record what
     # was actually sent", not what SPEC §6.3 originally asked for).
     "temperature": "float64",
+    "score_completed_at_utc": "datetime64[ns, UTC]",
 }
 
 # `temperature` deliberately absent — a fully-missing temperature is the
@@ -214,8 +211,24 @@ def write_scores(
     """Append-only. Never truncates; creates ``data/scores/`` on first write."""
     path = score_path(root, day, model_id, prompt_version)
     path.parent.mkdir(parents=True, exist_ok=True)
+    import hashlib
+
+    from src.util.point_in_time import evidence
+
+    completed = now_utc().isoformat()
+    prompt = Path(__file__).parent / "prompts" / f"{prompt_version}_scoring.md"
+    prompt_hash = evidence(prompt)["sha256"] if prompt.exists() else None
     with path.open("a", encoding="utf-8") as handle:
         for record in records:
+            record = dict(record)
+            record.setdefault("score_completed_at_utc", completed)
+            record["score_completed_at_utc"] = to_utc(record["score_completed_at_utc"]).isoformat()
+            record["score_archived_at_utc"] = completed
+            record["prompt_sha256"] = prompt_hash
+            record.pop("score_id", None)
+            record["score_id"] = hashlib.sha256(
+                json.dumps(record, sort_keys=True, ensure_ascii=False).encode()
+            ).hexdigest()
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
@@ -227,6 +240,9 @@ def load_news_polarity_frame(
     *,
     model_id: str | None = None,
     prompt_version: str | None = None,
+    as_of: pd.Timestamp | None = None,
+    strict: bool = False,
+    provenance: list[dict] | None = None,
 ) -> pd.DataFrame:
     """Every archived score joined against its article's ``known_at_utc``.
 
@@ -237,6 +253,8 @@ def load_news_polarity_frame(
     archive is dropped, not a crash — SPEC's stated failure discipline
     applies here too.
     """
+    if strict and as_of is None:
+        raise ValueError("Strict score selection requires an explicit cutoff")
     columns = [
         "article_id",
         "ticker",
@@ -247,6 +265,9 @@ def load_news_polarity_frame(
         "intensity",
         "uncertainty",
         "known_at_utc",
+        "score_completed_at_utc",
+        "score_archived_at_utc",
+        "score_id",
         "title",
         "link",
     ]
@@ -254,9 +275,23 @@ def load_news_polarity_frame(
     if not score_files:
         return pd.DataFrame(columns=columns)
 
+    from src.util.point_in_time import evidence, parse_clocks, unknown_clocks, visible_versions
+
     records: list[dict] = []
     for path in score_files:
-        records.extend(_read_jsonl(Path(path)))
+        rows = _read_jsonl(Path(path))
+        if rows and provenance is not None:
+            provenance.append(
+                {
+                    **evidence(Path(path)),
+                    "source": "scores",
+                    "legacy": unknown_clocks(
+                        pd.DataFrame(rows), ("score_completed_at_utc", "score_archived_at_utc")
+                    )
+                    or any(not row.get("score_id") for row in rows),
+                }
+            )
+        records.extend(rows)
     if not records:
         return pd.DataFrame(columns=columns)
 
@@ -267,6 +302,15 @@ def load_news_polarity_frame(
         scores = scores[scores["prompt_version"] == prompt_version]
     if scores.empty:
         return pd.DataFrame(columns=columns)
+    for column in ("score_completed_at_utc", "score_archived_at_utc", "score_id"):
+        if column not in scores:
+            scores[column] = None
+    scores = visible_versions(
+        scores, as_of, strict=strict, clocks=("score_completed_at_utc", "score_archived_at_utc")
+    )
+    scores = scores.sort_values(
+        ["score_archived_at_utc", "score_completed_at_utc"], kind="stable", na_position="first"
+    )
     scores = scores.drop_duplicates(
         subset=["article_id", "ticker", "model_id", "prompt_version"], keep="last"
     )
@@ -275,9 +319,25 @@ def load_news_polarity_frame(
     news_dir = root / "raw" / "kr" / "news"
     for path in sorted(glob.glob(str(news_dir / "*" / "*.jsonl.gz"))):
         with gzip.open(path, "rt", encoding="utf-8") as handle:
-            for line in handle:
-                row = json.loads(line)
-                articles.setdefault(row["article_id"], row)
+            rows = [json.loads(line) for line in handle]
+        if not rows:
+            continue
+        selected = visible_versions(
+            pd.DataFrame(rows),
+            as_of,
+            strict=strict,
+            clocks=("known_at_utc", "collected_at_utc"),
+        )
+        if not selected.empty and provenance is not None:
+            provenance.append(
+                {
+                    **evidence(Path(path)),
+                    "source": "news",
+                    "legacy": unknown_clocks(selected, ("known_at_utc", "collected_at_utc")),
+                }
+            )
+        for row in selected.to_dict("records"):
+            articles.setdefault(row["article_id"], row)
 
     scores["known_at_utc"] = scores["article_id"].map(
         lambda article_id: articles.get(article_id, {}).get("known_at_utc")
@@ -288,8 +348,8 @@ def load_news_polarity_frame(
     scores["link"] = scores["article_id"].map(
         lambda article_id: articles.get(article_id, {}).get("link", "")
     )
+    scores["known_at_utc"] = parse_clocks(scores["known_at_utc"])
     scores = scores.dropna(subset=["known_at_utc"]).copy()
-    scores["known_at_utc"] = pd.to_datetime(scores["known_at_utc"], utc=True)
     scores["relevance"] = pd.to_numeric(scores["relevance"], errors="coerce")
     scores["polarity"] = pd.to_numeric(scores["polarity"], errors="coerce")
     scores["intensity"] = pd.to_numeric(scores["intensity"], errors="coerce")
@@ -362,20 +422,45 @@ def check_known_scoring(
     )
 
 
+class _CallBudgetExhausted(RuntimeError):
+    """No further scorer attempts are permitted in this run."""
+
+
+@dataclass
+class _CallBudget:
+    limit: int
+    used: int = 0
+
+    def consume(self) -> None:
+        if self.used >= self.limit:
+            raise _CallBudgetExhausted("scoring call budget exhausted")
+        self.used += 1
+
+
 def _score_with_backoff(
-    scorer, article: dict, *, prompt: Prompt, provider: str, models, pacer: Pacer
+    scorer,
+    article: dict,
+    *,
+    prompt: Prompt,
+    provider: str,
+    models,
+    pacer: Pacer,
+    budget: _CallBudget,
 ):
     """One scored call, paced, retrying a 429 with backoff. Mirrors
     ``src.eval.bakeoff._call_with_backoff``'s shape for a single configured
     model rather than a list of bake-off candidates — not imported directly
     since that function is private and coupled to bakeoff's ``Attempt``."""
     for attempt_no in range(MAX_RATE_LIMIT_RETRIES + 1):
+        budget.consume()
         pacer.wait(provider)
         try:
             return scorer(article, prompt=prompt, models=models)
         except Exception as exc:  # noqa: BLE001 — re-raised unless it is a 429
             if not is_rate_limit(exc):
                 raise
+            if budget.used >= budget.limit:
+                raise _CallBudgetExhausted("scoring call budget exhausted") from exc
             if attempt_no == MAX_RATE_LIMIT_RETRIES:
                 raise _RateLimitExhausted(f"{type(exc).__name__}: {exc}") from exc
             pacer.backoff(provider, attempt_no)
@@ -393,6 +478,7 @@ def score_new_articles(
     known_value_check: bool = True,
     checkpoint_size: int = CHECKPOINT_SIZE,
     max_pairs_per_run: int = MAX_PAIRS_PER_RUN,
+    max_calls_per_run: int = MAX_CALLS_PER_RUN,
 ) -> tuple[pd.DataFrame, ValidationReport]:
     """Score every resolved-and-unscored (article, ticker) pair once, archive
     the successes, and report on it. Never raises on a per-article failure —
@@ -402,11 +488,19 @@ def score_new_articles(
     At most ``max_pairs_per_run`` pairs are scored, newest first; a larger
     backlog has its oldest pairs left for a later run or, if they age out,
     dropped — see ``MAX_PAIRS_PER_RUN``.
+    ``max_calls_per_run`` includes failed attempts and retries, reserving one
+    attempt for the final golden-set check when enabled.
     """
     if checkpoint_size < 1:
         raise ValueError("checkpoint_size must be positive")
     if max_pairs_per_run < 1:
         raise ValueError("max_pairs_per_run must be positive")
+    if (
+        isinstance(max_calls_per_run, bool)
+        or not isinstance(max_calls_per_run, int)
+        or max_calls_per_run < 1
+    ):
+        raise ValueError("max_calls_per_run must be a positive integer")
 
     now = now if now is not None else now_utc()
     config = models if models is not None else load_models()
@@ -449,27 +543,32 @@ def score_new_articles(
 
     todo.sort(key=_collected, reverse=True)
     deferred, todo = todo[max_pairs_per_run:], todo[:max_pairs_per_run]
-    if deferred:
-        report.add(
-            CheckResult(
-                "scoring_budget",
-                True,
-                f"{len(deferred)} pair(s) left for a later run — {max_pairs_per_run}/run cap",
-            )
-        )
+    budget = _CallBudget(max_calls_per_run - int(known_value_check))
 
     written: list[dict] = []
     checkpoint: list[dict] = []
     outstanding: list[dict] = []
     exhausted = ""
     for candidate in todo:
+        if budget.used >= budget.limit:
+            deferred.append(candidate)
+            continue
         if exhausted:
             outstanding.append(candidate)
             continue
         try:
             result = _score_with_backoff(
-                scorer, candidate, prompt=prompt, provider=provider, models=config, pacer=pacer
+                scorer,
+                candidate,
+                prompt=prompt,
+                provider=provider,
+                models=config,
+                pacer=pacer,
+                budget=budget,
             )
+        except _CallBudgetExhausted:
+            outstanding.append(candidate)
+            continue
         except _RateLimitExhausted as exc:
             exhausted = str(exc)
             outstanding.append(candidate)
@@ -498,6 +597,7 @@ def score_new_articles(
             "forwardness": float(result.parsed["forwardness"]),
             "rationale": str(result.parsed.get("rationale", "")),
             "temperature": stage.get("temperature"),
+            "score_completed_at_utc": now_utc().isoformat(),
         }
         written.append(record)
         checkpoint.append(record)
@@ -511,6 +611,7 @@ def score_new_articles(
     frame = pd.DataFrame(written)
     if not frame.empty:
         frame["temperature"] = pd.to_numeric(frame["temperature"], errors="coerce")
+        frame["score_completed_at_utc"] = pd.to_datetime(frame["score_completed_at_utc"], utc=True)
         report.add(check_schema(frame, SCORE_SCHEMA))
         report.add(check_missing_ratio(frame, MISSING_THRESHOLDS))
     else:
@@ -522,6 +623,19 @@ def score_new_articles(
     report.add(check_scoring_continuity(outstanding, now=now))
 
     if known_value_check:
+        budget.limit = max_calls_per_run
+        budget.consume()
+        pacer.wait(provider)
         report.add(check_known_scoring(scorer, prompt, models=config))
+
+    detail = (
+        f"{budget.used}/{max_calls_per_run} calls used (including retries and golden-set); "
+        f"{len(deferred)} pair(s) left for a later run — {max_pairs_per_run}/run cap"
+    )
+    if deferred:
+        oldest_deferred = min(_collected(candidate) for candidate in deferred)
+        oldest_age_hours = max(0.0, (now - oldest_deferred).total_seconds() / 3600)
+        detail += f"; oldest deferred pair is {oldest_age_hours:.1f}h old"
+    report.add(CheckResult("scoring_budget", True, detail))
 
     return frame, report

@@ -319,12 +319,179 @@ def test_score_new_articles_caps_a_backlog_newest_first(tmp_path, monkeypatch):
     assert list(frame["article_id"]) == ["new"]
     assert report.ok, report.summary()  # deferred pairs are not a continuity failure
     budget = next(c for c in report.results if c.name == "scoring_budget")
-    assert budget.passed and "2 pair(s)" in budget.detail
+    assert budget.passed
+    assert "2 pair(s)" in budget.detail
+    assert "oldest deferred pair is 11.0h old" in budget.detail
 
 
 def test_score_new_articles_rejects_a_nonpositive_max_pairs_per_run(tmp_path):
     with pytest.raises(ValueError, match="max_pairs_per_run"):
         score_new_articles(tmp_path, max_pairs_per_run=0)
+
+
+@pytest.mark.parametrize("limit", [0, -1, 1.5, True])
+def test_call_budget_requires_a_positive_integer(tmp_path, limit):
+    with pytest.raises(ValueError, match="max_calls_per_run"):
+        score_new_articles(tmp_path, max_calls_per_run=limit)
+
+
+@pytest.mark.parametrize(
+    "limit,known,count,expected",
+    [
+        (3, True, 4, 2),
+        (3, False, 4, 3),
+        (1, True, 4, 0),
+        (1, False, 4, 1),
+        (3, True, 0, 0),
+        (3, False, 0, 0),
+        (180, True, 181, 179),
+    ],
+)
+def test_call_budget_reserves_validation_and_preserves_scores(
+    tmp_path, monkeypatch, limit, known, count, expected
+):
+    from types import SimpleNamespace
+
+    import src.llm.daily_scoring as scoring
+
+    candidates = [
+        dict(_article(str(i), collected=f"2026-08-20T{i % 24:02}:00:00+00:00"), ticker="005930")
+        for i in range(count)
+    ]
+    monkeypatch.setattr(scoring, "resolved_candidates", lambda *a, **k: candidates)
+    monkeypatch.setattr(scoring, "missing_credential", lambda provider: None)
+    calls = []
+
+    def scorer(article, **kwargs):
+        calls.append(article)
+        return _completion()
+
+    frame, report = score_new_articles(
+        tmp_path,
+        now=pd.Timestamp("2026-08-21", tz="UTC"),
+        models=MODELS,
+        scorer=scorer,
+        pacer=SimpleNamespace(wait=lambda p: None),
+        max_calls_per_run=limit,
+        known_value_check=known,
+    )
+    assert len(frame) == expected
+    assert len(calls) == expected + int(known) <= limit
+    if known:
+        assert calls[-1] == scoring.examples()[scoring.KNOWN_SCORING_INDEX]
+    assert (
+        calls[:expected]
+        == sorted(candidates, key=lambda c: c["collected_at_utc"], reverse=True)[:expected]
+    )
+    detail = next(c.detail for c in report.results if c.name == "scoring_budget")
+    assert f"{len(calls)}/{limit} calls used" in detail
+    assert f"{count - expected} pair(s)" in detail
+    if expected:
+        archived = already_scored_pairs(
+            tmp_path,
+            model_id="gpt-5.4",
+            prompt_version="v1",
+            now=pd.Timestamp("2026-08-21", tz="UTC"),
+        )
+        assert len(archived) == expected
+        # A second run with no validation must reuse successful archived pairs.
+        calls.clear()
+        monkeypatch.setattr(
+            scoring,
+            "resolved_candidates",
+            lambda *a, **k: [c for c in candidates if (c["article_id"], c["ticker"]) in archived],
+        )
+        score_new_articles(
+            tmp_path,
+            now=pd.Timestamp("2026-08-21", tz="UTC"),
+            models=MODELS,
+            scorer=scorer,
+            known_value_check=False,
+        )
+        assert calls == []
+
+
+@pytest.mark.parametrize("failure", ["rate_limit", "schema", "invalid"])
+def test_failed_attempts_consume_budget_without_losing_partial_scores(
+    tmp_path, monkeypatch, failure
+):
+    from types import SimpleNamespace
+
+    import src.llm.daily_scoring as scoring
+
+    candidates = [dict(_article(str(i)), ticker="005930") for i in range(5)]
+    monkeypatch.setattr(scoring, "resolved_candidates", lambda *a, **k: candidates)
+    monkeypatch.setattr(scoring, "missing_credential", lambda provider: None)
+
+    class FakeRateLimitError(RuntimeError):
+        pass
+
+    monkeypatch.setattr(scoring, "is_rate_limit", lambda exc: isinstance(exc, FakeRateLimitError))
+    calls = []
+    backoffs = []
+
+    def scorer(article, **kwargs):
+        calls.append(article)
+        if article == scoring.examples()[scoring.KNOWN_SCORING_INDEX] or len(calls) == 1:
+            return _completion()
+        if failure == "rate_limit":
+            raise FakeRateLimitError("429")
+        if failure == "schema":
+            raise SchemaError("invalid JSON")
+        result = _completion()
+        result.parsed["polarity"] = 9
+        return result
+
+    frame, report = score_new_articles(
+        tmp_path,
+        now=pd.Timestamp("2026-08-22", tz="UTC"),
+        models=MODELS,
+        scorer=scorer,
+        max_calls_per_run=4,
+        pacer=SimpleNamespace(wait=lambda p: None, backoff=lambda *a: backoffs.append(a)),
+    )
+    assert len(calls) == 4
+    assert list(frame["article_id"]) == ["0"]
+    assert (
+        len(
+            already_scored_pairs(
+                tmp_path,
+                model_id="gpt-5.4",
+                prompt_version="v1",
+                now=pd.Timestamp("2026-08-22", tz="UTC"),
+            )
+        )
+        == 1
+    )
+    assert not next(c for c in report.results if c.name == "scoring_continuity").passed
+    detail = next(c.detail for c in report.results if c.name == "scoring_budget")
+    assert f"{3 if failure == 'rate_limit' else 2} pair(s)" in detail
+    if failure == "rate_limit":
+        assert calls[1] == calls[2]
+        assert len(backoffs) == 1  # No sleeping/retrying after the last available attempt.
+
+
+def test_failed_golden_check_uses_its_reserved_call_only(tmp_path, monkeypatch):
+    import src.llm.daily_scoring as scoring
+
+    monkeypatch.setattr(scoring, "missing_credential", lambda provider: None)
+    calls = []
+
+    def scorer(article, **kwargs):
+        calls.append(article)
+        raise AdapterError("provider unavailable")
+
+    frame, report = score_new_articles(
+        tmp_path,
+        now=pd.Timestamp("2026-08-21", tz="UTC"),
+        models=MODELS,
+        scorer=scorer,
+        max_calls_per_run=1,
+    )
+    assert frame.empty
+    assert len(calls) == 1
+    assert not next(c for c in report.results if c.name == "known_value").passed
+    assert "1/1 calls used" in next(c.detail for c in report.results if c.name == "scoring_budget")
 
 
 def test_score_new_articles_skips_entirely_without_a_credential(tmp_path, monkeypatch):
@@ -474,6 +641,9 @@ def test_load_news_polarity_frame_empty_when_nothing_scored(tmp_path):
         "intensity",
         "uncertainty",
         "known_at_utc",
+        "score_completed_at_utc",
+        "score_archived_at_utc",
+        "score_id",
         "title",
         "link",
     ]

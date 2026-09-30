@@ -34,6 +34,15 @@ class DeliveryResult:
         return f"{self.channel:<8} {mark}  {self.detail}"
 
 
+def delivery_exit_code(results: list[DeliveryResult]) -> int:
+    """Every configured destination is required; empty/partial delivery fails.
+
+    Successful copies remain available. Do not retry the whole dispatch here:
+    doing so could send duplicate email to destinations that already succeeded.
+    """
+    return 0 if results and all(result.delivered for result in results) else 1
+
+
 class Channel(Protocol):
     """What every adapter under ``src/notify/`` implements."""
 
