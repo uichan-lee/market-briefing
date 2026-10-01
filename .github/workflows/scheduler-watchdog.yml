@@ -30,13 +30,18 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: notify-runtime-v1
+          prune-cache: false
+      - name: Prepare notification runtime
+        timeout-minutes: 3
+        run: uv sync --locked --only-group notify
       - name: Email scheduler alert
         run: |
-          uv run python - <<'PY'
+          uv run --no-sync python - <<'PY'
           import datetime as dt
           import os
 
-          from src.notify.base import deliver
+          from src.notify.base import deliver, delivery_exit_code
           from src.util.config import load_delivery
 
           reason = os.environ["SCHEDULER_REASON"]
@@ -45,6 +50,8 @@ jobs:
           if details:
               notice += f"\n## 판단 근거\n\n{details[:4000]}\n"
           channels = [item for item in load_delivery()["channels"] if item["type"] == "email"]
-          for result in deliver(notice, channels, day=dt.date.today(), label="SCHEDULER"):
+          results = deliver(notice, channels, day=dt.date.today(), label="SCHEDULER")
+          for result in results:
               print(result)
+          raise SystemExit(delivery_exit_code(results))
           PY

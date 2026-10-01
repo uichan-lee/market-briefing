@@ -84,6 +84,15 @@ embed = [
 ]
 
 [dependency-groups]
+# Existing dependencies only. Frequent RSS polls must not install price/LLM
+# runtimes or development tools. Keep constraints aligned with project defaults.
+news = [
+    "pandas>=2.2,<3.0",
+    "pandas-market-calendars>=4.4",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+]
+notify = ["pyyaml>=6.0"]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",

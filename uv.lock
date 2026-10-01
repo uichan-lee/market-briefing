@@ -1104,6 +1104,15 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+news = [
+    { name = "pandas" },
+    { name = "pandas-market-calendars" },
+    { name = "pyyaml" },
+    { name = "requests" },
+]
+notify = [
+    { name = "pyyaml" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1125,6 +1134,13 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.6" },
 ]
+news = [
+    { name = "pandas", specifier = ">=2.2,<3.0" },
+    { name = "pandas-market-calendars", specifier = ">=4.4" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "requests", specifier = ">=2.31" },
+]
+notify = [{ name = "pyyaml", specifier = ">=6.0" }]
 
 [[package]]
 name = "markupsafe"

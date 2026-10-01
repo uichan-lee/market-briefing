@@ -41,14 +41,21 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: news-runtime-v1
+          prune-cache: false
+
+      - name: Prepare news runtime
+        timeout-minutes: 3
+        run: uv sync --locked --only-group news
 
       - name: Collect
-        run: uv run python -m src.collectors.kr_news
+        timeout-minutes: 6
+        run: uv run --no-sync python -m src.collectors.kr_news
 
       # `always()`, matching report.yml, and here it is load-bearing rather than
       # tidy. The collector exits non-zero on a failed check even when it stored
-      # articles — a timed-out feed means unmeasured, unrecoverable loss and has
-      # to raise the alarm. Without this line that alarm would skip the commit
+      # articles. Validation failures must raise the alarm. Without this line
+      # that alarm would skip the commit
       # and destroy the very articles it is warning about.
       - name: Commit
         if: always()
@@ -59,7 +66,7 @@ jobs:
 
           git add data/raw/kr/news
           if git diff --cached --quiet; then
-            echo "no new articles this hour"
+            echo "no news archive changes; inspect Prepare/Collect results before inferring a quiet poll"
             exit 0
           fi
 

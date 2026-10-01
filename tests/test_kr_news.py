@@ -466,10 +466,11 @@ def test_a_written_run_round_trips(tmp_path, frame):
 def test_a_rerun_never_overwrites(tmp_path, frame):
     """CLAUDE.md rule 1. data/raw/ is the backtest dataset."""
     first = write_run(frame, tmp_path, NOW)
+    original = first.read_bytes()
     second = write_run(frame, tmp_path, NOW)
     assert first != second
     assert first.exists() and second.exists()
-    assert "-v2" in second.name
+    assert first.read_bytes() == original
 
 
 def test_seen_ids_reads_back_what_was_written(tmp_path, frame):
@@ -492,10 +493,10 @@ def test_last_run_at_is_none_before_any_run(tmp_path):
 
 
 def test_a_rerun_suffix_does_not_break_the_run_timestamp(tmp_path, frame):
-    """``1251-v2.jsonl.gz`` is the path CLAUDE.md rule 1 produces. Parsing the
-    whole stem as a clock would raise on it."""
+    """Both unique identities and historical -vN suffixes retain the clock."""
     write_run(frame, tmp_path, NOW)
-    write_run(frame, tmp_path, NOW)
+    path = write_run(frame, tmp_path, NOW)
+    path.rename(run_path(tmp_path, NOW).with_name("0900-v2.jsonl.gz"))
     assert last_run_at(tmp_path, NOW.date()) == NOW
 
 
@@ -801,3 +802,84 @@ def test_a_parse_failure_is_not_retried(monkeypatch):
     # Not transient: no later run resolves malformed XML, so this one fails the
     # fetch check on its own.
     assert not failure.transient
+
+
+@pytest.mark.parametrize("workers", [0, -1, True, 1.5])
+def test_invalid_worker_limit_is_rejected(tmp_path, workers):
+    with pytest.raises(ValueError, match="positive integer"):
+        kr_news.fetch([], root=tmp_path, now=NOW, workers=workers)
+
+
+def test_parallel_polling_is_bounded_and_preserves_dedup_order(monkeypatch, tmp_path, frame):
+    from dataclasses import replace
+    from threading import Barrier, Lock
+
+    barrier, lock = Barrier(2), Lock()
+    active = peak = 0
+    feeds = [replace(FEEDS["newsis_economy"], name=f"fixture_{i}") for i in range(4)]
+
+    def poll(feed, collected_at, *, timeout, attempts):
+        nonlocal active, peak
+        assert collected_at == NOW
+        assert timeout == 20 and attempts == 3
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        barrier.wait(timeout=5)
+        result = frame.copy()
+        result["feed"] = feed.name
+        with lock:
+            active -= 1
+        return result, None
+
+    monkeypatch.setattr(kr_news, "_fetch_one", poll)
+    result, report = kr_news.fetch(iter(feeds), root=tmp_path, now=NOW, workers=2)
+    assert peak == 2
+    assert set(result["feed"]) == {"fixture_0"}
+    assert len(result) == len(frame)
+    assert report.ok
+
+
+def test_parallel_polling_surfaces_unexpected_errors(monkeypatch, tmp_path):
+    def poll(*args, **kwargs):
+        raise RuntimeError("unexpected fixture failure")
+
+    monkeypatch.setattr(kr_news, "_fetch_one", poll)
+    with pytest.raises(RuntimeError, match="unexpected fixture failure"):
+        kr_news.fetch(list(FEEDS.values()), root=tmp_path, now=NOW)
+
+
+def test_independent_checkouts_get_distinct_paths_for_the_same_minute(tmp_path, frame):
+    news = tmp_path / "news-checkout"
+    report = tmp_path / "report-checkout"
+    first = write_run(frame, news, NOW)
+    second = write_run(frame.iloc[:1], report, NOW)
+    assert first.relative_to(news) != second.relative_to(report)
+    assert last_run_at(news, NOW.date()) == last_run_at(report, NOW.date()) == NOW
+
+
+def test_identity_collision_cannot_overwrite_an_archive(monkeypatch, tmp_path, frame):
+    identity = kr_news.uuid.uuid4()
+    monkeypatch.setattr(kr_news.uuid, "uuid4", lambda: identity)
+    first = write_run(frame, tmp_path, NOW)
+    original = first.read_bytes()
+    with pytest.raises(FileExistsError):
+        write_run(frame.iloc[:1], tmp_path, NOW)
+    assert first.read_bytes() == original
+
+
+@pytest.mark.parametrize("raw", ["Fri, 31 Dec 9999 10:00:00 +0900", "9999-12-31 10:00:00"])
+def test_dates_outside_the_declared_nanosecond_schema_are_unparseable(raw):
+    assert parse_pubdate(raw, assume_tz="Asia/Seoul") is None
+
+
+def test_out_of_bounds_feed_date_does_not_discard_successful_feeds(monkeypatch, tmp_path):
+    xml = b"""<rss><channel><item><title>bad date</title>
+      <link>https://hankyung.com/1</link>
+      <pubDate>Fri, 31 Dec 9999 10:00:00 +0900</pubDate>
+    </item></channel></rss>"""
+    rows, report = _fetch_with(monkeypatch, tmp_path, content=xml)
+    assert not rows.empty
+    assert set(rows["feed"]) == {GOOD_FEED.name}
+    assert not report.ok
+    assert "none parseable" in next(r.detail for r in report.failures if r.name == "fetch")

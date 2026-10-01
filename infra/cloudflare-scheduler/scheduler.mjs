@@ -14,6 +14,9 @@ const COLLECT = "collect-news.yml";
 const REPORT = "report.yml";
 const WATCHDOG = "scheduler-watchdog.yml";
 const RETRIES = 3;
+// News jobs have a ten-minute execution limit. Recheck at :40 so deferral at
+// :25 cannot conceal a subsequent cancellation or stuck queue.
+const NEWS_PENDING_GRACE_MINUTES = 10;
 
 function headers(token) {
   return {
@@ -132,7 +135,7 @@ async function alert(fetchImpl, token, reason, details) {
   });
 }
 
-function classify(latest, now, allowedMinutes) {
+function classify(latest, now, allowedMinutes, pendingGraceMinutes = 0) {
   if (!latest.ok) return "unknown";
   if (!latest.run) return "missing";
   if (minutesSince(now, latest.run.created_at) > allowedMinutes) {
@@ -141,10 +144,13 @@ function classify(latest, now, allowedMinutes) {
   if (latest.run.status === "completed" && latest.run.conclusion !== "success") {
     return "failed";
   }
-  return latest.run.status === "completed" ? "healthy" : "unfinished";
+  if (latest.run.status === "completed") return "healthy";
+  return minutesSince(now, latest.run.created_at) <= pendingGraceMinutes
+    ? "pending" : "unfinished";
 }
 
-async function checkFresh(fetchImpl, token, workflow, now, allowedMinutes, label) {
+async function checkFresh(fetchImpl, token, workflow, now, allowedMinutes, label,
+  pendingGraceMinutes = 0) {
   const observations = [];
   async function read(stage, since) {
     const latest = await latestRun(fetchImpl, token, workflow, now, since);
@@ -161,17 +167,19 @@ async function checkFresh(fetchImpl, token, workflow, now, allowedMinutes, label
     return latest;
   }
   let latest = await read("initial");
-  const initialDecision = classify(latest, now, allowedMinutes);
+  const initialDecision = classify(latest, now, allowedMinutes, pendingGraceMinutes);
   if (initialDecision !== "healthy") {
     const since = ["stale", "missing"].includes(initialDecision)
       ? new Date(now.getTime() - allowedMinutes * 60_000) : undefined;
     latest = await read("confirmation", since);
   }
-  const decision = classify(latest, now, allowedMinutes);
+  const decision = classify(latest, now, allowedMinutes, pendingGraceMinutes);
+  const shouldAlert = !["healthy", "pending"].includes(decision);
   console.log(JSON.stringify({ event: "watchdog_decision", workflow,
     checked_at: now.toISOString(), allowed_minutes: allowedMinutes,
-    initial_decision: initialDecision, decision, alert: decision !== "healthy", observations }));
-  if (decision === "healthy") return { ok: true };
+    pending_grace_minutes: pendingGraceMinutes,
+    initial_decision: initialDecision, decision, alert: shouldAlert, observations }));
+  if (!shouldAlert) return { ok: true };
   const reasons = {
     unknown: "GitHub 상태 확인 실패 (실행 지연 여부 미확인)",
     missing: `최근 ${allowedMinutes}분 내 workflow 실행 기록 없음 (재조회 확인)`,
@@ -186,6 +194,7 @@ async function checkFresh(fetchImpl, token, workflow, now, allowedMinutes, label
     + (item.run_id ? `\nhttps://github.com/${OWNER}/${REPOSITORY}/actions/runs/${item.run_id}` : ""));
   return alert(fetchImpl, token, `${label}: ${reasons[decision]}`,
     `workflow=${workflow}\nchecked_at_utc=${now.toISOString()}\nthreshold_minutes=${allowedMinutes}\n`
+    + `pending_grace_minutes=${pendingGraceMinutes}\n`
     + evidence.join("\n"));
 }
 
@@ -205,11 +214,18 @@ async function routeScheduled(cron, now, env, fetchImpl) {
   if (cron === "7 22 * * SUN-THU") return dispatch(fetchImpl, token, REPORT, { run: "morning" });
   if (cron === "37 12 * * MON-FRI") return dispatch(fetchImpl, token, REPORT, { run: "evening" });
 
-  if (cron !== "15,25,40 * * * *") return { ok: true };
+  if (cron !== "10,15,25,40,55 * * * *") return { ok: true };
   const minute = now.getUTCMinutes();
   const hour = now.getUTCHours();
   const weekday = now.getUTCDay();
-  if (minute === 25) return checkFresh(fetchImpl, token, COLLECT, now, 120, "뉴스 수집");
+  // Check the :47 poll before a later :17 success can hide its failure.
+  const halfHourNewsCheck = (minute === 55 && hour <= 6)
+    || (minute === 10 && hour >= 1 && hour <= 7);
+  if (minute === 25 || minute === 40 || halfHourNewsCheck) {
+    const news = await checkFresh(fetchImpl, token, COLLECT, now, 120, "뉴스 수집",
+      NEWS_PENDING_GRACE_MINUTES);
+    if (!news.ok || minute !== 40) return news;
+  }
   if (minute === 15 && hour === 13 && weekday >= 1 && weekday <= 5) {
     return checkFresh(fetchImpl, token, REPORT, now, 40, "저녁 리포트");
   }

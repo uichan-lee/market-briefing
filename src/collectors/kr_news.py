@@ -56,8 +56,10 @@ import hashlib
 import json
 import re
 import time
+import uuid
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -419,12 +421,15 @@ def parse_pubdate(raw: str, assume_tz: str | None = None) -> pd.Timestamp | None
         except (TypeError, ValueError):
             continue
         if parsed is not None and parsed.tzinfo is not None:
-            return to_utc(pd.Timestamp(parsed))
+            try:
+                return to_utc(pd.Timestamp(parsed).as_unit("ns"))
+            except (ValueError, OverflowError):
+                return None
 
     if assume_tz:
         try:
-            naive = pd.Timestamp(raw)
-        except ValueError:
+            naive = pd.Timestamp(raw).as_unit("ns")
+        except (ValueError, OverflowError):
             return None
         if naive.tzinfo is None:
             return to_utc(naive.tz_localize(assume_tz))
@@ -489,7 +494,7 @@ def parse_feed(xml: bytes, feed: NewsFeed, collected_at: pd.Timestamp) -> pd.Dat
 
 
 def run_path(root: Path, at: pd.Timestamp) -> Path:
-    """Where one run's articles land.
+    """Base path for a run's clock; ``write_run`` adds a unique identity.
 
     One file per run inside a per-day directory. Nothing is ever appended to or
     rewritten, which satisfies CLAUDE.md's immutability rule without the
@@ -565,17 +570,14 @@ def write_run(df: pd.DataFrame, root: Path, at: pd.Timestamp) -> Path:
     filename; readers skip it because :func:`_read_stored` yields per non-blank
     line and there are none.
     """
-    path = run_path(root, at)
+    base = run_path(root, at)
+    # Independent Actions checkouts cannot see one another's pending files.
+    # A local -vN check would give concurrent news/report polls the same path.
+    path = base.with_name(f"{base.name.removesuffix('.jsonl.gz')}-{uuid.uuid4().hex}.jsonl.gz")
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if path.exists():
-        # CLAUDE.md rule 1: re-runs write to a new suffixed path.
-        suffix = 2
-        while path.with_name(f"{path.name.removesuffix('.jsonl.gz')}-v{suffix}.jsonl.gz").exists():
-            suffix += 1
-        path = path.with_name(f"{path.name.removesuffix('.jsonl.gz')}-v{suffix}.jsonl.gz")
-
-    with gzip.open(path, "wt", encoding="utf-8") as handle:
+    # Exclusive creation also protects immutability if an identity collides.
+    with gzip.open(path, "xt", encoding="utf-8") as handle:
         for row in df.to_dict("records"):
             for key in ("published_at", "collected_at_utc", "known_at_utc"):
                 row[key] = row[key].isoformat()
@@ -650,6 +652,7 @@ def fetch(
     now: pd.Timestamp | None = None,
     timeout: int = _TIMEOUT,
     attempts: int = _ATTEMPTS,
+    workers: int = 4,
 ) -> tuple[pd.DataFrame, ValidationReport]:
     """Poll every feed once and return the articles not already stored.
 
@@ -658,6 +661,8 @@ def fetch(
     else, since that hour cannot be recovered.
     """
     feeds = list(feeds)
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+        raise ValueError("workers must be a positive integer")
     collected_at = to_utc(now or now_utc())
     root = root or Path("data/raw")
 
@@ -665,13 +670,18 @@ def fetch(
     failures: list[FeedFailure] = []
     unfetched: list[str] = []
 
-    for feed in feeds:
-        parsed, failure = _fetch_one(feed, collected_at, timeout=timeout, attempts=attempts)
-        if failure:
-            failures.append(failure)
-            unfetched.append(feed.name)
-        elif parsed is not None and not parsed.empty:
-            frames.append(parsed)
+    def poll(feed):
+        return _fetch_one(feed, collected_at, timeout=timeout, attempts=attempts)
+
+    # Bound network concurrency; consume in config order to preserve deterministic
+    # deduplication and failure output. Workers never write to the raw archive.
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for feed, (parsed, failure) in zip(feeds, executor.map(poll, feeds), strict=True):
+            if failure:
+                failures.append(failure)
+                unfetched.append(feed.name)
+            elif parsed is not None and not parsed.empty:
+                frames.append(parsed)
 
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=list(SCHEMA))
 

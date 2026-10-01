@@ -31,6 +31,10 @@ Beyond this file:
 
 ---
 
+Current operational review/checklist: `notes/review-2026-09-27.md` and
+`notes/next-steps-2026-09-27.md`. These records distinguish local checks,
+deployment and natural-run verification; older notes retain history.
+
 ## Absolute rules
 
 If an instruction conflicts with one of these, say so and ask before proceeding.

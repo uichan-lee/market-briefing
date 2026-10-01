@@ -42,3 +42,23 @@ def test_watchdog_evidence_is_optional(monkeypatch, details):
     if details:
         assert details[:4000] in notice
         assert len(notice) < 4100
+
+
+@pytest.mark.parametrize("results", [[], [False], [True, False]])
+def test_watchdog_failed_or_empty_delivery_exits_nonzero(monkeypatch, results):
+    from src.notify import base
+    from src.util import config
+
+    monkeypatch.setenv("SCHEDULER_REASON", "test failure")
+    monkeypatch.setattr(config, "load_delivery", lambda: {"channels": [{"type": "email"}]})
+    monkeypatch.setattr(
+        base,
+        "deliver",
+        lambda *args, **kwargs: [base.DeliveryResult("email", ok, "mock") for ok in results],
+    )
+    workflow = yaml.safe_load(Path(".github/workflows/scheduler-watchdog.yml").read_text())
+    script = workflow["jobs"]["notify"]["steps"][-1]["run"]
+    code = script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    with pytest.raises(SystemExit) as raised:
+        exec(compile(code, "scheduler-watchdog.yml", "exec"), {})
+    assert raised.value.code == 1

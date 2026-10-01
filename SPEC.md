@@ -61,6 +61,31 @@
 
 ---
 
+### 1.1 News runtime and completion monitoring — 2026-10-01 UTC
+
+Frequent news polls install only the existing `news` dependency group; scheduler
+notices install `notify` (PyYAML). Locked package versions remain unchanged.
+Preparation and execution are separate workflow steps; execution uses `--no-sync`.
+Dedicated caches retain downloaded wheels (`prune-cache: false`). News preparation
+is limited to three minutes, collection to six, and the job remains ten minutes.
+The immutable archive Commit step runs even on validation failure.
+
+Poll up to four feeds concurrently, retaining per-feed retries/timeouts and
+configuration-order aggregation. Worker threads never write archive files.
+Every new poll archive has a UTC minute prefix and a UUID suffix, including
+empty polls. Exclusive creation prevents overwrites; independent news/report
+checkouts cannot generate the same minute-only path. Readers retain support
+for historical unsuffixed and -vN paths. Dates outside the nanosecond schema
+are unparseable items; a wholly unparseable feed fails without losing other feeds.
+Creation freshness (120 minutes) is separate from unfinished-news grace (10
+minutes inclusive). Pending is deferred, not successful. News checks at :25/:40
+cover hourly :17 polls. Additional :55 (UTC hours 0–6) and :10 (hours 1–7) checks
+cover :47 polls before the next :17 success can hide their failure. The watchdog
+cron is `10,15,25,40,55 * * * *`; report watchdog rules stay unchanged.
+Completed failures, missing/stale runs and lookup errors continue to alert.
+There is no stateful alert deduplication.
+A notice workflow fails if any required email delivery fails or none occurs.
+
 ## 2. Report template
 
 ### 2.0 Delivery layer

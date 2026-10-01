@@ -4,7 +4,7 @@ import { dispatch, handleScheduled } from "./scheduler.mjs";
 
 const env = { GITHUB_DISPATCH_TOKEN: "test-token" };
 const now = new Date("2026-09-28T20:25:00Z");
-const cron = "15,25,40 * * * *";
+const cron = "10,15,25,40,55 * * * *";
 function response(status = 204, body = {}) {
   return new Response(status === 204 ? null : JSON.stringify(body), { status });
 }
@@ -96,11 +96,12 @@ test("exactly 120 minutes is healthy; one millisecond older requires confirmatio
   assert.equal((await check([[run({created_at:"2026-09-28T18:25:00Z"})]])).alerts.length, 0);
   assert.equal((await check([[run({created_at:"2026-09-28T18:24:59.999Z"})], []])).alerts.length, 1);
 });
-test("unfinished statuses are rechecked and completion suppresses alert", async () => {
+test("unfinished statuses defer only within the news grace period", async () => {
   for (const status of ["queued", "in_progress", "waiting", "requested", "pending"]) {
     assert.equal((await check([[run({status, conclusion:null})], [run()]])).alerts.length, 0);
     const result = await check([[run({status, conclusion:null})], [run({status, conclusion:null})]]);
-    assert.match(result.alerts[0].reason, /미완료/);
+    assert.equal(result.alerts.length, 0);
+    assert.equal(result.logs.at(-1).decision, "pending");
   }
 });
 test("malformed JSON, missing list, null and invalid timestamps fail closed", async () => {
@@ -156,7 +157,7 @@ test("scheduled dispatch and alert dispatch failure reject", async () => {
     init.method === "GET" ? response(200, {workflow_runs:[]}) : response(403)), /HTTP 403/);
 });
 test("morning and evening watchdog thresholds and routing stay unchanged", async () => {
-  const morning = await check([[], []], new Date("2026-09-28T23:40:00Z"));
+  const morning = await check([[run({created_at:"2026-09-28T23:17:00Z"})], [], []], new Date("2026-09-28T23:40:00Z"));
   assert.match(morning.alerts[0].reason, /아침 리포트/);
   assert.match(morning.alerts[0].details, /threshold_minutes=120/);
   const evening = await check([[], []], new Date("2026-09-28T13:15:00Z"));
@@ -164,11 +165,70 @@ test("morning and evening watchdog thresholds and routing stay unchanged", async
   assert.match(evening.alerts[0].details, /threshold_minutes=40/);
 });
 test("unrelated watchdog slots do not call GitHub", async () => {
-  const result = await check([], new Date("2026-09-28T20:40:00Z"));
+  const result = await check([], new Date("2026-09-28T20:15:00Z"));
   assert.equal(result.calls.length, 0);
 });
 test("plain text rejection and token-bearing errors retain safe diagnosis", async () => {
   await assert.rejects(handleScheduled("17 7-23 * * *", now, env,
     async () => new Response("User-Agent required; test-token", {status:403})),
     /HTTP 403: User-Agent required; \[redacted\]/);
+});
+
+
+test("ten-minute grace boundary is inclusive; one millisecond later alerts", async () => {
+  const pending = run({created_at:"2026-09-28T20:15:00Z", status:"in_progress", conclusion:null});
+  assert.equal((await check([[pending], [pending]])).alerts.length, 0);
+  const old = {...pending, created_at:"2026-09-28T20:14:59.999Z"};
+  const result = await check([[old], [old]]);
+  assert.match(result.alerts[0].reason, /미완료/);
+  assert.match(result.alerts[0].details, /pending_grace_minutes=10/);
+});
+test("follow-up catches the actual cancelled run after a deferred check", async () => {
+  const pending = run({id:36829488727, created_at:"2026-10-01T07:17:39Z", status:"in_progress", conclusion:null});
+  assert.equal((await check([[pending], [pending]], new Date("2026-10-01T07:25:27Z"))).alerts.length, 0);
+  const cancelled = {...pending, status:"completed", conclusion:"cancelled"};
+  const result = await check([[cancelled], [cancelled]], new Date("2026-10-01T07:40:00Z"));
+  assert.match(result.alerts[0].reason, /실패.*cancelled/);
+});
+test("follow-up checks completion and does not mistake a stuck queue for health", async () => {
+  const old = run({created_at:"2026-09-28T20:17:00Z", status:"queued", conclusion:null});
+  const result = await check([[old], [old]], new Date("2026-09-28T20:40:00Z"));
+  assert.match(result.alerts[0].reason, /미완료.*queued/);
+  const completed = {...old, status:"completed", conclusion:"success"};
+  assert.equal((await check([[completed]], new Date("2026-09-28T20:40:00Z"))).alerts.length, 0);
+});
+test("failed completed run has no grace and remains visible despite an older success", async () => {
+  const failed = run({id:51, conclusion:"timed_out"});
+  const older = run({id:50, created_at:"2026-09-28T20:00:00Z"});
+  const result = await check([[older, failed], [older, failed]]);
+  assert.match(result.alerts[0].reason, /실패.*timed_out/);
+});
+test("report completion still has no news grace period", async () => {
+  const pending = run({created_at:"2026-09-28T13:10:00Z", status:"in_progress", conclusion:null});
+  const result = await check([[pending], [pending]], new Date("2026-09-28T13:15:00Z"));
+  assert.match(result.alerts[0].reason, /저녁 리포트.*미완료/);
+  assert.match(result.alerts[0].details, /pending_grace_minutes=0/);
+});
+
+test("half-hour poll is checked before the next hourly success hides cancellation", async () => {
+  const pending = run({id:61, created_at:"2026-10-01T00:47:30Z", status:"in_progress", conclusion:null});
+  const first = await check([[pending], [pending]], new Date("2026-10-01T00:55:00Z"));
+  assert.equal(first.alerts.length, 0);
+  assert.equal(first.logs.at(-1).decision, "pending");
+  const cancelled = {...pending, status:"completed", conclusion:"cancelled"};
+  const followup = await check([[cancelled], [cancelled]], new Date("2026-10-01T01:10:00Z"));
+  assert.match(followup.alerts[0].reason, /실패.*cancelled/);
+  assert.match(followup.alerts[0].details, /run=61/);
+  const laterSuccess = run({id:62, created_at:"2026-10-01T01:17:30Z"});
+  const recovered = await check([[cancelled, laterSuccess]], new Date("2026-10-01T01:25:00Z"));
+  assert.equal(recovered.alerts.length, 0);
+});
+
+test("half-hour checks cover the final :47 poll without adding off-hours news reads", async () => {
+  const success = run({created_at:"2026-10-01T06:47:30Z"});
+  assert.equal((await check([[success]], new Date("2026-10-01T06:55:00Z"))).logs.at(-1).decision, "healthy");
+  assert.equal((await check([[success]], new Date("2026-10-01T07:10:00Z"))).logs.at(-1).decision, "healthy");
+  for (const at of ["2026-10-01T00:10:00Z", "2026-10-01T07:55:00Z", "2026-10-01T08:10:00Z"]) {
+    assert.equal((await check([], new Date(at))).calls.length, 0);
+  }
 });
