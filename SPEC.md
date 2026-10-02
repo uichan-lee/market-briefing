@@ -5,6 +5,9 @@
 > Optional watchdog `details` carries safe run/timing evidence; lookup failure
 > is unknown, not proven staleness. Existing schedules and thresholds remain.
 > **2026-10-02 operating status:** Worker `d2a79688` is active at 100%.
+> Source `cb7cbff` naturally passed news validation and archived 35 articles
+> on 2026-10-02 07:17 UTC. Unverified news notices now reach report/email and
+> are pinned with publication inputs; normal new-source briefing is pending.
 > Healthy natural news collection/archive, failed-run SMTP acceptance and
 > current-cron monitoring including both added :55/:10 slots are verified.
 > Normal post-release briefing publication/receipt/delivery remain pending. See
