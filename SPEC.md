@@ -5,8 +5,9 @@
 > Optional watchdog `details` carries safe run/timing evidence; lookup failure
 > is unknown, not proven staleness. Existing schedules and thresholds remain.
 > **2026-10-02 operating status:** Worker `d2a79688` is active at 100%.
-> Natural news archive and watchdog SMTP acceptance are verified; healthy
-> follow-up collection and normal briefing delivery remain pending. See
+> Healthy natural news collection/archive and failed-run watchdog SMTP
+> acceptance are verified; healthy-run monitoring and normal briefing delivery
+> remain pending. See
 > [current operating evidence](notes/review-2026-09-27.md).
 
 > [!abstract] Purpose of this document
