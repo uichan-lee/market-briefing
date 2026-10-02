@@ -32,6 +32,39 @@ from src.eval.ic import (
 from src.util.session import trading_days
 
 
+def test_real_ic_loader_fails_before_reading_any_archives(monkeypatch, tmp_path):
+    from src.eval import ic
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Blocked IC loader must not read raw prices or calculate outcomes")
+
+    monkeypatch.setattr(pd, "read_parquet", forbidden)
+    monkeypatch.setattr(ic, "forward_return", forbidden)
+    with pytest.raises(ValueError, match="Real IC evaluation requires.*v2 registration"):
+        ic.load(tmp_path, [], as_of=pd.Timestamp("2026-10-02T00:00Z"))
+
+
+def test_real_ic_cli_reports_the_blocker_without_metrics(capsys):
+    from src.eval import ic
+
+    with pytest.raises(SystemExit) as error:
+        ic.main(["report", "--as-of", "2026-10-02T00:00Z"])
+    assert error.value.code == 2
+    output = capsys.readouterr()
+    assert "Real IC evaluation requires" in output.err
+    assert output.out == ""
+
+
+def test_real_ic_cli_requires_an_aware_cutoff(capsys):
+    from src.eval import ic
+
+    for arguments in (["report"], ["report", "--as-of", "2026-10-02 00:00"]):
+        with pytest.raises(SystemExit) as error:
+            ic.main(arguments)
+        assert error.value.code == 2
+        assert capsys.readouterr().out == ""
+
+
 def sessions(n: int, start: dt.date = dt.date(2026, 8, 13)) -> list[dt.date]:
     return trading_days("KR", start, dt.date(2026, 11, 13))[:n]
 

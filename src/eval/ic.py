@@ -33,11 +33,11 @@ number:
    point estimate that clears the bar with an interval straddling zero passes
    the gate as written and settles nothing.
 
-**Scores are read from the archive, not recomputed.** `data/ratings/` holds what
-was actually published on each session, which is both what was knowable that day
-and what §8.4 calls "the pipeline's actual output". Recomputing features at a
-past `as_of` would additionally depend on `render.py`'s inert look-ahead guard,
-which is a separate defect and not one this measurement should inherit.
+**Real-data loading is disabled.** Legacy latest-file selection cannot establish
+the publication, outcome or price vintage needed for an honest evaluation.
+`load` requires an explicit aware cutoff and refuses calculation pending verified
+price basis, canonical publication/outcome selection and v2 registration.
+The pure calculators remain available for synthetic validation only.
 
 **`news_polarity` IC is not computed here.** §8.4 asks for it separately, and it
 has no producer — SPEC §12 steps 6–8 are unbuilt. Deferred on the record in
@@ -55,10 +55,9 @@ import numpy as np
 import pandas as pd
 
 from src.eval.bakeoff import spearman
-from src.features.compute import NO_SECTOR, load_raw, sector_map
-from src.report.render import load_rating_history
-from src.util.config import WatchlistEntry, load_watchlist
-from src.util.session import next_trading_day
+from src.features.compute import NO_SECTOR
+from src.util.config import WatchlistEntry
+from src.util.session import next_trading_day, to_utc
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
@@ -317,13 +316,22 @@ def _cell(value: float | None, digits: int = 3) -> str:
     return "—" if value is None else f"{value:.{digits}f}"
 
 
-def load(root: Path = DATA, watchlist: Sequence[WatchlistEntry] | None = None) -> pd.DataFrame:
-    """Everything the metrics need, joined: published scores and realised returns."""
-    entries = list(watchlist) if watchlist is not None else load_watchlist(market="KR")
-    prices = load_raw(root / "raw", "kr/price", key=("date", "ticker"))
-    ratings = load_rating_history(root)
-    sectors = sector_map(entries)
-    return paired(ratings, excess_return(forward_return(prices), sectors))
+def load(
+    root: Path = DATA,
+    watchlist: Sequence[WatchlistEntry] | None = None,
+    *,
+    as_of: pd.Timestamp,
+) -> pd.DataFrame:
+    """Block real archives until verified prices and registered vintages exist.
+
+    Pure calculators remain available for synthetic verification. Latest raw
+    revisions and rating files cannot certify prospective publication/outcomes.
+    """
+    to_utc(as_of)
+    raise ValueError(
+        "Real IC evaluation requires verified price basis, canonical publication/outcome "
+        "vintages and v2 registration; calculation is deferred"
+    )
 
 
 def report(pairs: pd.DataFrame, *, start: dt.date = WINDOW_START, end: dt.date = WINDOW_END) -> str:
@@ -405,10 +413,14 @@ def main(argv: list[str] | None = None) -> int:
     reporter = sub.add_parser("report", help="print the §8.4 table")
     reporter.add_argument("--start", type=dt.date.fromisoformat, default=WINDOW_START)
     reporter.add_argument("--end", type=dt.date.fromisoformat, default=WINDOW_END)
+    reporter.add_argument("--as-of", type=to_utc, required=True, help="timezone-aware UTC cutoff")
 
     args = parser.parse_args(argv)
     if args.command == "report":
-        pairs = load()
+        try:
+            pairs = load(as_of=args.as_of)
+        except ValueError as exc:
+            parser.error(str(exc))
         pairs = _in_window(pairs, args.start, args.end)
         print(report(pairs, start=args.start, end=args.end))
     return 0
