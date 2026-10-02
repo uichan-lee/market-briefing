@@ -1,5 +1,34 @@
 # Filings collectors (`filing` scan flag, SPEC §2.2②): plan and record
 
+## Report-date validation correction — 2026-10-01 UTC
+
+Codex reproduced the production warning from captured inputs over the same
+8-day collection window: evening **1,966 rows / 97.7%** missing report dates,
+morning **2,383 rows / 97.4%**. The aggregate 97% threshold confounded filing mix
+with source quality. Prospectuses and other non-report forms dominate this window;
+all eight/nine reviewed report rows, respectively, have a report date.
+
+Validation now requires zero missing report dates within reviewed annual,
+quarterly and current-report forms (10-K, 10-KT, 10-Q, 10-QT, 20-F, 40-F, 8-K,
+6-K and amendments). Other forms remain nullable, with missing counts recorded
+in validation detail. This is a bounded collector contract, not a complete SEC
+form validator. Required CIK/ticker/accession/form/filing-date/acceptance clocks
+and primary-document checks are unchanged. Malformed nonblank dates still fail
+parsing. Fetch endpoints, requests, source scope, raw schema and ratings are unchanged.
+
+Primary documentation checked in this session:
+[SEC period rules](https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/understand-automated-conformance-rules-edgar-data-fields),
+[Form 10-K](https://www.sec.gov/files/form10-k.pdf) and
+[Form 10-Q](https://www.sec.gov/files/form10-q.pdf).
+The bounded mandatory-date contract is Codex's validation choice informed by
+these documents, not an assertion that every SEC form follows one rule.
+
+New regressions failed before the correction (**19 failed, two passed**) and pass
+after it, including a missing 10-K amid 1,000 nullable prospectuses and required
+acceptance/document fields. Captured morning/evening window checks now pass
+without vendor calls or rewriting old status. Local only; production acceptance
+requires the next natural run after an authorized release.
+
 Written 2026-08-25, alongside implementation — this is a record of the design
 decisions made and the live findings that shaped them, not a plan written
 before any code existed. `notes/calendar-collector-plan.md` left the DART

@@ -28,9 +28,12 @@ against a real gap, since none appeared in the live sample).
 sample, but **93.3% empty measured 2026-08-25 across the full 40-ticker US
 watchlist** (1550 rows, 8-day window): Apple's own filing mix is unusually
 report-period-heavy compared to the watchlist as a whole, which is mostly
-Form 4/144/424B2/FWP — the single-company number was not representative and
-the threshold below is calibrated on the real watchlist measurement, not the
-sample that motivated the column. ``primaryDocument`` was 0% empty in both.
+Form 4/144/424B2/FWP — the single-company number was not representative.
+An aggregate missingness threshold therefore measures filing mix rather than
+quality. The October 1 correction requires a report date for reviewed annual,
+quarterly and current-report forms, including amendments, and leaves other forms
+nullable. This is a bounded collector contract, not a complete SEC form validator.
+``primaryDocument`` was 0% empty in both.
 
 **`acceptanceDateTime` can be *before* midnight UTC of `date` — this is SEC's
 own rule, not a defect.** EDGAR assigns a filing's regulatory ``filingDate``
@@ -107,12 +110,20 @@ MISSING_THRESHOLDS = {
     "form": 0.0,
     "date": 0.0,
     "known_at_utc": 0.0,
-    # 93.3% missing measured 2026-08-25 across the full watchlist (see module
-    # docstring) — not a data-quality signal, just this watchlist's filing
-    # mix. 0.97 leaves margin without disabling the check entirely.
-    "report_date": 0.97,
     "primary_document": 0.02,  # 0% missing in the live sample; near-zero, not 0
 }
+
+# Reviewed report forms have an explicit reporting period/event date. Other
+# forms remain nullable rather than inheriting an empirical watchlist-wide ratio.
+# SEC period rules and the 10-K/10-Q cover forms were checked on 2026-10-01:
+# https://www.sec.gov/submit-filings/filer-support-resources/how-do-i-guides/understand-automated-conformance-rules-edgar-data-fields
+# https://www.sec.gov/files/form10-k.pdf
+# https://www.sec.gov/files/form10-q.pdf
+REQUIRED_REPORT_DATE_FORMS = frozenset(
+    form + amendment
+    for form in ("10-K", "10-KT", "10-Q", "10-QT", "20-F", "40-F", "8-K", "6-K")
+    for amendment in ("", "/A")
+)
 
 # Apple's FY2025 10-K, cross-checked 2026-08-25 against three independent
 # sources (last10k.com, fintel.io, TradingView — none is the EDGAR API under
@@ -205,6 +216,28 @@ def check_filing_plausibility(
     return CheckResult("filing_plausibility", True, f"{len(df)} rows plausible")
 
 
+def check_report_dates(df: pd.DataFrame) -> CheckResult:
+    """Check zero missing dates within the reviewed forms; disclose nullable rows."""
+    if df.empty:
+        return CheckResult("report_date", True, "no rows")
+    if not {"form", "report_date"} <= set(df.columns):
+        return CheckResult("report_date", False, "form/report_date column missing")
+    required = df["form"].isin(REQUIRED_REPORT_DATE_FORMS)
+    missing = df["report_date"].isna()
+    invalid = required & missing
+    if invalid.any():
+        counts = df.loc[invalid, "form"].value_counts().sort_index()
+        detail = ", ".join(f"{form}: {count}" for form, count in counts.items())
+        return CheckResult("report_date", False, f"required report_date missing ({detail})")
+    return CheckResult(
+        "report_date",
+        True,
+        f"{int(required.sum())} reviewed report rows have dates; "
+        f"{int((missing & ~required).sum())}/{int((~required).sum())} nullable other-form dates; "
+        f"overall missing {missing.mean():.1%}",
+    )
+
+
 def validate_frame(
     df: pd.DataFrame,
     ciks: Sequence[str],
@@ -222,6 +255,7 @@ def validate_frame(
         check_missing_ratio(df, MISSING_THRESHOLDS)
         if len(df)
         else CheckResult("missing_ratio", True, "no rows"),
+        check_report_dates(df),
         check_filing_plausibility(df, ciks, start, end),
     ]
     if known_value:

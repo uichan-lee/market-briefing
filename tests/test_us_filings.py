@@ -175,6 +175,74 @@ def test_the_known_value_is_wired_to_a_ticker_the_fixture_covers(payload):
     assert KNOWN_VALUE["where"]["accession_no"] in payload["filings"]["recent"]["accessionNumber"]
 
 
+@pytest.mark.parametrize(
+    "form",
+    [
+        "10-K",
+        "10-K/A",
+        "10-Q",
+        "10-Q/A",
+        "10-KT",
+        "10-QT",
+        "20-F",
+        "20-F/A",
+        "40-F",
+        "40-F/A",
+        "8-K",
+        "8-K/A",
+        "6-K",
+        "6-K/A",
+    ],
+)
+def test_report_forms_cannot_lose_their_report_date(frame, form):
+    rows = frame.iloc[:1].copy()
+    rows["form"] = form
+    rows["report_date"] = pd.NaT
+    report = validate_frame(
+        rows, ["0000320193"], dt.date(2000, 1, 1), dt.date(2030, 1, 1), known_value=False
+    )
+    assert not report.ok
+    assert any(r.name == "report_date" and form in r.detail for r in report.failures)
+
+
+@pytest.mark.parametrize("form", ["424B2", "FWP", "424B3", "144"])
+def test_nullable_report_dates_do_not_fail_quiet_or_prospectus_windows(frame, form):
+    rows = frame.iloc[:1].copy()
+    rows["form"] = form
+    rows["report_date"] = pd.NaT
+    report = validate_frame(
+        rows, ["0000320193"], dt.date(2000, 1, 1), dt.date(2030, 1, 1), known_value=False
+    )
+    assert report.ok, report.summary()
+    assert any(r.name == "report_date" and "nullable" in r.detail for r in report.results)
+
+
+def test_optional_filing_volume_cannot_hide_a_missing_periodic_report_date(frame):
+    rows = pd.concat([frame.iloc[:1]] * 1001, ignore_index=True)
+    rows["accession_no"] = [f"test-{i}" for i in range(len(rows))]
+    rows["form"] = "424B2"
+    rows["report_date"] = pd.NaT
+    rows.loc[0, "form"] = "10-K"
+    report = validate_frame(
+        rows, ["0000320193"], dt.date(2000, 1, 1), dt.date(2030, 1, 1), known_value=False
+    )
+    assert not report.ok
+    assert any(r.name == "report_date" and "10-K" in r.detail for r in report.failures)
+
+
+@pytest.mark.parametrize("field", ["known_at_utc", "primary_document"])
+def test_nullable_report_date_does_not_relax_required_fields(frame, field):
+    rows = frame.iloc[:1].copy()
+    rows["form"] = "424B2"
+    rows["report_date"] = pd.NaT
+    rows[field] = None
+    report = validate_frame(
+        rows, ["0000320193"], dt.date(2000, 1, 1), dt.date(2030, 1, 1), known_value=False
+    )
+    assert not report.ok
+    assert any(r.name == "missing_ratio" and field in r.detail for r in report.failures)
+
+
 # --- fetch(), mocked --------------------------------------------------------
 
 
