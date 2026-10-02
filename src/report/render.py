@@ -129,6 +129,7 @@ class ReportInputs:
     collector_failures: Sequence[str] = ()
     research_limitations: Sequence[str] = ()
     scoring_notices: Sequence[str] = ()
+    news_notices: Sequence[str] = ()
     news_gaps: Sequence[str] = ()
     delivery_failures: Sequence[str] = ()
     # Dates in `us_prices` served by the Tiingo preview rather than the Alpaca
@@ -360,6 +361,7 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
     for limitation in dict.fromkeys(limitations):
         warnings.append(f"⚠ 학습 제한: {limitation}")
     warnings.extend(inputs.scoring_notices)
+    warnings.extend(inputs.news_notices)
     if inputs.news_gaps:
         warnings.append(f"⚠ 뉴스 유실: {'; '.join(inputs.news_gaps)}")
     if inputs.vendor_disagreements:
@@ -1464,8 +1466,13 @@ def load_inputs(
     else:
         day_scores = pd.DataFrame(columns=news_scores.columns)
     scoring_notices: list[str] = []
+    news_notices: list[str] = []
     status_failures, news_gaps = read_status(
-        root, as_of=as_of, provenance=provenance, scoring_notices=scoring_notices
+        root,
+        as_of=as_of,
+        provenance=provenance,
+        scoring_notices=scoring_notices,
+        news_notices=news_notices,
     )
     legacy_sources = sorted({record["source"] for record in provenance if record.get("legacy")})
     research_limitations = (
@@ -1495,6 +1502,7 @@ def load_inputs(
         collector_failures=[*failures, *status_failures],
         research_limitations=research_limitations,
         scoring_notices=scoring_notices,
+        news_notices=news_notices,
         news_gaps=news_gaps,
         us_preview_dates=preview_dates,
         vendor_disagreements=disagreements,
@@ -1594,6 +1602,7 @@ def read_status(
     as_of: pd.Timestamp | None = None,
     provenance: list[dict] | None = None,
     scoring_notices: list[str] | None = None,
+    news_notices: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Check failures and news gaps from the most recent collection run.
 
@@ -1632,6 +1641,11 @@ def read_status(
         notice = _scoring_backlog_notice(backlog)
         if notice:
             scoring_notices.append(notice)
+    if news_notices is not None:
+        news = newest.get("collectors", {}).get("kr_news", {})
+        notice = _news_availability_notice(news.get("feed_availability"))
+        if notice:
+            news_notices.append(notice)
     counted: dict[str, int] = {}
     gaps: list[str] = []
     for name, outcome in newest.get("collectors", {}).items():
@@ -1649,6 +1663,28 @@ def read_status(
 
     failures = [key if n == 1 else f"{key}×{n}" for key, n in counted.items()]
     return failures, gaps
+
+
+def _news_availability_notice(availability: object) -> str | None:
+    """Disclose unavailable continuity evidence without declaring news loss."""
+    if (
+        not isinstance(availability, dict)
+        or type(availability.get("schema_version")) is not int
+        or availability["schema_version"] != 1
+    ):
+        return None
+    parts = []
+    for key, label in [("unfetched", "응답 없음"), ("unmeasured_clocks", "비교 가능한 날짜 없음")]:
+        names = availability.get(key)
+        if not isinstance(names, list) or any(
+            not isinstance(name, str) or not name for name in names
+        ):
+            return None
+        if names:
+            parts.append(f"{label}: {', '.join(sorted(set(names)))}")
+    if not parts:
+        return None
+    return f"⚠ 뉴스 연속성 미확인 (유실 확인 아님): {'; '.join(parts)}"
 
 
 def _scoring_backlog_notice(backlog: object) -> str | None:

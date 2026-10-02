@@ -449,6 +449,41 @@ def test_scoring_backlog_is_not_invented_for_legacy_status(tmp_path, monkeypatch
     assert "scoring_backlog" not in outcome and "scoring_budget" not in outcome
 
 
+@pytest.mark.parametrize("kind", ["unfetched", "unmeasured_clocks"])
+def test_unverified_news_coverage_reaches_both_report_formats(tmp_path, monkeypatch, kind):
+    import scripts.collect_daily as mod
+    from src.collectors.validate import CheckResult
+    from src.report.render import build_summary_html, load_inputs, rate_all, render_header
+
+    at = pd.Timestamp("2026-08-20T12:37:00Z")
+    availability = {"schema_version": 1, "unfetched": [], "unmeasured_clocks": []}
+    availability[kind] = ["test_feed"]
+    report = ValidationReport(
+        "kr_news", [CheckResult("feed_availability", True, json.dumps(availability))]
+    )
+    monkeypatch.setattr(mod, "RUNS", {"evening": {"kr_news": lambda *args: ("quiet", report)}})
+    monkeypatch.setattr(mod, "STATUS", tmp_path / "status")
+    monkeypatch.setattr(mod, "now_utc", lambda: at)
+    assert mod.main(["--run", "evening"]) == 0
+    outcome = json.loads(next((tmp_path / "status").glob("*.json")).read_text())["collectors"][
+        "kr_news"
+    ]
+    assert outcome["ok"] and not outcome["failures"]
+    assert outcome["feed_availability"] == availability
+    assert not load_inputs(at.date(), as_of=at, root=tmp_path).news_notices
+    inputs = load_inputs(at.date(), as_of=at + pd.Timedelta(minutes=4), root=tmp_path)
+    assert len(inputs.news_notices) == 1
+    notice = inputs.news_notices[0]
+    assert "뉴스 연속성 미확인" in notice and "test_feed" in notice
+    assert "유실 확인 아님" in notice
+    assert notice in render_header(inputs)
+    before = rate_all(inputs)
+    assert notice in build_summary_html(inputs, before)
+    assert not inputs.news_gaps and "kr_news/fetch" not in inputs.collector_failures
+    inputs.news_notices = []
+    assert rate_all(inputs) == before
+
+
 @pytest.mark.parametrize("fetch_ok", [True, False])
 def test_calendar_notices_survive_status_and_reach_renderer(tmp_path, monkeypatch, fetch_ok):
     import scripts.collect_daily as mod

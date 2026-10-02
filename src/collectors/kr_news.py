@@ -771,6 +771,20 @@ def fetch(
             or f"{len(feeds)} feeds, {fetched} items seen, {len(df)} new",
         )
     )
+    if unfetched or unmeasured:
+        report.add(
+            CheckResult(
+                "feed_availability",
+                True,
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "unfetched": sorted(set(unfetched)),
+                        "unmeasured_clocks": sorted(unmeasured),
+                    }
+                ),
+            )
+        )
     return df, report
 
 

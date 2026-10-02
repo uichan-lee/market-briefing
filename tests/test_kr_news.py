@@ -678,6 +678,8 @@ def test_a_feed_that_did_not_answer_no_longer_fails_the_run(monkeypatch, tmp_pat
     assert report.ok, report.summary()
     fetch_result = next(r for r in report.results if r.name == "fetch")
     assert "hankyung_finance" in fetch_result.detail, "the outage must still be named"
+    availability = next(r for r in report.results if r.name == "feed_availability")
+    assert json.loads(availability.detail)["unfetched"] == [BROKEN_FEED.name]
 
 
 def test_a_feed_that_answered_with_garbage_still_fails_the_run(monkeypatch, tmp_path):
@@ -752,6 +754,10 @@ def test_unusable_feed_clocks_leave_loss_unmeasured(
     assert "overlap" not in continuity.detail
     assert " lost " not in continuity.detail
     assert not checks["structural_invariants"].passed
+
+    availability = json.loads(checks["feed_availability"].detail)
+    assert availability["unfetched"] == []
+    assert availability["unmeasured_clocks"] == ["newsis_economy"]
 
 
 @pytest.mark.parametrize("offset", [dt.timedelta(days=-30), dt.timedelta(hours=6)])

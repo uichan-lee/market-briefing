@@ -542,6 +542,10 @@ def main(argv: list[str] | None = None) -> int:
                         outcomes[name]["scoring_budget"] = check.detail
                     elif check.name == "scoring_backlog":
                         outcomes[name]["scoring_backlog"] = json.loads(check.detail)
+            if name == "kr_news":
+                for check in report.results:
+                    if check.name == "feed_availability":
+                        outcomes[name]["feed_availability"] = json.loads(check.detail)
         except Exception as exc:  # noqa: BLE001 - one source must not stop the rest
             outcomes[name] = {
                 "ok": False,
