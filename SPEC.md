@@ -6,8 +6,8 @@
 > is unknown, not proven staleness. Existing schedules and thresholds remain.
 > **2026-10-02 operating status:** Worker `d2a79688` is active at 100%.
 > Healthy natural news collection/archive, failed-run SMTP acceptance and
-> current-cron healthy monitoring are verified. Added :55/:10 slots and normal
-> briefing delivery remain pending. See
+> current-cron monitoring including both added :55/:10 slots are verified.
+> Normal post-release briefing publication/receipt/delivery remain pending. See
 > [current operating evidence](notes/review-2026-09-27.md).
 
 > [!abstract] Purpose of this document
