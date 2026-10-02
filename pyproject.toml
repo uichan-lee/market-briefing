@@ -135,8 +135,9 @@ pythonpath = ["."]
 # --strict-markers turns a typo'd or unregistered marker into an error instead of
 # a warning. That matters here because CLAUDE.md requires `pytest -m "not network"`
 # as the default run: a silently-unregistered `network` marker would mean
-# network tests quietly run in CI.
-addopts = "--strict-markers"
+# network tests quietly run in CI. Default selection also excludes live calls
+# when the caller omits -m; an explicit -m network overrides this selection.
+addopts = "--strict-markers -m 'not network'"
 markers = [
     "network: test performs a live network call; excluded from the default run",
 ]
