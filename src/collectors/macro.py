@@ -279,27 +279,36 @@ def fetch(
     failures: list[str] = []
 
     for name, series_id in series.items():
-        response = requests.get(
-            _API,
-            params={
-                "series_id": series_id,
-                "api_key": key,
-                "file_type": "json",
-                "observation_start": start.isoformat(),
-                "observation_end": end.isoformat(),
-            },
-            timeout=30,
-        )
-        if response.status_code != 200:
-            failures.append(f"{name} ({series_id}): HTTP {response.status_code}")
+        try:
+            response = requests.get(
+                _API,
+                params={
+                    "series_id": series_id,
+                    "api_key": key,
+                    "file_type": "json",
+                    "observation_start": start.isoformat(),
+                    "observation_end": end.isoformat(),
+                },
+                timeout=30,
+            )
+            if response.status_code != 200:
+                failures.append(f"{name} ({series_id}): HTTP {response.status_code}")
+                continue
+
+            observations = response.json().get("observations")
+            if observations is None:
+                failures.append(f"{name} ({series_id}): no observations in response")
+                continue
+
+            if not isinstance(observations, list):
+                raise ValueError("observations must be a list")
+            parsed = _parse(observations, name, series_id)
+        except (requests.RequestException, ValueError, KeyError, TypeError, AttributeError) as exc:
+            # FRED URLs contain api_key. Preserve the failure class, not its
+            # potentially credential-bearing text, and keep successful series.
+            failures.append(f"{name} ({series_id}): {type(exc).__name__}")
             continue
 
-        observations = response.json().get("observations")
-        if observations is None:
-            failures.append(f"{name} ({series_id}): no observations in response")
-            continue
-
-        parsed = _parse(observations, name, series_id)
         if not parsed.empty:
             frames.append(parsed)
 

@@ -248,3 +248,32 @@ def test_live_fetch_matches_the_committed_fixture():
     df, report = fetch(["005930"], corp_map, dt.date(2026, 8, 10), dt.date(2026, 8, 25))
     assert report.ok, report.summary()
     assert (df["rcept_no"] == KNOWN_VALUE["where"]["rcept_no"]).any()
+
+
+@pytest.mark.parametrize("error_type", [requests.HTTPError, requests.Timeout])
+def test_fetch_failure_does_not_persist_credential(monkeypatch, error_type):
+    secret = "AUDIT_FAKE_SECRET"
+
+    def failed(*args, **kwargs):
+        response = requests.Response()
+        response.status_code = 403
+        raise error_type(
+            f"https://opendart.fss.or.kr/api/list.json?crtfc_key={secret}", response=response
+        )
+
+    monkeypatch.setattr("src.collectors.kr_filings._fetch_one", failed)
+    monkeypatch.setattr("src.collectors.kr_filings.time.sleep", lambda _: None)
+    _, report = fetch(
+        ["005930"],
+        {"005930": {"corp_code": "00126380"}},
+        dt.date(2026, 8, 1),
+        dt.date(2026, 8, 25),
+        api_key=secret,
+        sleep_seconds=0,
+    )
+    details = " ".join(result.detail for result in report.results)
+    assert secret not in details
+    assert "crtfc_key" not in details
+    assert error_type.__name__ in details
+    assert "403" in details
+    assert not report.ok

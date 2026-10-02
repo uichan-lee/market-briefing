@@ -43,7 +43,7 @@ import datetime as dt
 import json
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pandas as pd
@@ -62,7 +62,7 @@ from src.collectors import (
     us_price,
     us_price_alpaca,
 )
-from src.collectors.validate import ValidationReport
+from src.collectors.validate import CheckResult, ValidationReport, check_known_value
 from src.llm import daily_scoring
 from src.util.config import load_filing_ids, load_news_feeds, load_watchlist
 from src.util.point_in_time import INGESTED, stamp_ingestion
@@ -252,6 +252,31 @@ def write_daily(
 # --- the collectors each run invokes --------------------------------------
 
 
+def _check_live_reference(
+    report: ValidationReport,
+    known_value: Mapping,
+    fetch_reference: Callable[[], tuple[pd.DataFrame, ValidationReport]],
+    *,
+    pause_seconds: float = 0.0,
+) -> None:
+    """Verify today's source mapping against a separately fetched historical anchor.
+
+    The daily window normally excludes the fixed reference date. Re-reading the
+    stored anchor would only validate an old fetch, so request one reference day
+    through the same collector instead. Keep that frame out of raw storage and
+    features. A failed probe must not prevent the current batch from being saved.
+    """
+    try:
+        if pause_seconds:
+            time.sleep(pause_seconds)
+        reference, _ = fetch_reference()
+        result = check_known_value(reference, **known_value)
+    except Exception as exc:
+        # Vendor exceptions can include credential-bearing request URLs.
+        result = CheckResult("known_value", False, f"reference probe failed ({type(exc).__name__})")
+    report.add(result)
+
+
 def kr_end(at: pd.Timestamp) -> dt.date:
     """The newest end date safe to fetch KR data for.
 
@@ -285,6 +310,13 @@ def collect_kr_price(start: dt.date, end: dt.date) -> tuple[str, ValidationRepor
     tickers = [e.ticker for e in load_watchlist(market="KR")]
     df, report = kr_price.fetch(tickers, start, end)
     new, revised = write_daily("kr_price", df)
+    reference = kr_price.KNOWN_VALUE["where"]
+    _check_live_reference(
+        report,
+        kr_price.KNOWN_VALUE,
+        lambda: kr_price.fetch([reference["ticker"]], reference["date"], reference["date"]),
+        pause_seconds=1.0,
+    )
     return f"{len(df)} rows, {new} new / {revised} revised", report
 
 
@@ -293,6 +325,13 @@ def collect_kr_flow(start: dt.date, end: dt.date) -> tuple[str, ValidationReport
     tickers = [e.ticker for e in load_watchlist(market="KR")]
     df, report = kr_flow.fetch(tickers, start, end)
     new, revised = write_daily("kr_flow", df)
+    reference = kr_flow.KNOWN_VALUE["where"]
+    _check_live_reference(
+        report,
+        kr_flow.KNOWN_VALUE,
+        lambda: kr_flow.fetch([reference["ticker"]], reference["date"], reference["date"]),
+        pause_seconds=1.0,
+    )
     return f"{len(df)} rows, {new} new / {revised} revised", report
 
 
@@ -311,6 +350,13 @@ def collect_kr_index(start: dt.date, end: dt.date) -> tuple[str, ValidationRepor
     end = min(end, kr_end(now_utc()))
     df, report = kr_index.fetch(start, end)
     new, revised = write_daily("kr_index", df)
+    reference_day = kr_index.KNOWN_VALUE["where"]["date"]
+    _check_live_reference(
+        report,
+        kr_index.KNOWN_VALUE,
+        lambda: kr_index.fetch(reference_day, reference_day),
+        pause_seconds=1.0,
+    )
     return f"{len(df)} rows, {new} new / {revised} revised", report
 
 
@@ -349,6 +395,15 @@ def collect_macro(start: dt.date, end: dt.date) -> tuple[str, ValidationReport]:
     del start
     df, report = macro.fetch(end - dt.timedelta(days=MACRO_WINDOW_DAYS), end)
     new, revised = write_daily("macro", df)
+    reference_day = macro.KNOWN_VALUE["where"]["date"]
+    reference_series = macro.KNOWN_VALUE["where"]["series"]
+    _check_live_reference(
+        report,
+        macro.KNOWN_VALUE,
+        lambda: macro.fetch(
+            reference_day, reference_day, series={reference_series: macro.SERIES[reference_series]}
+        ),
+    )
     return f"{len(df)} rows, {new} new / {revised} revised", report
 
 

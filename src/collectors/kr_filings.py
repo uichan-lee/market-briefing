@@ -303,7 +303,14 @@ def fetch(
                 last_error = exc
 
         if last_error is not None:
-            failures.append(f"{ticker}: {last_error}")
+            # Exception URLs and vendor messages may contain crtfc_key. Never
+            # persist their text; class/status retain safe retry diagnostics.
+            response = getattr(last_error, "response", None)
+            status = getattr(response, "status_code", None)
+            detail = type(last_error).__name__
+            if status is not None:
+                detail += f" HTTP {status}"
+            failures.append(f"{ticker}: {detail}")
             continue
 
         parsed = _parse(rows, ticker)

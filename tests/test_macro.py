@@ -289,3 +289,40 @@ def test_a_series_with_no_rows_at_all_is_named():
     )
     assert not result.passed
     assert "no rows at all" in result.detail
+
+
+@pytest.mark.parametrize("failure", ["timeout", "json", "schema"])
+def test_one_failed_series_keeps_successful_observations(monkeypatch, failure):
+    import requests
+
+    from src.collectors.macro import fetch
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, broken):
+            self.broken = broken
+
+        def json(self):
+            if self.broken and failure == "json":
+                raise ValueError("AUDIT_FAKE_SECRET")
+            if self.broken:
+                return {"observations": [{"value": "1"}]}
+            return {"observations": [{"date": "2024-01-02", "value": "3.95"}]}
+
+    def fake_get(url, params, timeout):
+        broken = params["series_id"] == "BROKEN"
+        if broken and failure == "timeout":
+            raise requests.Timeout("?api_key=AUDIT_FAKE_SECRET")
+        return Response(broken)
+
+    monkeypatch.setattr("src.collectors.macro.requests.get", fake_get)
+    monkeypatch.setenv("FRED_API_KEY", "AUDIT_FAKE_SECRET")
+    df, report = fetch(
+        dt.date(2024, 1, 2), dt.date(2024, 1, 2), series={"us_10y": "DGS10", "vix": "BROKEN"}
+    )
+    assert list(df["series"]) == ["us_10y"]
+    assert df.iloc[0]["value"] == 3.95
+    assert not report.ok
+    assert "AUDIT_FAKE_SECRET" not in report.summary()
+    assert any(result.name == "fetch" and not result.passed for result in report.results)

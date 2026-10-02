@@ -40,10 +40,10 @@ def test_macro_looks_back_further_than_the_driver_window(monkeypatch):
     is the previous UTC day, so every Monday landed exactly there."""
     import scripts.collect_daily as mod
 
-    seen = {}
+    seen = []
 
     def spy(start, end, **kwargs):
-        seen["start"], seen["end"] = start, end
+        seen.append((start, end))
         return pd.DataFrame(), ValidationReport("macro")
 
     monkeypatch.setattr(mod.macro, "fetch", spy)
@@ -52,10 +52,56 @@ def test_macro_looks_back_further_than_the_driver_window(monkeypatch):
     end = dt.date(2026, 8, 9)
     mod.collect_macro(end - dt.timedelta(days=mod.WINDOW_DAYS), end)
 
-    assert seen["end"] == end
-    assert seen["start"] == end - dt.timedelta(days=mod.MACRO_WINDOW_DAYS)
+    assert seen[0][1] == end
+    assert seen[0][0] == end - dt.timedelta(days=mod.MACRO_WINDOW_DAYS)
     # The observation the 8-day window missed has to be inside this one.
-    assert seen["start"] <= dt.date(2026, 7, 31)
+    assert seen[0][0] <= dt.date(2026, 7, 31)
+
+
+@pytest.mark.parametrize("source", ["kr_price", "kr_flow", "kr_index", "macro"])
+@pytest.mark.parametrize("probe", ["correct", "wrong", "missing", "error"])
+def test_live_reference_check_preserves_current_data_and_surfaces_failures(
+    monkeypatch, source, probe
+):
+    import scripts.collect_daily as mod
+
+    collector = getattr(mod, source)
+    known = collector.KNOWN_VALUE
+    reference_day = known["where"]["date"]
+    current = frame()
+    captured = []
+    requests = []
+
+    def fetch(*args, **kwargs):
+        requests.append((args, kwargs))
+        if len(requests) == 1:
+            return current, ValidationReport(source)
+        assert len(captured) == 1 and captured[0] is current
+        assert args[-2:] == (reference_day, reference_day)
+        if source in {"kr_price", "kr_flow"}:
+            assert args[0] == [known["where"]["ticker"]]
+        if source == "macro":
+            assert kwargs["series"] == {"us_10y": mod.macro.SERIES["us_10y"]}
+        if probe == "error":
+            raise RuntimeError("vendor request failed?api_key=must-not-be-logged")
+        reference = pd.DataFrame([{**known["where"], known["column"]: known["expected"]}])
+        if probe == "wrong":
+            reference[known["column"]] = 0
+        if probe == "missing":
+            reference = reference.iloc[:0]
+        return reference, ValidationReport(source)
+
+    monkeypatch.setattr(collector, "fetch", fetch)
+    monkeypatch.setattr(mod, "write_daily", lambda name, df: captured.append(df) or (0, 0))
+    monkeypatch.setattr(mod.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(mod, "now_utc", lambda: pd.Timestamp("2026-09-23T10:00:00Z"))
+    _, report = getattr(mod, f"collect_{source}")(dt.date(2026, 9, 15), dt.date(2026, 9, 23))
+
+    assert len(requests) == 2
+    check = next(r for r in report.results if r.name == "known_value")
+    assert check.passed is (probe == "correct")
+    assert "must-not-be-logged" not in check.detail
+    assert len(captured) == 1 and captured[0] is current
 
 
 def test_the_morning_run_contains_no_krx_source():

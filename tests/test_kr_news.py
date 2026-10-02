@@ -689,6 +689,23 @@ def test_a_feed_that_answered_with_garbage_still_fails_the_run(monkeypatch, tmp_
     assert [r.name for r in report.failures] == ["fetch"]
 
 
+@pytest.mark.parametrize("raw", ["Fri, 31 Dec 9999 10:00:00 +0900", "9999-12-31 10:00:00"])
+def test_dates_outside_the_declared_nanosecond_schema_are_unparseable(raw):
+    assert parse_pubdate(raw, assume_tz="Asia/Seoul") is None
+
+
+def test_out_of_bounds_feed_date_does_not_discard_successful_feeds(monkeypatch, tmp_path):
+    xml = b"""<rss><channel><item><title>bad date</title>
+      <link>https://hankyung.com/1</link>
+      <pubDate>Fri, 31 Dec 9999 10:00:00 +0900</pubDate>
+    </item></channel></rss>"""
+    rows, report = _fetch_with(monkeypatch, tmp_path, content=xml)
+    assert not rows.empty
+    assert set(rows["feed"]) == {GOOD_FEED.name}
+    assert not report.ok
+    assert "none parseable" in next(r.detail for r in report.failures if r.name == "fetch")
+
+
 # --- live -----------------------------------------------------------------
 
 
@@ -804,6 +821,30 @@ def test_a_parse_failure_is_not_retried(monkeypatch):
     assert not failure.transient
 
 
+@pytest.mark.parametrize("gap_days", [3, 7])
+def test_long_outage_preserves_poll_and_feed_evidence(tmp_path, frame, gap_days):
+    old = NOW - dt.timedelta(days=gap_days)
+    write_run(frame, tmp_path, old)
+    assert last_run_at(tmp_path, NOW.date()) == old
+    assert not check_collection_gap(frame, old, now=NOW).passed
+    assert newest_stored_per_feed(tmp_path, NOW.date(), feeds=["newsis_economy"]) == {
+        "newsis_economy": frame["published_at"].max()
+    }
+    assert seen_ids(tmp_path, NOW.date()) == set()
+
+
+def test_old_empty_poll_and_silent_feed_have_independent_history(tmp_path, frame):
+    old = NOW - dt.timedelta(days=7)
+    write_run(frame, tmp_path, old)
+    quiet = NOW - dt.timedelta(days=3)
+    write_run(pd.DataFrame(columns=list(SCHEMA)), tmp_path, quiet)
+    write_run(frame, tmp_path, NOW + dt.timedelta(days=1))
+    assert last_run_at(tmp_path, NOW.date()) == quiet
+    assert newest_stored_per_feed(tmp_path, NOW.date(), feeds=["newsis_economy", "missing"]) == {
+        "newsis_economy": frame["published_at"].max()
+    }
+
+
 @pytest.mark.parametrize("workers", [0, -1, True, 1.5])
 def test_invalid_worker_limit_is_rejected(tmp_path, workers):
     with pytest.raises(ValueError, match="positive integer"):
@@ -866,20 +907,3 @@ def test_identity_collision_cannot_overwrite_an_archive(monkeypatch, tmp_path, f
     with pytest.raises(FileExistsError):
         write_run(frame.iloc[:1], tmp_path, NOW)
     assert first.read_bytes() == original
-
-
-@pytest.mark.parametrize("raw", ["Fri, 31 Dec 9999 10:00:00 +0900", "9999-12-31 10:00:00"])
-def test_dates_outside_the_declared_nanosecond_schema_are_unparseable(raw):
-    assert parse_pubdate(raw, assume_tz="Asia/Seoul") is None
-
-
-def test_out_of_bounds_feed_date_does_not_discard_successful_feeds(monkeypatch, tmp_path):
-    xml = b"""<rss><channel><item><title>bad date</title>
-      <link>https://hankyung.com/1</link>
-      <pubDate>Fri, 31 Dec 9999 10:00:00 +0900</pubDate>
-    </item></channel></rss>"""
-    rows, report = _fetch_with(monkeypatch, tmp_path, content=xml)
-    assert not rows.empty
-    assert set(rows["feed"]) == {GOOD_FEED.name}
-    assert not report.ok
-    assert "none parseable" in next(r.detail for r in report.failures if r.name == "fetch")

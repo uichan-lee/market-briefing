@@ -537,27 +537,52 @@ def seen_ids(root: Path, day: dt.date) -> set[str]:
     return {row["article_id"] for row in _read_stored(root, day)}
 
 
-def newest_stored_per_feed(root: Path, day: dt.date) -> dict[str, pd.Timestamp]:
-    """Latest ``published_at`` already stored, per feed.
+def _historical_files(root: Path, day: dt.date) -> Iterator[tuple[dt.date, Path]]:
+    """Discover immutable poll evidence newest first, including long outages."""
+    directory = root / "kr" / "news"
+    for day_dir in sorted(directory.glob("????-??-??"), reverse=True):
+        stamp = dt.date.fromisoformat(day_dir.name)
+        if stamp <= day:
+            for path in sorted(day_dir.glob("*.jsonl.gz"), reverse=True):
+                yield stamp, path
 
-    This is the reference point for :func:`check_feed_continuity`: anything a
-    feed published after this instant that is no longer in its buffer was missed.
+
+def newest_stored_per_feed(
+    root: Path, day: dt.date, *, feeds: Iterable[str] | None = None
+) -> dict[str, pd.Timestamp]:
+    """Find each feed's latest evidence independently of the dedup window.
+
+    Stop after the newest archive day supplying all requested feeds. Read the
+    whole day because delayed publications need not follow collection order.
+    A feed with no history requires a complete scan; absence is not evidence.
     """
+    wanted = None if feeds is None else set(feeds)
     newest: dict[str, pd.Timestamp] = {}
-    for row in _read_stored(root, day):
-        published = to_utc(pd.Timestamp(row["published_at"]))
-        current = newest.get(row["feed"])
-        if current is None or published > current:
-            newest[row["feed"]] = published
+    previous_day: dt.date | None = None
+    for stamp, path in _historical_files(root, day):
+        if stamp != previous_day and wanted is not None and wanted <= newest.keys():
+            break
+        previous_day = stamp
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                name = row["feed"]
+                if wanted is not None and name not in wanted:
+                    continue
+                published = to_utc(pd.Timestamp(row["published_at"]))
+                if name not in newest or published > newest[name]:
+                    newest[name] = published
     return newest
 
 
 def last_run_at(root: Path, day: dt.date) -> pd.Timestamp | None:
-    """Timestamp of the most recent run stored for ``day`` or the day before."""
-    files = _stored_files(root, day)
-    if not files:
+    """Timestamp of the latest archived poll, even when it saved zero rows."""
+    latest = next(_historical_files(root, day), None)
+    if latest is None:
         return None
-    stamp, path = files[-1]
+    stamp, path = latest
     clock = path.stem.removesuffix(".jsonl").split("-")[0]
     return to_utc(pd.Timestamp(f"{stamp.isoformat()} {clock[:2]}:{clock[2:]}", tz="UTC"))
 
@@ -704,7 +729,9 @@ def fetch(
         previous_run=last_run_at(root, collected_at.date()),
         now=collected_at,
         buffer_oldest=buffer_oldest,
-        newest_stored=newest_stored_per_feed(root, collected_at.date()),
+        newest_stored=newest_stored_per_feed(
+            root, collected_at.date(), feeds=[feed.name for feed in feeds]
+        ),
         unfetched=unfetched,
     )
     # A malformed feed always fails here. A feed that merely did not answer
