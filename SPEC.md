@@ -76,8 +76,8 @@ Calendar construction and schedule calculation are serialized through the shared
 session utility: the calendar library lazily mutates class-wide Korean holiday
 caches, so concurrent cold parsing can otherwise crash every feed's aggregation.
 Network polling remains parallel. No calendar/holiday rule or article timestamp
-is changed. This October 2 fix is local; natural-run acceptance after release
-remains required.
+is changed. This October 2 fix was released in 01ae8ad; post-release natural-run
+acceptance remains required.
 Every new poll archive has a UTC minute prefix and a UUID suffix, including
 empty polls. Exclusive creation prevents overwrites; independent news/report
 checkouts cannot generate the same minute-only path. Readers retain support
@@ -602,7 +602,7 @@ All three are computable from the day the 3-year backfill lands (§12 step 4), s
 
 ### 6.3 Prompt discipline
 
-**Bounded scoring backlog disclosure — October 2, local:** retain newest-first
+**Bounded scoring backlog disclosure — October 2, released in 01ae8ad:** retain newest-first
 selection, the four-calendar-day candidate window, 180-pair/180-attempt defaults,
 checkpoint/idempotency rules, retry bounds and golden-check reservation. Every
 still-unscored candidate inside that window, including pair-cap and call-cap
