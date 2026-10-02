@@ -1,5 +1,16 @@
 # Calendar collector (§2.2④): plan
 
+## Captured-window verification — 2026-10-01 UTC
+
+Codex ported the pending future-tail correction into the isolated operations
+branch. The captured morning/evening windows both requested January 29, 2027.
+CPI stops at December 10 and employment at December 4; the old end-based
+continuity test fails, while the observation-bound test passes on the same rows.
+Both horizons remain explicit warnings. FOMC reaches January 27.
+Status integration tests retain notices for both successful and failed fetches.
+This proves the correction offline, not deployment or the current official
+announcement horizon. No collector API, window, dependency or raw schema changed.
+
 > **Status, 2026-08-29:** the scoped collector shipped. CPI, Employment
 > Situation, FOMC, and options-expiry events render; US company earnings and KR
 > ex-dividend/IPO remain named absent. The pending local F2/F3 fix excludes

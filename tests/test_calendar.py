@@ -403,3 +403,52 @@ def test_live_fomc_page_still_uses_the_expected_css_classes():
     assert "fomc-meeting__month" in response.text
     assert "fomc-meeting__date" in response.text
     assert "Meeting associated with a Summary of Economic Projections" in response.text
+
+
+@pytest.mark.parametrize("event", ["cpi", "employment_situation", "fomc"])
+def test_announced_future_tail_is_not_historical_loss(frame, event):
+    rows = frame[frame["event"] == event]
+    result = check_event_continuity(rows, [event], START, dt.date(2027, 1, 26), observed_on=START)
+    assert result.passed, result.detail
+
+
+def test_observation_boundary_does_not_hide_historical_loss(frame):
+    rows = frame[frame["event"] == "cpi"]
+    result = check_event_continuity(
+        rows, ["cpi"], START, dt.date(2027, 6, 1), observed_on=dt.date(2027, 4, 1)
+    )
+    assert not result.passed
+    assert "last row" in result.detail
+
+
+def test_observation_boundary_does_not_hide_options_tail(frame):
+    rows = frame[frame["event"] == "options_expiration_monthly"]
+    result = check_event_continuity(
+        rows, ["options_expiration_monthly"], START, dt.date(2027, 6, 1), observed_on=START
+    )
+    assert not result.passed
+    assert "last row" in result.detail
+
+
+def test_empty_announced_source_still_fails_over_historical_window():
+    rows = pd.DataFrame(columns=["event", "date"])
+    result = check_event_continuity(
+        rows,
+        ["cpi"],
+        dt.date(2026, 1, 1),
+        dt.date(2026, 12, 1),
+        observed_on=dt.date(2026, 3, 1),
+    )
+    assert not result.passed
+
+
+def test_empty_source_fails_even_in_short_observed_window():
+    rows = pd.DataFrame(columns=["event", "date"])
+    result = check_event_continuity(
+        rows,
+        ["cpi"],
+        dt.date(2026, 9, 1),
+        dt.date(2027, 1, 26),
+        observed_on=dt.date(2026, 9, 28),
+    )
+    assert not result.passed

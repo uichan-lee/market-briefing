@@ -78,6 +78,7 @@ from __future__ import annotations
 
 import calendar as _stdlib_calendar
 import datetime as dt
+import json
 import os
 import re
 from html.parser import HTMLParser
@@ -109,6 +110,7 @@ FRED_RELEASES: dict[str, int] = {
 }
 
 EVENTS = ("cpi", "employment_situation", "fomc", "options_expiration_monthly")
+LOOKAHEAD_DAYS = 120
 
 # Single-month cells on the Fed's page use the full name ("September"); a
 # month-spanning cell uses the 3-letter abbreviation for both sides
@@ -174,7 +176,12 @@ class CalendarError(RuntimeError):
 
 
 def check_event_continuity(
-    df: pd.DataFrame, events: list[str], start: dt.date, end: dt.date
+    df: pd.DataFrame,
+    events: list[str],
+    start: dt.date,
+    end: dt.date,
+    *,
+    observed_on: dt.date | None = None,
 ) -> CheckResult:
     """Check three's analog for a periodic event series, not a daily one.
 
@@ -186,15 +193,20 @@ def check_event_continuity(
     """
     problems: list[str] = []
     details: list[str] = []
-    window_days = (end - start).days
+    # Announced schedules need not cover the requested future horizon.
+    # Historical checks and computed options retain their completeness guard.
+    observed_fetch = observed_on is not None
+    observed_on = observed_on or end
 
     for event in events:
         max_gap = MAX_GAP_DAYS[event]
+        required_end = end if event == "options_expiration_monthly" else min(end, observed_on)
+        window_days = (required_end - start).days
         subset = df[df["event"] == event] if "event" in df.columns else df.iloc[0:0]
         dates = sorted({d.date() for d in pd.to_datetime(subset["date"])})
 
         if not dates:
-            if window_days >= max_gap:
+            if observed_fetch or window_days >= max_gap:
                 problems.append(
                     f"{event}: no rows in a {window_days}-day window (max gap {max_gap}d)"
                 )
@@ -204,8 +216,10 @@ def check_event_continuity(
             problems.append(
                 f"{event}: first row {dates[0]} is >{max_gap}d after window start {start}"
             )
-        if end - dates[-1] > dt.timedelta(days=max_gap):
-            problems.append(f"{event}: last row {dates[-1]} is >{max_gap}d before window end {end}")
+        if required_end - dates[-1] > dt.timedelta(days=max_gap):
+            problems.append(
+                f"{event}: last row {dates[-1]} is >{max_gap}d before window end {required_end}"
+            )
 
         gaps = [b - a for a, b in zip(dates, dates[1:], strict=False)]
         widest = max(gaps, default=dt.timedelta(0))
@@ -280,6 +294,25 @@ def check_known_date(
     return CheckResult("known_value", True, f"{column} at ({label}) == {actual}")
 
 
+def availability_notices(df: pd.DataFrame, end: dt.date) -> list[str]:
+    """Describe this fetch's announced horizon; absence is not official nonpublication."""
+    notices = []
+    for event, label in {"cpi": "CPI", "employment_situation": "고용", "fomc": "FOMC"}.items():
+        subset = df[df["event"] == event]
+        if subset.empty:
+            notices.append(f"⚠ 캘린더 {label}: 이번 수집에서 확인된 일정 없음")
+            continue
+        last = pd.to_datetime(subset["date"]).max().date()
+        limited = (end - last).days > MAX_GAP_DAYS[event]
+        mark = "⚠" if limited else "ℹ"
+        suffix = " — 이후 요청 구간 일정 확인 불가" if limited else ""
+        notices.append(
+            f"{mark} 캘린더 {label}: {last.isoformat()}까지 확인 "
+            f"(요청 종료 {end.isoformat()}){suffix}"
+        )
+    return notices
+
+
 def validate_frame(
     df: pd.DataFrame,
     events: list[str],
@@ -287,12 +320,13 @@ def validate_frame(
     end: dt.date,
     *,
     known_value: bool = True,
+    observed_on: dt.date | None = None,
 ) -> ValidationReport:
     """Run all four checks (two of them collector-local) against a frame."""
     checks = [
         check_schema(df, SCHEMA),
         check_missing_ratio(df, MISSING_THRESHOLDS),
-        check_event_continuity(df, events, start, end),
+        check_event_continuity(df, events, start, end, observed_on=observed_on),
     ]
     if known_value:
         checks.extend(check_known_date(df, **kv) for kv in KNOWN_VALUES)
@@ -589,7 +623,16 @@ def fetch(
     else:
         df = pd.DataFrame(columns=list(SCHEMA))
 
-    report = validate_frame(df, list(EVENTS), start, end, known_value=False)
+    report = validate_frame(
+        df, list(EVENTS), start, end, known_value=False, observed_on=known_at.date()
+    )
+    report.add(
+        CheckResult(
+            "future_availability",
+            True,
+            json.dumps(availability_notices(df, end), ensure_ascii=False),
+        )
+    )
     source_count = len(FRED_RELEASES) + 2  # FOMC + options expiry
     report.add(
         CheckResult("fetch", not failures, "; ".join(failures) or f"{source_count} sources fetched")

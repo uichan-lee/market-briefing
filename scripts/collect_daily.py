@@ -122,7 +122,7 @@ MACRO_WINDOW_DAYS = 30
 # history for check_event_continuity; 120 days ahead covers a full quarter
 # of scheduled releases and meetings (notes/calendar-collector-plan.md).
 CALENDAR_LOOKBACK_DAYS = 30
-CALENDAR_LOOKAHEAD_DAYS = 120
+CALENDAR_LOOKAHEAD_DAYS = calendar_events.LOOKAHEAD_DAYS
 
 PATHS = {
     "kr_price": RAW / "kr" / "price",
@@ -475,6 +475,12 @@ def main(argv: list[str] | None = None) -> int:
                 "summary": report.summary(),
                 "failures": [{"name": r.name, "detail": r.detail} for r in report.failures],
             }
+            if name == "calendar":
+                notices = next(
+                    (r.detail for r in report.results if r.name == "future_availability"), None
+                )
+                if notices is not None:
+                    outcomes[name]["calendar_notices"] = json.loads(notices)
         except Exception as exc:  # noqa: BLE001 - one source must not stop the rest
             outcomes[name] = {
                 "ok": False,

@@ -13,6 +13,7 @@ import datetime as dt
 import json
 
 import pandas as pd
+import pytest
 
 from scripts.collect_daily import RUNS, _differs, write_daily, write_status
 from src.collectors import kr_news
@@ -325,3 +326,31 @@ def test_write_status_roundtrips(tmp_path, monkeypatch):
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["run"] == "evening"
     assert payload["collectors"]["kr_news"]["failures"][0]["name"] == "feed_continuity"
+
+
+@pytest.mark.parametrize("fetch_ok", [True, False])
+def test_calendar_notices_survive_status_and_reach_renderer(tmp_path, monkeypatch, fetch_ok):
+    import scripts.collect_daily as mod
+    from src.collectors.validate import CheckResult, ValidationReport
+    from src.report.render import read_calendar_notices
+
+    at = pd.Timestamp("2026-09-28T22:07:00Z")
+    notice = (
+        "⚠ 캘린더 CPI: 2026-12-10까지 확인 (요청 종료 2027-01-26) — 이후 요청 구간 일정 확인 불가"
+    )
+    report = ValidationReport(
+        "calendar",
+        [
+            CheckResult("future_availability", True, json.dumps([notice])),
+            CheckResult("fetch", fetch_ok, "source result"),
+        ],
+    )
+    monkeypatch.setattr(
+        mod, "RUNS", {"morning": {"calendar": lambda start, end: ("16 rows", report)}}
+    )
+    monkeypatch.setattr(mod, "STATUS", tmp_path / "status")
+    monkeypatch.setattr(mod, "now_utc", lambda: at)
+    assert mod.main(["--run", "morning"]) == 0  # Partial reports remain publishable.
+    assert read_calendar_notices(tmp_path, at + pd.Timedelta(minutes=4)) == [notice]
+    payload = json.loads(next((tmp_path / "status").glob("*.json")).read_text())
+    assert payload["collectors"]["calendar"]["ok"] is fetch_ok
