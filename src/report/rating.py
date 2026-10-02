@@ -21,6 +21,7 @@ literally what moved the number, and cannot drift from it.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -105,12 +106,16 @@ def _bucket(score: float, cut_points: Mapping[str, float]) -> Rating:
     except KeyError as exc:
         raise RatingConfigError(f"cut_points is missing {exc.args[0]!r}") from None
 
+    if not all(math.isfinite(value) for value in (strong, moderate, weak)):
+        raise RatingConfigError("cut_points must be finite")
     if not (strong > moderate > weak > 0):
         raise RatingConfigError(
             f"cut_points must satisfy strong > moderate > weak > 0; "
             f"got strong={strong}, moderate={moderate}, weak={weak}"
         )
 
+    if not math.isfinite(score):
+        raise RatingConfigError("rating score must be finite")
     magnitude = abs(score)
     if magnitude < weak:
         return Rating.HOLD
@@ -166,6 +171,8 @@ def rate(
 
     confidence = config.get("confidence") or {}
     min_coverage = float(confidence.get("min_weight_coverage", 0.0))
+    if not math.isfinite(min_coverage) or not 0 <= min_coverage <= 1:
+        raise RatingConfigError("min_weight_coverage must be finite and in [0, 1]")
 
     contributions: list[Contribution] = []
     missing: list[str] = []
@@ -174,16 +181,20 @@ def rate(
 
     for feature, weight in weights.items():
         weight = float(weight)
+        if not math.isfinite(weight):
+            raise RatingConfigError(f"weight for {feature!r} must be finite")
         total_weight += abs(weight)
 
         z = z_scores.get(feature)
-        if z is None:
+        if z is None or not math.isfinite(float(z)):
             missing.append(feature)
             continue
 
         present_weight += abs(weight)
         contributions.append(Contribution(feature=feature, z_score=float(z), weight=weight))
 
+    if not math.isfinite(total_weight):
+        raise RatingConfigError("rating weight magnitude must be finite")
     if total_weight == 0:
         raise RatingConfigError("rating weights sum to zero magnitude")
 
@@ -204,6 +215,8 @@ def rate(
     # ticker is scored on the same scale as a fully-covered one.
     raw = sum(c.value for c in contributions)
     score = raw / coverage
+    if not math.isfinite(score):
+        raise RatingConfigError("rating score must be finite")
 
     # ``min_weight_coverage`` is a floor that the coverage is allowed to sit on:
     # meeting it exactly passes. The tolerance is what makes that true in

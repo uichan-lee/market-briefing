@@ -58,6 +58,7 @@ are offline and use synthetic frames.
 from __future__ import annotations
 
 import datetime as dt
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
@@ -395,7 +396,9 @@ def z_scores_for(features: pd.DataFrame, ticker: str, day: dt.date) -> dict[str,
     scores: dict[str, float | None] = {}
     for feature in FEATURES:
         value = row.get(f"{feature}_z")
-        scores[feature] = None if pd.isna(value) else float(value)
+        scores[feature] = (
+            None if pd.isna(value) or not math.isfinite(float(value)) else float(value)
+        )
     return scores
 
 

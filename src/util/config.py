@@ -20,6 +20,7 @@ first — silently, and differently as the file is edited. This is a hard error.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -275,8 +276,12 @@ def load_rating(path: Path | None = None) -> dict[str, Any]:
     if not isinstance(weights, dict) or not weights:
         raise ConfigError(f"{path.name}: 'weights' must be a non-empty mapping")
     for feature, weight in weights.items():
-        if not isinstance(weight, int | float):
-            raise ConfigError(f"{path.name}: weight for {feature!r} is not a number")
+        if (
+            isinstance(weight, bool)
+            or not isinstance(weight, int | float)
+            or not math.isfinite(weight)
+        ):
+            raise ConfigError(f"{path.name}: weight for {feature!r} must be a finite number")
 
     # Designed weight for features nothing produces yet. The report header reads
     # it so the briefing keeps naming what is absent; rate() never does. A name
@@ -286,8 +291,14 @@ def load_rating(path: Path | None = None) -> dict[str, Any]:
     if not isinstance(deferred, dict):
         raise ConfigError(f"{path.name}: 'deferred_weights' must be a mapping")
     for feature, weight in deferred.items():
-        if not isinstance(weight, int | float):
-            raise ConfigError(f"{path.name}: deferred weight for {feature!r} is not a number")
+        if (
+            isinstance(weight, bool)
+            or not isinstance(weight, int | float)
+            or not math.isfinite(weight)
+        ):
+            raise ConfigError(
+                f"{path.name}: deferred weight for {feature!r} must be a finite number"
+            )
     both = sorted(deferred.keys() & weights.keys())
     if both:
         raise ConfigError(f"{path.name}: {both} are both active and deferred weights")
@@ -298,13 +309,26 @@ def load_rating(path: Path | None = None) -> dict[str, Any]:
     missing = {"strong", "moderate", "weak"} - cut_points.keys()
     if missing:
         raise ConfigError(f"{path.name}: cut_points is missing {sorted(missing)}")
+    for name in ("strong", "moderate", "weak"):
+        value = cut_points[name]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+        ):
+            raise ConfigError(f"{path.name}: cut point {name!r} must be a finite number")
     if not (cut_points["strong"] > cut_points["moderate"] > cut_points["weak"] > 0):
         raise ConfigError(
             f"{path.name}: cut_points must satisfy strong > moderate > weak > 0, got {cut_points}"
         )
 
     coverage = (raw.get("confidence") or {}).get("min_weight_coverage", 0.0)
-    if not 0.0 <= coverage <= 1.0:
+    if (
+        isinstance(coverage, bool)
+        or not isinstance(coverage, int | float)
+        or not math.isfinite(coverage)
+        or not 0.0 <= coverage <= 1.0
+    ):
         raise ConfigError(f"{path.name}: min_weight_coverage must be in [0, 1], got {coverage}")
 
     return raw

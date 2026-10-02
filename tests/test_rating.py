@@ -199,6 +199,57 @@ def test_the_same_inputs_always_give_the_same_rating():
     assert len({(r.rating, round(r.score, 12)) for r in results}) == 1
 
 
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_features_are_missing_and_cannot_create_directional_ratings(invalid):
+    config = {**CONFIG, "confidence": {"min_weight_coverage": 0.9}}
+    result = rate("005930", {"foreign_flow_5d": invalid, "news_polarity": 0.0}, config)
+    assert result.rating is Rating.HOLD
+    assert result.low_confidence
+    assert result.weight_coverage == pytest.approx(0.5)
+    assert result.missing == ("foreign_flow_5d",)
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_config_and_archived_scores_are_rejected(invalid):
+    with pytest.raises(RatingConfigError, match="finite"):
+        rate("005930", {}, {**CONFIG, "weights": {"a": invalid}})
+    with pytest.raises(RatingConfigError, match="finite"):
+        bucket_from_score(invalid, CONFIG["cut_points"])
+    with pytest.raises(RatingConfigError, match="finite"):
+        bucket_from_score(0.0, {**CONFIG["cut_points"], "strong": invalid})
+
+
+@pytest.mark.parametrize("literal", [".nan", ".inf", "-.inf"])
+@pytest.mark.parametrize("field", ["weights", "deferred_weights", "cut_points", "confidence"])
+def test_rating_yaml_rejects_nonfinite_parameters(tmp_path, field, literal):
+    text = "weights: {a: 1}\ncut_points: {strong: 2, moderate: 1, weak: 0.4}\n"
+    if field == "weights":
+        text = text.replace("a: 1", f"a: {literal}")
+    elif field == "deferred_weights":
+        text += f"deferred_weights: {{b: {literal}}}\n"
+    elif field == "cut_points":
+        text = text.replace("strong: 2", f"strong: {literal}")
+    else:
+        text += f"confidence: {{min_weight_coverage: {literal}}}\n"
+    path = tmp_path / "rating.yaml"
+    path.write_text(text)
+    with pytest.raises(ConfigError):
+        load_rating(path)
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -float("inf")])
+def test_feature_extraction_converts_nonfinite_z_scores_to_missing(invalid):
+    import pandas as pd
+
+    from src.features.compute import z_scores_for
+
+    day = pd.Timestamp("2026-08-03").date()
+    features = pd.DataFrame(
+        {"date": [pd.Timestamp(day)], "ticker": ["005930"], "foreign_flow_5d_z": [invalid]}
+    )
+    assert z_scores_for(features, "005930", day)["foreign_flow_5d"] is None
+
+
 # --- config errors --------------------------------------------------------
 
 
