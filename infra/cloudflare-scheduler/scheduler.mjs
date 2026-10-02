@@ -214,7 +214,16 @@ async function routeScheduled(cron, now, env, fetchImpl) {
   if (cron === "7 22 * * SUN-THU") return dispatch(fetchImpl, token, REPORT, { run: "morning" });
   if (cron === "37 12 * * MON-FRI") return dispatch(fetchImpl, token, REPORT, { run: "evening" });
 
-  if (cron !== "10,15,25,40,55 * * * *") return { ok: true };
+  const watchdogCron = "10,15,25,40,55 * * * *";
+  // Natural events still carried the former trigger after the control API
+  // reported the new cron. Preserve checks during that overlap, never silently
+  // treating a recognized historical watchdog event as a successful no-op.
+  const legacyWatchdog = cron === "15,25,40 * * * *";
+  if (cron !== watchdogCron && !legacyWatchdog) return { ok: true };
+  if (legacyWatchdog) {
+    console.log(JSON.stringify({ event: "scheduler_cron_compatibility", cron,
+      expected_cron: watchdogCron, scheduled_at_utc: now.toISOString() }));
+  }
   const minute = now.getUTCMinutes();
   const hour = now.getUTCHours();
   const weekday = now.getUTCDay();

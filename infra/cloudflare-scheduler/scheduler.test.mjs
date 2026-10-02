@@ -13,13 +13,13 @@ function run(overrides = {}) {
     head_branch: "main", event: "workflow_dispatch",
     status: "completed", conclusion: "success", ...overrides };
 }
-async function check(replies, at = now) {
+async function check(replies, at = now, trigger = cron) {
   const calls = [], logs = [];
   const original = console.log;
   console.log = message => logs.push(JSON.parse(message));
   let index = 0;
   try {
-    await handleScheduled(cron, at, env, async (url, init) => {
+    await handleScheduled(trigger, at, env, async (url, init) => {
       calls.push({ url, init });
       if (init.method === "POST") return response();
       assert.ok(index < replies.length, "unexpected additional read");
@@ -65,6 +65,27 @@ test("eight-minute-old success suppresses alert and records a healthy decision",
   assert.equal(result.logs.at(-1).decision, "healthy");
   assert.equal(result.logs[0].run_id, 36478113582);
   assert.equal(result.logs[0].age_minutes, 7.75);
+});
+test("observed legacy watchdog trigger retains failed-run alert and evidence", async () => {
+  const at = new Date("2026-10-02T04:25:59Z");
+  const failed = run({id:36963952484, created_at:"2026-10-02T04:18:06Z", conclusion:"failure"});
+  const result = await check([[failed], [failed]], at, "15,25,40 * * * *");
+  assert.equal(result.alerts.length, 1);
+  assert.match(result.alerts[0].reason, /실패.*failure/);
+  assert.match(result.alerts[0].details, /runs\/36963952484/);
+  assert.equal(result.calls.filter(c => c.init.method === "GET").length, 2);
+  assert.ok(result.logs.some(log => log.event === "scheduler_cron_compatibility"));
+  assert.equal(result.logs.find(log => log.event === "watchdog_decision").decision, "failed");
+});
+test("legacy healthy checks and unrelated slots preserve their bounded calls", async () => {
+  const healthy = await check([[run()]], now, "15,25,40 * * * *");
+  assert.equal(healthy.alerts.length, 0);
+  assert.equal(healthy.calls.length, 1);
+  assert.equal(healthy.logs.find(log => log.event === "watchdog_decision").decision, "healthy");
+  const quiet = await check([], new Date("2026-10-02T04:15:59Z"), "15,25,40 * * * *");
+  assert.equal(quiet.calls.length, 0);
+  const unknown = await check([], now, "1 * * * *");
+  assert.equal(unknown.calls.length, 0);
 });
 test("unsorted list selects latest creation, not first or latest successful run", async () => {
   const failed = run({id: 42, created_at:"2026-09-28T20:18:00Z", conclusion:"failure"});
