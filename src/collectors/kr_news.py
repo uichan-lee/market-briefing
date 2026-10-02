@@ -211,6 +211,7 @@ def check_feed_continuity(
     unfetched: Iterable[str] = (),
     *,
     now: pd.Timestamp | None = None,
+    unmeasured: Iterable[str] = (),
 ) -> CheckResult:
     """Detect articles that were actually lost, rather than inferring it.
 
@@ -221,8 +222,10 @@ def check_feed_continuity(
     A feed's buffer is a window over its own output. If the *oldest* item still
     in that window was published *after* the newest item already stored, then the
     window has moved past everything known and whatever fell between the two is
-    gone — not delayed, gone, because RSS has no backfill. Anything else means
-    the windows overlap and nothing was missed.
+    gone — not delayed, gone, because RSS has no backfill. Overlap alone cannot
+    prove that the publisher's buffer contains every intervening article.
+    The collector excludes clocks outside the existing structural bounds from
+    this comparison; archived articles and their validation remain unchanged.
 
     Reported per feed rather than in aggregate: 한국경제 경제 held 4.0 hours of
     history when 인포스탁 held 101.6, so a gap that is harmless for most of the
@@ -255,7 +258,9 @@ def check_feed_continuity(
     on exactly that reasoning — a check that fails every hour stops being read.
 
     Silence is measured from ``newest_stored``, the last article *published*
-    rather than the last successful poll, because the poll history is not stored.
+    rather than the last successful poll. Per-feed successful poll history is
+    not stored, including when a feed answers without plausible publication
+    clocks (``unmeasured``).
     A quiet feed therefore looks darker than it is, so the proxy errs early
     rather than late, which is the safe direction. One consequence to know:
     :func:`_stored_files` looks back two days, so a feed dark for longer drops
@@ -277,7 +282,9 @@ def check_feed_continuity(
 
     # Only feeds with stored history are unverifiable; one that has never been
     # collected has no window to have rolled past in the first place.
-    blind = sorted(name for name in set(unfetched) if name in newest_stored)
+    unanswered = set(unfetched)
+    unusable = set(unmeasured) - unanswered
+    blind = sorted(name for name in unanswered | unusable if name in newest_stored)
     unknown = [
         f"{name} unverified, last stored article "
         f"{(pd.Timestamp(newest_stored[name]).tz_convert('UTC')):%Y-%m-%d %H:%M}Z"
@@ -293,8 +300,13 @@ def check_feed_continuity(
                 + "; ".join(losses)
             )
         if unknown:
+            reasons = []
+            if unanswered.intersection(blind):
+                reasons.append("feeds did not answer")
+            if unusable.intersection(blind):
+                reasons.append("feeds have no plausible publication timestamps")
             parts.append(
-                f"{len(unknown)} feeds did not answer, so their loss is unmeasured — "
+                f"{len(unknown)} unverified: {'; '.join(reasons)}, so their loss is unmeasured — "
                 + "; ".join(unknown)
             )
         if stale:
@@ -363,10 +375,11 @@ def validate_frame(
     buffer_oldest: Mapping[str, pd.Timestamp] | None = None,
     newest_stored: Mapping[str, pd.Timestamp] | None = None,
     unfetched: Iterable[str] = (),
+    unmeasured: Iterable[str] = (),
 ) -> ValidationReport:
     """Run the four checks, one of them substituted. See the module docstring.
 
-    ``buffer_oldest``, ``newest_stored`` and ``unfetched`` are what
+    ``buffer_oldest``, ``newest_stored``, ``unfetched`` and ``unmeasured`` are what
     :func:`check_feed_continuity` needs. They default to empty, which makes that
     check a no-op — the right behaviour for callers validating a frame in
     isolation, since a frame carries no record of what its feeds were holding at
@@ -380,7 +393,9 @@ def validate_frame(
             if len(df)
             else CheckResult("missing_ratio", True, "no rows"),
             check_collection_gap(df, previous_run, now=now),
-            check_feed_continuity(buffer_oldest or {}, newest_stored or {}, unfetched, now=now),
+            check_feed_continuity(
+                buffer_oldest or {}, newest_stored or {}, unfetched, now=now, unmeasured=unmeasured
+            ),
             check_structural_invariants(df, feeds, now=now),
         ],
     )
@@ -713,9 +728,16 @@ def fetch(
     # Taken before dedup, and it has to be: dedup removes exactly the overlap
     # with stored history, so the surviving rows would place every buffer's
     # start after the last stored article and report total loss every run.
-    buffer_oldest = (
-        {} if df.empty else df.groupby("feed")["published_at"].min().to_dict()  # type: ignore[assignment]
-    )
+    buffer_oldest = {}
+    unmeasured: set[str] = set()
+    if not df.empty:
+        plausible = df["published_at"].between(
+            collected_at - _OLDEST_PLAUSIBLE, collected_at + _FUTURE_TOLERANCE
+        )
+        # A reintroduced old article must not anchor today's coverage window.
+        # Keep all parsed rows for deduplication, validation and immutable storage.
+        buffer_oldest = df.loc[plausible].groupby("feed")["published_at"].min().to_dict()
+        unmeasured = set(df["feed"]) - set(buffer_oldest)
 
     fetched = len(df)
     if not df.empty:
@@ -733,6 +755,7 @@ def fetch(
             root, collected_at.date(), feeds=[feed.name for feed in feeds]
         ),
         unfetched=unfetched,
+        unmeasured=unmeasured,
     )
     # A malformed feed always fails here. A feed that merely did not answer
     # defers to `feed_continuity`, which is the check holding the evidence about

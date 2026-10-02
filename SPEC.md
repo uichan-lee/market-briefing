@@ -51,6 +51,8 @@
 >
 > **Loss is detected, not assumed.** `check_feed_continuity` compares where each feed's buffer now begins against the newest article already stored from it. If the first has passed the second, articles were lost and the check names the feed and the hours. This is the signal to raise the schedule — before that, extra runs are spent on a guess.
 >
+> Coverage clocks are bounded by the existing inclusive 30-day/6-hour structural checks before deduplication. Reintroduced old items are still archived and validated, but cannot anchor current overlap. Feeds without usable clocks are disclosed as unverified under the existing silence policy. Overlap alone cannot establish that every intervening publisher article was present.
+>
 > **A feed that did not answer is judged by the next run that does.** Its outage is named in the report header every run, but it fails the check only on a measured loss or past `MAX_FEED_SILENCE`, because the comparison above is exactly what settles the question once the feed comes back. Failing at the moment the evidence is missing rather than the moment it arrives cost four alarms on 2026-08-11 for a feed that had published nothing and lost nothing; over the sixty preceding runs every failure of this check was that branch and none measured a loss.
 
 > [!warning] Daylight saving time

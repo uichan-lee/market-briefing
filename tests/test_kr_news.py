@@ -709,6 +709,59 @@ def test_out_of_bounds_feed_date_does_not_discard_successful_feeds(monkeypatch, 
 # --- live -----------------------------------------------------------------
 
 
+def _fetch_clock_rows(monkeypatch, tmp_path, frame, offsets, *, stored_age=2):
+    rows = frame.iloc[: len(offsets)].copy().reset_index(drop=True)
+    rows["published_at"] = pd.to_datetime([NOW + offset for offset in offsets], utc=True)
+    stored = frame.iloc[[0]].copy()
+    stored["published_at"] = NOW - dt.timedelta(hours=stored_age)
+    stored["article_id"] = "previous-clock-evidence"
+    write_run(stored, tmp_path, NOW - dt.timedelta(minutes=30))
+    monkeypatch.setattr(kr_news, "_fetch_one", lambda *args, **kwargs: (rows, None))
+    fetched, report = fetch([FEEDS["newsis_economy"]], root=tmp_path, now=NOW)
+    pd.testing.assert_frame_equal(fetched, rows)
+    return fetched, {result.name: result for result in report.results}
+
+
+def test_a_reintroduced_old_item_cannot_mask_a_recent_buffer_gap(monkeypatch, tmp_path, frame):
+    rows, checks = _fetch_clock_rows(
+        monkeypatch,
+        tmp_path,
+        frame,
+        [dt.timedelta(days=-31), dt.timedelta(hours=-1)],
+    )
+    assert not checks["feed_continuity"].passed
+    assert "newsis_economy lost 1.0h" in checks["feed_continuity"].detail
+    assert not checks["structural_invariants"].passed
+    path = write_run(rows, tmp_path, NOW)
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        archived = [json.loads(line) for line in handle]
+    assert len(archived) == 2
+    assert pd.Timestamp(archived[0]["published_at"]) == NOW - dt.timedelta(days=31)
+
+
+@pytest.mark.parametrize("offset", [dt.timedelta(days=-31), dt.timedelta(hours=7)])
+@pytest.mark.parametrize("stored_age", [2, 25])
+def test_unusable_feed_clocks_leave_loss_unmeasured(
+    monkeypatch, tmp_path, frame, offset, stored_age
+):
+    _, checks = _fetch_clock_rows(monkeypatch, tmp_path, frame, [offset], stored_age=stored_age)
+    continuity = checks["feed_continuity"]
+    assert continuity.passed == (stored_age == 2)
+    assert "no plausible publication timestamps" in continuity.detail
+    assert "unverified" in continuity.detail
+    assert "overlap" not in continuity.detail
+    assert " lost " not in continuity.detail
+    assert not checks["structural_invariants"].passed
+
+
+@pytest.mark.parametrize("offset", [dt.timedelta(days=-30), dt.timedelta(hours=6)])
+def test_existing_clock_bounds_remain_inclusive(monkeypatch, tmp_path, frame, offset):
+    _, checks = _fetch_clock_rows(monkeypatch, tmp_path, frame, [offset])
+    assert checks["structural_invariants"].passed
+    assert "unverified" not in checks["feed_continuity"].detail
+    assert "no plausible" not in checks["feed_continuity"].detail
+
+
 @pytest.mark.network
 def test_live_fetch_then_immediate_refetch_finds_nothing_new(tmp_path):
     """Proves dedup works rather than merely existing: hourly polling re-reads
