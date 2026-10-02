@@ -235,6 +235,10 @@ def complete(
     }
     if "temperature" in settings:
         request["temperature"] = settings["temperature"]
+    if stage == "scoring":
+        # The scoring driver counts and paces retries within its call budget.
+        request["num_retries"] = 0
+        request["max_retries"] = 0
 
     started = time.perf_counter()
     response = _call(**request)

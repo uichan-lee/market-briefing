@@ -123,6 +123,20 @@ def test_the_error_does_not_carry_the_key_value(monkeypatch):
 # --- the request the adapter builds ---------------------------------------
 
 
+def test_only_scoring_disables_internal_retries(monkeypatch, keyed):
+    for stage in ("scoring", "synthesis"):
+        captured = {}
+        _answer(monkeypatch, json.dumps(GOOD), captured)
+        complete(
+            stage, system="s", user="u", schema=score.schema(), prompt_version="v1", models=MODELS
+        )
+        if stage == "scoring":
+            assert captured["num_retries"] == captured["max_retries"] == 0
+        else:
+            assert "num_retries" not in captured
+            assert "max_retries" not in captured
+
+
 def test_temperature_comes_from_config_not_from_code(monkeypatch, keyed):
     captured: dict = {}
     _answer(monkeypatch, json.dumps(GOOD), captured)
