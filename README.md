@@ -2,8 +2,9 @@
 
 > **October 2 approved release:** news runtime and watchdog stabilization,
 > calendar/filing validation, report-header integrity and evaluation guards pass
-> 1,074 offline Python tests and 27 Worker tests. Main publication and the updated
-> Worker are being released; natural acceptance is pending. See
+> 1,074 offline Python tests and 27 Worker tests. Repairs are on main through
+> `a4526a3`; Worker `8c75e528` is active at 100%.
+> Natural acceptance of this release is pending. See
 > [operating evidence](notes/review-2026-09-27.md) and [next steps](notes/next-steps-2026-09-27.md).
 
 **A daily Korean/US equity briefing that states a directional opinion on every ticker it tracks, shows the arithmetic behind it — and then stops.**
@@ -229,7 +230,7 @@ The full entry, including what it cost the model selection, is in [PREREGISTRATI
 
 **"Zero data-consistency errors" means contradiction, not absence.** Four checks count — `schema`, `structural_invariants`, `flow_identity`, and the Alpaca-vs-Tiingo close comparison — read off the committed report headers. `missing_ratio` and `trading_day_continuity` are excluded with reasons given in [§8.5](PREREGISTRATION.md), the second because 25 of them once fired from a single Tiingo rate-limit. The list was written before the count was known; over the record to date it stands at zero.
 
-**GitHub cron was best-effort, and the stored record measured the loss.** Over 2026-08-03..07 the news workflow declared 31 runs a day and delivered 6–10, for 42.6% hourly coverage. The current working tree replaces its cron declarations with a versioned Cloudflare Worker dispatcher and watchdog; it is **not deployed yet**, so GitHub remains the live scheduler until the Worker secret and deployment are complete. Everything downstream still measures what a gap actually cost rather than guessing. See [notes/next-steps-2026-09-05.md](notes/next-steps-2026-09-05.md).
+**GitHub cron was best-effort, and the stored record measured the loss.** Over 2026-08-03..07 the news workflow declared 31 runs a day and delivered 6–10, for 42.6% hourly coverage. Cloudflare now owns the production clock and dispatches the news, report and watchdog workflows; Actions executes the pipeline and stores its evidence. Worker `8c75e528` was confirmed active on October 2. Downstream checks still measure what a gap actually cost rather than guessing. See [current acceptance checks](notes/next-steps-2026-09-27.md).
 
 </details>
 
@@ -315,7 +316,7 @@ Tests that hit the network are marked `@pytest.mark.network` and excluded by def
 
 **Running stage; 2-week gate passed 2026-08-27.** The deterministic pipeline collects, resolves, computes, rates, renders and delivers twice a day without supervision, and has done so since 2026-08-03. `data/raw/` holds a 3-year backfill plus a live news record. The golden set and the model bake-off are finished.
 
-**Production evidence exists for scoring and the repaired filings path.** The 2026-08-29 manual report run scored and committed 536 pairs, rendered ③ from the archive, published guarded prose, and recovered both filing collectors. The working tree now disables optional ⑤/⑧ synthesis to prevent Anthropic spend; scoring remains capped and `news_polarity` remains outside the frozen composite. The unresolved operational item is the scheduler cutover: its Cloudflare Worker source is tested but not yet deployed.
+**Production evidence exists for scoring and the repaired filings path.** The 2026-08-29 manual report run scored and committed 536 pairs, rendered ③ from the archive, published guarded prose, and recovered both filing collectors. The working tree now disables optional ⑤/⑧ synthesis to prevent Anthropic spend; scoring remains capped and `news_polarity` remains outside the frozen composite. The Cloudflare scheduler is deployed; natural acceptance of the October 2 stabilization release remains pending.
 
 §2.2④ (calendar) went from fully absent to partial on 2026-08-14 — CPI/employment/FOMC release dates and options expiration are now real collected data; US individual-company earnings and KR ex-dividend/IPO dates stay named-absent, and §2.2⑥'s directional rating stays scoped to the 31 KR tickers only, both by deliberate decision rather than oversight — see [notes/calendar-collector-plan.md](notes/calendar-collector-plan.md) and [notes/us-rating-plan.md](notes/us-rating-plan.md).
 
@@ -333,8 +334,8 @@ Progress is tracked against the thirteen steps in [SPEC §12](SPEC.md), so it ca
 | 8 | Model adapter + bake-off | ✅ done 2026-08-13 — `gpt-5.4` selected |
 | 9 | Feature computation | ✅ 5 active rating features (0.75 weight) + `news_polarity` producer built 2026-08-27, weight deferred. Design total 0.95 (was 1.10 before `rev_4w` dropped) |
 | 10 | Report renderer + delivery | 🟡 vault + email live; ③ score aggregation and guarded prose have production evidence. Working-tree policy disables optional ⑤/⑧ synthesis before any Anthropic call |
-| 11 | Daily collection + report workflow | 🟡 scoring archive and filing recovery verified in CI. Cloudflare scheduler cutover is code-ready but awaits Ricky's Worker/PAT setup |
-| 12 | Schedule burn-in | ✅ historical gate window complete; future run delivery depends on the pending Cloudflare cutover |
+| 11 | Daily collection + report workflow | 🟡 Cloudflare dispatch is live; natural acceptance of the October 2 runtime/validation repairs is pending |
+| 12 | Schedule burn-in | ✅ historical gate window complete; continue checking current natural runs after releases |
 | 13 | Two-week gate | ✅ **passed 2026-08-27** — criterion 4 measured 2026-08-15 (0.81–0.88 vs. a 0.5 bar), criteria 1–3 read against the full window via `src/eval/gate_2week.py` ([PREREGISTRATION §R](PREREGISTRATION.md), 2026-08-27) |
 
 <details>
@@ -383,8 +384,8 @@ Open items are tracked in [MANUAL-TASKS.md](MANUAL-TASKS.md), ordered by what th
 
 | Task | Blocks | Owner |
 |---|---|---|
-| Review and land the scheduler/cost-control change | Makes the tested Worker source and fail-closed synthesis policy the deployed code | Ricky + Codex |
-| Create Cloudflare Free Worker + 90-day `Actions: write` PAT | Restores scheduled collection/report dispatch once GitHub cron is removed | Ricky |
+| Verify the October 2 stabilization release in natural runs | Confirms polling/storage/runtime, report receipts and watchdog behavior | Ricky + Codex |
+| Maintain the configured Cloudflare Worker and dispatch credential | Keeps the deployed scheduler able to dispatch Actions | Ricky |
 | Verify one naturally scheduled news dispatch, then each report slot | Operational evidence without triggering a paid report test | Ricky + Codex |
 | Do not approve historical news-score backfill | Preserves the no-new-cost policy until a separate explicit approval | Ricky |
 | `config/rating.yaml` calibration | Trustworthy ratings — planned 2026-08-23, **overdue** | Ricky (MANUAL-TASKS §6) |
@@ -414,7 +415,8 @@ loss risk without moving pipeline execution or data storage.
 | [2026-08-06](notes/review-2026-08-06.md) | Retracted three alarming-but-wrong news-loss measurements; decided against moving collection off GitHub Actions |
 | [2026-08-07](notes/review-2026-08-07.md) | H1 rating archive (✅ fixed 08-08) · H2 phantom weights (✅ fixed 08-08) · M1 news-failure reporting (🟡 partly closed) · L1 duplicate `.gitignore` line (⬜ open, harmless) |
 | [2026-08-27](notes/review-2026-08-27.md) | Historical review: production-wiring failure and code findings |
-| [2026-09-05](notes/review-2026-09-05.md) | **Current review.** Cloudflare cutover code, no-cost synthesis policy, and manual deployment boundary |
+| [2026-09-05](notes/review-2026-09-05.md) | Historical Cloudflare cutover and cost-control review |
+| [2026-09-27](notes/review-2026-09-27.md) | **Current review.** October 2 release evidence, remaining natural acceptance and research gates |
 
 </details>
 
@@ -443,9 +445,10 @@ No license is granted. The code is published to be read, not reused.
 
 Immutable prepared inputs, dispatch receipts and outcome-free score observations are stored in `data/publications/`. Availability uses aware ISO clocks normalized to UTC; unknown legacy clocks are disclosed and excluded from strict research. Verify pinned ratings/header without a model call with `uv run python -m src.report.publication <manifest-path>`. Natural-run storage/runtime acceptance is pending; this scaffold does not fit a model or authorize outcome evaluation.
 
-Local October 1 repairs block the legacy real-IC loader, reject nonfinite rating
-inputs/configuration, separate research limitations from collector failures,
-label ETF/FX facts precisely, and correct calendar/filing validation. Both
+The October 2 release blocks the legacy real-IC loader, rejects nonfinite rating
+inputs/configuration, separates research limitations from collector failures,
+labels ETF/FX facts precisely, and corrects calendar/filing validation. Both
 captured publications retain all 31 ratings. News stabilization and these repairs
-await an authorized release; no accuracy improvement is claimed. See
+are on main and the Worker is deployed; natural acceptance is pending and no
+accuracy improvement is claimed. See
 `notes/review-2026-09-27.md` and `notes/next-steps-2026-09-27.md`.

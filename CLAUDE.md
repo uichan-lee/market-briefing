@@ -180,7 +180,12 @@ Dependencies are added when the code that needs them is written, each with a sta
 
 ## Git and CI
 
-Two GitHub Actions workflows — `collect-news.yml` (hourly, twice-hourly in the KRX session) and `report.yml` (four scheduled firings per weekday) — run the pipeline and commit their output straight to `main` as `github-actions[bot]`. `origin/main` advances on its own many times a day, with no local action.
+A Cloudflare Worker, `market-briefing-scheduler`, owns the production clock and
+dispatches `collect-news.yml` (hourly, twice-hourly in the KRX session),
+`report.yml` (once per intended morning/evening slot), and the email-only
+`scheduler-watchdog.yml`. GitHub workflows remain `workflow_dispatch` only;
+collectors and reports commit output straight to `main` as `github-actions[bot]`.
+`origin/main` advances on its own many times a day, with no local action.
 
 - Before starting work, and again before committing, run `git fetch` then `git rebase origin/main`. A local `main` that was current yesterday is now many commits behind.
 - Never analyse "the latest data" from the working tree without fetching first; the local snapshot is stale by construction, and conclusions about coverage or gaps drawn from it are wrong.
