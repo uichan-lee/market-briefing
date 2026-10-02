@@ -126,6 +126,7 @@ class ReportInputs:
     ambiguous_ratio: float | None = None
     articles_seen: int = 0
     collector_failures: Sequence[str] = ()
+    research_limitations: Sequence[str] = ()
     news_gaps: Sequence[str] = ()
     delivery_failures: Sequence[str] = ()
     # Dates in `us_prices` served by the Tiingo preview rather than the Alpaca
@@ -292,13 +293,20 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
     title = f"📅 {kst:%Y-%m-%d} ({weekday}) {kst:%H:%M} KST 브리핑"
 
     market = []
-    for symbol, label in (("SPY", "S&P 500"), ("QQQ", "NASDAQ"), ("SMH", "SOX")):
+    for symbol, label in (
+        ("SPY", "S&P 500 ETF(SPY)"),
+        ("QQQ", "Nasdaq-100 ETF(QQQ)"),
+        ("SMH", "반도체 ETF(SMH)"),
+    ):
         market.append(f"{label} {_fmt_pct(_latest(_daily_returns(inputs.us_prices, symbol)))}")
-    usdkrw = _series_at(inputs.macro, "usdkrw")
+    usdkrw = _series_at(inputs.macro, "usdkrw").dropna()
     level = _latest(usdkrw)
     if level is not None:
-        change = usdkrw.dropna().pct_change().iloc[-1] if len(usdkrw.dropna()) > 1 else None
-        market.append(f"USDKRW {level:,.0f} ({_fmt_pct(change, digits=1)})")
+        change = usdkrw.pct_change().iloc[-1] if len(usdkrw) > 1 else None
+        observed = pd.Timestamp(usdkrw.index[-1]).date()
+        market.append(
+            f"USDKRW {level:,.0f} ({_fmt_pct(change, digits=1)}, {observed.isoformat()} 기준)"
+        )
 
     warnings: list[str] = []
 
@@ -337,8 +345,18 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
             "관망은 시장 판단이 아닙니다"
         )
 
-    if inputs.collector_failures:
-        warnings.append(f"⚠ 수집 실패: {', '.join(inputs.collector_failures)}")
+    failures = []
+    limitations = list(inputs.research_limitations)
+    for failure in inputs.collector_failures:
+        # Older captured inputs stored this research warning as a failure.
+        if failure.startswith("시점 증거 없음 (학습 제외):"):
+            limitations.append(failure)
+        else:
+            failures.append(failure)
+    if failures:
+        warnings.append(f"⚠ 수집 실패: {', '.join(failures)}")
+    for limitation in dict.fromkeys(limitations):
+        warnings.append(f"⚠ 학습 제한: {limitation}")
     if inputs.news_gaps:
         warnings.append(f"⚠ 뉴스 유실: {'; '.join(inputs.news_gaps)}")
     if inputs.vendor_disagreements:
@@ -1444,8 +1462,9 @@ def load_inputs(
         day_scores = pd.DataFrame(columns=news_scores.columns)
     status_failures, news_gaps = read_status(root, as_of=as_of, provenance=provenance)
     legacy_sources = sorted({record["source"] for record in provenance if record.get("legacy")})
-    if legacy_sources:
-        failures.append("시점 증거 없음 (학습 제외): " + ", ".join(legacy_sources))
+    research_limitations = (
+        ["시점 증거 없음 (학습 제외): " + ", ".join(legacy_sources)] if legacy_sources else []
+    )
 
     return ReportInputs(
         day=day,
@@ -1468,6 +1487,7 @@ def load_inputs(
         ambiguous_ratio=ambiguous,
         articles_seen=articles,
         collector_failures=[*failures, *status_failures],
+        research_limitations=research_limitations,
         news_gaps=news_gaps,
         us_preview_dates=preview_dates,
         vendor_disagreements=disagreements,

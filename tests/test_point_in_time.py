@@ -338,7 +338,8 @@ def test_display_inputs_exclude_future_price_and_disclose_legacy(tmp_path):
     future.to_parquet(directory / "2026-08-04.parquet", index=False)
     inputs = load_inputs(DAY, root=tmp_path, as_of=LATE)
     assert inputs.us_prices.close.tolist() == [100]
-    assert any("시점 증거 없음" in failure for failure in inputs.collector_failures)
+    assert any("시점 증거 없음" in limitation for limitation in inputs.research_limitations)
+    assert not any("시점 증거 없음" in failure for failure in inputs.collector_failures)
 
 
 def test_completion_before_cutoff_but_late_archive_is_excluded(tmp_path, monkeypatch):

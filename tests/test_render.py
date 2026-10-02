@@ -216,6 +216,52 @@ def test_a_run_with_no_data_at_all_still_renders():
     assert "이 섹션을 만들 수 없습니다" in page
 
 
+def test_learning_limitations_are_separate_from_collection_failures():
+    limitation = "시점 증거 없음 (학습 제외): kr/price"
+    header = render_header(
+        inputs(collector_failures=["calendar/event_continuity"], research_limitations=[limitation])
+    )
+    assert "⚠ 수집 실패: calendar/event_continuity" in header
+    assert f"⚠ 학습 제한: {limitation}" in header
+    failure_line = next(line for line in header.splitlines() if "수집 실패:" in line)
+    assert "kr/price" not in failure_line
+
+
+def test_legacy_research_warning_is_rendered_as_a_limitation():
+    limitation = "시점 증거 없음 (학습 제외): kr/price"
+    header = render_header(inputs(collector_failures=[limitation]))
+    assert "수집 실패:" not in header
+    assert f"⚠ 학습 제한: {limitation}" in header
+
+
+def test_fx_date_follows_the_last_valid_fx_observation_not_aggregate_macro_date():
+    macro = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-30", "2026-07-31", "2026-08-03", "2026-08-03"]),
+            "series": ["usdkrw", "usdkrw", "usdkrw", "vix"],
+            "value": [1400.0, 1414.0, float("nan"), 20.0],
+        }
+    )
+    header = render_header(inputs(macro=macro))
+    assert "USDKRW 1,414 (+1.0%, 2026-07-31 기준)" in header
+    assert "MACRO 2026-08-03" in header
+
+
+def test_market_line_labels_etf_returns_as_etf_proxies():
+    prices = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2026-07-31"), pd.Timestamp(DAY)] * 3,
+            "ticker": ["SPY", "SPY", "QQQ", "QQQ", "SMH", "SMH"],
+            "close": [100.0, 101.0] * 3,
+        }
+    )
+    header = render_header(inputs(us_prices=prices))
+    assert "S&P 500 ETF(SPY) +1.00%" in header
+    assert "Nasdaq-100 ETF(QQQ) +1.00%" in header
+    assert "반도체 ETF(SMH) +1.00%" in header
+    assert "SOX" not in header
+
+
 def test_collector_failures_reach_the_header():
     header = render_header(inputs(collector_failures=["kr/investor_flow (비어 있음)"]))
     assert "수집 실패" in header
