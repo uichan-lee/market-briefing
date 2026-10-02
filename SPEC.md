@@ -4,8 +4,10 @@
 > explicit latest-created selection, no-store and confirmation before an alert.
 > Optional watchdog `details` carries safe run/timing evidence; lookup failure
 > is unknown, not proven staleness. Existing schedules and thresholds remain.
-> Worker `a777dc88` is deployed; natural acceptance is pending. See
-> [dated operating evidence](notes/review-2026-09-05.md).
+> **2026-10-02 operating status:** Worker `d2a79688` is active at 100%.
+> Natural news archive and watchdog SMTP acceptance are verified; healthy
+> follow-up collection and normal briefing delivery remain pending. See
+> [current operating evidence](notes/review-2026-09-27.md).
 
 > [!abstract] Purpose of this document
 > The input spec fed directly to Claude Code. The goal is to **fix the output shape and evaluation criteria before writing code**, so we don't waste effort collecting data that never gets used, and don't move the goalposts after the fact (= self-deception).
@@ -42,7 +44,7 @@
 | `COLLECT_NEWS` | 09:00–15:30 twice an hour, otherwise hourly | Korean outlet RSS | Not a report run — see below |
 
 > [!important] The news collection schedule is a correctness requirement
-> RSS holds a rolling 50–120 item buffer with no history, so an hour not collected is gone permanently — unlike prices, which pykrx will re-serve years later. `collect-news.yml` is invoked separately from the two report runs and writes nothing but `data/raw/kr/news/`. The current working tree moves the wall clock to `infra/cloudflare-scheduler/`; until that Worker is deployed, GitHub's existing production schedule remains live.
+> RSS holds a rolling 50–120 item buffer with no history, so an hour not collected is gone permanently — unlike prices, which pykrx will re-serve years later. `collect-news.yml` is invoked separately from the two report runs and writes nothing but `data/raw/kr/news/`. The deployed `infra/cloudflare-scheduler/` Worker owns the wall clock; GitHub workflows use `workflow_dispatch` and execute collection and storage.
 >
 > **The cadence follows a measurement, not a round number.** A buffer is a fixed item count, so it holds less *time* the faster the outlet publishes. Measured 2026-08-03 at 22:30 KST: 한국경제 경제 held 4.0 hours of history, 전자신문 4.5, 연합뉴스 10.3, 뉴시스 17.9, 인포스탁 101.6. The fast feeds hold materially less during the KRX session, which is why the session is polled twice an hour and the rest of the day once.
 >
@@ -57,7 +59,7 @@
 > Observed 2026-08-03: of the first four `0 * * * *` firings, **three never ran at all** and the fourth started 50 minutes late. Scheduled workflows are queued best-effort and shed under load, and the top of the hour is the most contended minute.
 >
 >
-> The current working tree applies the stronger consequence: a Cloudflare Worker dispatches the same GitHub workflows at the recorded UTC slots and invokes an email-only watchdog for stale or failed runs. The Worker is code-ready but not deployed; no new data or report execution moves out of GitHub Actions.
+> The deployed Cloudflare Worker dispatches the same GitHub workflows at the recorded UTC slots and invokes an email-only watchdog for stale or failed runs. Collection and report execution remain in GitHub Actions; dated notes distinguish deployment from natural acceptance.
 
 ---
 
@@ -88,6 +90,10 @@ minutes inclusive). Pending is deferred, not successful. News checks at :25/:40
 cover hourly :17 polls. Additional :55 (UTC hours 0–6) and :10 (hours 1–7) checks
 cover :47 polls before the next :17 success can hide their failure. The watchdog
 cron is `10,15,25,40,55 * * * *`; report watchdog rules stay unchanged.
+The exact observed historical watchdog cron `15,25,40 * * * *` is also
+recognized and logged while applying the same checks; unrelated crons remain
+ignored. The schedule API/event mismatch cause is unknown. This compatibility
+repair does not alter the intended schedule.
 Completed failures, missing/stale runs and lookup errors continue to alert.
 There is no stateful alert deduplication.
 A notice workflow fails if any required email delivery fails or none occurs.
@@ -154,8 +160,8 @@ backlog clears the notice. Exact-cutoff/future and stale statuses remain exclude
 
 Content and identity. Display order is §2.3.
 
-> [!warning] Deployment status as of 2026-09-05
-> Sections ①②③④⑥⑦⑨ render from real data every run. The 2026-08-29 manual report run scored and committed 536 pairs, rendered ③ from the score archive, published guarded ⑤/⑧ prose, and recovered the filings paths. The current working tree deliberately disables ⑤/⑧ before any Anthropic call; this is a cost control, not a rating change. ③ labels each ticker as complete, partially scored, or unscored, and `news_polarity` remains outside the frozen composite. The scheduler cutover is code-ready but not deployed.
+> [!warning] Delivery status — 2026-10-02
+> Sections ①②③④⑥⑦⑨ render from real data every run. The 2026-08-29 manual report run scored and committed 536 pairs, rendered ③ from the score archive, published guarded ⑤/⑧ prose, and recovered the filings paths. The current working tree deliberately disables ⑤/⑧ before any Anthropic call; this is a cost control, not a rating change. ③ labels each ticker as complete, partially scored, or unscored, and `news_polarity` remains outside the frozen composite. The scheduler cutover is deployed; full post-repair natural-run acceptance remains pending.
 
 **① US → KR market transmission (comes first)**
 
@@ -884,7 +890,7 @@ market-briefing/
     report.yml               # dispatch-only report workflow (§1). NOT `briefing.yml` — that name never existed
     collect-news.yml          # dispatch-only RSS collector workflow
     scheduler-watchdog.yml    # email-only alert invoked by the Cloudflare scheduler
-  infra/cloudflare-scheduler/ # tested Worker cron dispatcher; deployment is Ricky's manual task
+  infra/cloudflare-scheduler/ # deployed Worker cron dispatcher; acceptance in dated notes
 ```
 
 ---
