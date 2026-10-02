@@ -473,6 +473,15 @@ Both email formats share the report's render warnings. A separate immutable
 `receipts/` record stores dispatch completion and channel acceptance, never inbox
 confirmation. Prepared input records alone do not prove distribution.
 
+New delivery receipts retain channel names/acceptance and a fixed `omitted`
+marker in the schema-compatible `detail` field. Recipient addresses and arbitrary
+delivery diagnostics stay out of new immutable receipt records; operator logs
+remain the diagnostic path. This future-write guard does not sanitize earlier
+receipts. Three existing records contain recipient addresses and remain unchanged
+under Ricky's history-preservation instruction. Any historical rewrite needs an
+explicit exception approved by Ricky, with publication manifests/blobs and raw
+history preserved.
+
 Observations identify the frozen deterministic score (not an ML expected return),
 policy/code identity, features/missingness, score/rating, cutoff and actual record
 availability. Only evening rows with complete five-feature inputs, sufficient

@@ -189,8 +189,14 @@ def write_publication(inputs, results, *, report: str, run: str) -> Path:
 
 
 def write_delivery_receipt(publication: Path, delivery_results) -> Path:
-    """Record channel acceptance after dispatch; never claim inbox receipt."""
+    """Record channel acceptance without private diagnostics or inbox claims."""
     manifest = json.loads(publication.read_text())
+    # Delivery diagnostics can contain recipients or credentials. Keep the
+    # schema's detail field with a fixed marker; persist only channel acceptance.
+    delivery_evidence = [
+        {"channel": result.channel, "delivered": result.delivered, "detail": "omitted"}
+        for result in delivery_results
+    ]
     directory = publication.parent / "receipts"
     directory.mkdir(exist_ok=True)
     target = directory / f"{manifest['publication_id']}-{uuid4().hex}.json"
@@ -202,7 +208,7 @@ def write_delivery_receipt(publication: Path, delivery_results) -> Path:
                     "publication_id": manifest["publication_id"],
                     "manifest_sha256": evidence(publication)["sha256"],
                     "dispatch_completed_at_utc": now_utc().isoformat(),
-                    "channels": delivery_results,
+                    "channels": delivery_evidence,
                     "inbox_receipt_confirmed": False,
                 }
             )

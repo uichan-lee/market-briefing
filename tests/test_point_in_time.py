@@ -379,7 +379,8 @@ def test_completion_before_cutoff_but_late_archive_is_excluded(tmp_path, monkeyp
     assert load_news_polarity_frame(tmp_path, as_of=LATE, strict=True).empty
 
 
-def test_shared_render_warnings_and_immutable_dispatch_receipt(tmp_path):
+@pytest.mark.parametrize("email_delivered", [True, False])
+def test_shared_render_warnings_and_immutable_dispatch_receipt(tmp_path, email_delivered):
     from src.notify.base import DeliveryResult
     from src.report.publication import write_delivery_receipt
     from src.report.render import build_summary, build_summary_html
@@ -390,12 +391,20 @@ def test_shared_render_warnings_and_immutable_dispatch_receipt(tmp_path):
     assert "synthetic prose warning" in build_summary_html(inputs, results)
     path = write_publication(inputs, results, report="synthetic", run="evening")
     before = path.read_bytes()
+    private_recipient = "receipt-recipient@example.invalid"
+    private_diagnostic = "synthetic-delivery-secret"
     receipt = write_delivery_receipt(
         path,
-        [DeliveryResult("vault", True, "synthetic"), DeliveryResult("email", False, "synthetic")],
+        [
+            DeliveryResult("vault", True, private_diagnostic),
+            DeliveryResult("email", email_delivered, f"{private_recipient} {private_diagnostic}"),
+        ],
     )
     data = json.loads(receipt.read_text())
-    assert [row["delivered"] for row in data["channels"]] == [True, False]
+    assert [row["channel"] for row in data["channels"]] == ["vault", "email"]
+    assert [row["delivered"] for row in data["channels"]] == [True, email_delivered]
+    assert private_recipient not in receipt.read_text()
+    assert private_diagnostic not in receipt.read_text()
     assert data["dispatch_completed_at_utc"] and not data["inbox_receipt_confirmed"]
     assert path.read_bytes() == before
 
