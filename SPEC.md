@@ -118,7 +118,7 @@ channels:
 
 ```
 📅 2026-07-29 (Wed) 07:00 KST
-S&P +0.4% | NASDAQ +0.8% | SOX +1.9% | USDKRW 1,382 (+0.3%)
+S&P 500 ETF(SPY) +0.4% | Nasdaq-100 ETF(QQQ) +0.8% | Semiconductor ETF(SMH) +1.9% | USDKRW 1,382 (+0.3%, 2026-07-28 observation)
 ▶ Today's focus: Semiconductor gap-up pressure / secondary battery outflows, day 3
 ▶ Holdings flagged: 2 (below)
 ⚠ Data missing: us_filings (retry failed)
@@ -126,6 +126,15 @@ S&P +0.4% | NASDAQ +0.8% | SOX +1.9% | USDKRW 1,382 (+0.3%)
 ```
 
 The last line appears only when the commentary was dropped. Every degradation of the briefing is stated in the header, never only in logs.
+
+Collector validation failures and research eligibility limitations are separate
+header warnings. Unknown source clocks appear under `학습 제한`, not `수집 실패`.
+`ReportInputs.research_limitations` is optional and defaults to empty. Old captured
+inputs containing the legacy clock-warning prefix are classified at render time;
+immutable publication records remain unchanged and exact-version replay retains
+its code/config identity check. The FX observation date comes from the last valid
+USDKRW row, not the latest date across all macro series. Headline returns name
+SPY/QQQ/SMH as ETF proxies; SMH is not labelled SOX.
 
 ### 2.2 Sections
 
@@ -176,6 +185,13 @@ Aggregates the individual scores from the §6 schema per ticker. Displayed field
 
 **④ Calendar**
 
+The collection window remains 30 days back and 120 days ahead. Announced schedules'
+trailing completeness is required through the fetch observation date. An unavailable
+future tail is disclosed as a range limitation; historical/interior gaps, empty
+sources and malformed responses still fail. Computed options expiry retains the
+full requested window. Optional calendar outcome `calendar_notices` in run status
+preserves each fetch's horizon; raw event schemas stay unchanged.
+
 Same-day/next-day earnings releases, FOMC/CPI/employment data, options expiration, KR ex-dividend dates and IPO schedules. **CPI/employment/FOMC dates and options expiration are built; US individual-company earnings and KR ex-dividend/IPO dates are not, decided 2026-08-14** — `notes/calendar-collector-plan.md` has the source verification and the reasoning for what's deferred and why. The section names both gaps inline rather than staying fully absent.
 
 **⑤ Red team section**
@@ -216,6 +232,10 @@ Two guards, both because a confident-looking rating on thin evidence is worse th
 
 - A ticker whose inputs are largely missing is rated `관망` with the missing inputs named, never rated confidently on whatever happened to arrive.
 - A missing feature is never silently treated as zero — it is excluded from the sum and the weights are renormalized over what is present.
+
+NaN and infinity are missing feature evidence and reduce coverage. Rating weights,
+cut points, coverage thresholds and computed scores must be finite; invalid
+configuration is rejected before publication.
 
 > [!note] The rationale is truncated, so it must show its residual
 > `RatingResult.rationale()` returns only the top `max_rationale_terms` contributors (4 by default), while the headline score is the sum of **all** of them. With the committed config a reader adding up the displayed lines gets `+1.065` against a stated `+1.13`. The renderer emits a residual line whenever terms were dropped:
@@ -358,6 +378,12 @@ reports/
 `raw/` is **never overwritten**. On a re-run, save separately with a `-v2` suffix and keep the original.
 
 **`us/filings/` is parquet, not the `.jsonl` this section originally specified, and `kr/filings/` was originally absent entirely — both corrected 2026-08-25.** Every collector integration point (`write_daily`/`backfill.py`'s versioning, `features/compute.py`'s `load_raw`) is parquet-only; a second JSONL writer for one collector would have duplicated that machinery for no benefit. `notes/filings-collector-plan.md` has the full reasoning and the live-verification record for both `us_filings.py` and `kr_filings.py`.
+
+US filing `report_date` validation is form-specific: reviewed annual, quarterly
+and current-report forms plus amendments require zero missing dates; other forms
+remain nullable with counts disclosed in validation detail. The former 97%
+aggregate threshold measured filing mix rather than quality. Required fields,
+date parsing, fetch requests and immutable archive schemas are unchanged.
 
 > [!warning] All of `data/raw/` is committed — since 2026-08-06, not only news
 > The original split — news committed because RSS has no backfill, everything else gitignored because pykrx and FRED re-serve history — was true and still insufficient. The report workflow runs on a fresh Actions checkout, and a 252-session z-score needs the full three-year history *present*; regenerable-on-the-Mac is absent-in-the-runner, and re-fetching three years per run would spend hundreds of KRX requests daily against a block near 250. The whole backfill measures 28 MB, so it is committed, which also makes §0 principle 3 machine-independent. `data/features/` stays ignored (recomputed each render). News remains the one part that is additionally *irreplaceable*: roughly 300–450 KB/day gzipped, and an hour not collected is gone.
@@ -688,6 +714,11 @@ Run 3 candidate models against the same golden set + same prompt, and measure th
 
 **Full text: @PREREGISTRATION.md** — section numbering §8.1–§8.5 is retained there, so references to "§8.3" and "§8.5" resolve unchanged.
 
+The legacy real-IC loader/CLI is disabled locally until verified price basis,
+canonical publication/outcome vintages and v2 registration exist. An explicit
+aware `as_of` is required but does not itself authorize evaluation. Pure
+calculators remain available for synthetic checks; frozen criteria are unchanged.
+
 In summary:
 
 - **§8.1** — what 2 weeks can and cannot validate. Pipeline integrity, data consistency, `ambiguous` ratio, reproducibility, golden-set performance, inter-model agreement, and cost are all measurable. Signal hit rate and strategy profitability are not.
@@ -796,7 +827,7 @@ market-briefing/
       webhook.py              # deliberately unbuilt — absent from delivery.yaml
     eval/
       bakeoff.py               # ✅ model comparison
-      ic.py                    # ✅ §8.4 IC/ICIR/quantile-spread, read at the §8.5 3-month gate
+      ic.py                    # Pure calculators; real loader gated pending price/vintage/v2 contracts
       shadow_portfolio.py      # ✅ §8.5's paper-portfolio comparison against KODEX 200
       rating_calibration.py    # ✅ MANUAL-TASKS §6 — rating.yaml calibration support, not a SPEC step
       gate_2week.py            # ✅ MANUAL-TASKS §8 / §8.5 — 2-week gate pre-read, not a SPEC step

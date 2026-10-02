@@ -1,10 +1,10 @@
 # market-briefing
 
-> **September 28 watchdog update:** false gap alerts now trigger confirmation reads
-> and carry run/timing evidence. Worker `a777dc88` is deployed; two natural
-> post-deployment checks are still pending. News and the September 28 evening
-> report have resumed, but calendar validation remains degraded. See
-> [operating evidence](notes/review-2026-09-05.md) and [next checks](notes/next-steps-2026-09-05.md).
+> **October 2 approved release:** news runtime and watchdog stabilization,
+> calendar/filing validation, report-header integrity and evaluation guards pass
+> 1,074 offline Python tests and 27 Worker tests. Main publication and the updated
+> Worker are being released; natural acceptance is pending. See
+> [operating evidence](notes/review-2026-09-27.md) and [next steps](notes/next-steps-2026-09-27.md).
 
 **A daily Korean/US equity briefing that states a directional opinion on every ticker it tracks, shows the arithmetic behind it — and then stops.**
 
@@ -442,3 +442,10 @@ loss risk without moving pipeline execution or data storage.
 No license is granted. The code is published to be read, not reused.
 
 Immutable prepared inputs, dispatch receipts and outcome-free score observations are stored in `data/publications/`. Availability uses aware ISO clocks normalized to UTC; unknown legacy clocks are disclosed and excluded from strict research. Verify pinned ratings/header without a model call with `uv run python -m src.report.publication <manifest-path>`. Natural-run storage/runtime acceptance is pending; this scaffold does not fit a model or authorize outcome evaluation.
+
+Local October 1 repairs block the legacy real-IC loader, reject nonfinite rating
+inputs/configuration, separate research limitations from collector failures,
+label ETF/FX facts precisely, and correct calendar/filing validation. Both
+captured publications retain all 31 ratings. News stabilization and these repairs
+await an authorized release; no accuracy improvement is claimed. See
+`notes/review-2026-09-27.md` and `notes/next-steps-2026-09-27.md`.
