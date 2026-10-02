@@ -374,6 +374,81 @@ def test_write_status_roundtrips(tmp_path, monkeypatch):
     assert payload["collectors"]["kr_news"]["failures"][0]["name"] == "feed_continuity"
 
 
+@pytest.mark.parametrize("stale", [False, True])
+def test_scoring_backlog_survives_successful_status_and_both_report_formats(
+    tmp_path, monkeypatch, stale
+):
+    import scripts.collect_daily as mod
+    from src.collectors.validate import CheckResult
+    from src.report.render import (
+        build_summary_html,
+        header_facts,
+        load_inputs,
+        rate_all,
+        render_header,
+    )
+
+    at = pd.Timestamp("2026-08-20T12:37:00Z")
+    backlog = dict(
+        schema_version=1,
+        unscored_pairs=2,
+        deferred_pairs=2,
+        failed_or_blocked_pairs=0,
+        stale_pairs=int(stale),
+        unknown_collection_clocks=0,
+        oldest_unscored_age_hours=31.0 if stale else 3.0,
+    )
+    report = ValidationReport(
+        "news_scores",
+        [
+            CheckResult("scoring_continuity", not stale, "old/005930 overdue"),
+            CheckResult("scoring_budget", True, "1/1 calls used; 2 pair(s) deferred"),
+            CheckResult("scoring_backlog", True, json.dumps(backlog)),
+        ],
+    )
+    monkeypatch.setattr(
+        mod, "RUNS", {"evening": {"news_scores": lambda *args: ("1 newly scored", report)}}
+    )
+    monkeypatch.setattr(mod, "STATUS", tmp_path / "status")
+    monkeypatch.setattr(mod, "now_utc", lambda: at)
+    assert mod.main(["--run", "evening"]) == 0
+    payload = json.loads(next((tmp_path / "status").glob("*.json")).read_text())
+    outcome = payload["collectors"]["news_scores"]
+    assert outcome["ok"] is (not stale)
+    assert outcome["scoring_backlog"] == backlog
+    assert outcome["scoring_budget"] == report.results[1].detail
+
+    inputs = load_inputs(at.date(), as_of=at + pd.Timedelta(minutes=4), root=tmp_path)
+    assert len(inputs.scoring_notices) == 1
+    notice = inputs.scoring_notices[0]
+    assert "뉴스 분석 대기: 2건" in notice
+    assert ("31.0시간" if stale else "3.0시간") in notice
+    assert notice.startswith("⚠" if stale else "ℹ")
+    before = rate_all(inputs)
+    _, _, warnings = header_facts(inputs)
+    assert notice in warnings
+    assert notice in render_header(inputs)
+    assert notice in build_summary_html(inputs, before)
+    assert not inputs.news_gaps  # Delayed scoring does not imply lost RSS data.
+    inputs.scoring_notices = []
+    assert rate_all(inputs) == before
+
+
+def test_scoring_backlog_is_not_invented_for_legacy_status(tmp_path, monkeypatch):
+    import scripts.collect_daily as mod
+
+    report = ValidationReport("news_scores")
+    monkeypatch.setattr(
+        mod, "RUNS", {"evening": {"news_scores": lambda *args: ("quiet legacy run", report)}}
+    )
+    monkeypatch.setattr(mod, "STATUS", tmp_path / "status")
+    assert mod.main(["--run", "evening"]) == 0
+    outcome = json.loads(next((tmp_path / "status").glob("*.json")).read_text())["collectors"][
+        "news_scores"
+    ]
+    assert "scoring_backlog" not in outcome and "scoring_budget" not in outcome
+
+
 @pytest.mark.parametrize("fetch_ok", [True, False])
 def test_calendar_notices_survive_status_and_reach_renderer(tmp_path, monkeypatch, fetch_ok):
     import scripts.collect_daily as mod

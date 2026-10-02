@@ -1254,6 +1254,74 @@ def test_no_status_directory_means_no_lines(tmp_path):
     assert read_status(tmp_path) == ([], [])
 
 
+def test_scoring_notices_use_only_latest_visible_fresh_status(tmp_path):
+    from src.report.render import read_status
+
+    def status(pending):
+        return {
+            "news_scores": {
+                "ok": True,
+                "scoring_backlog": dict(
+                    schema_version=1,
+                    unscored_pairs=pending,
+                    stale_pairs=0,
+                    unknown_collection_clocks=0,
+                    oldest_unscored_age_hours=2.0,
+                ),
+            }
+        }
+
+    _write_status(tmp_path, AS_OF - pd.Timedelta(hours=2), status(3))
+    _write_status(tmp_path, AS_OF - pd.Timedelta(hours=1), status(1))
+    _write_status(tmp_path, AS_OF, status(99))
+    notices = []
+    assert read_status(tmp_path, as_of=AS_OF, scoring_notices=notices) == ([], [])
+    assert len(notices) == 1 and "대기: 1건" in notices[0]
+    _write_status(tmp_path, AS_OF - pd.Timedelta(minutes=10), status(0))
+    notices = []
+    read_status(tmp_path, as_of=AS_OF, scoring_notices=notices)
+    assert notices == []
+    notices = []
+    read_status(tmp_path, as_of=AS_OF + pd.Timedelta(days=2), scoring_notices=notices)
+    assert notices == []
+
+
+@pytest.mark.parametrize(
+    "backlog",
+    [
+        None,
+        [],
+        {},
+        {"schema_version": 99},
+        {
+            "schema_version": 1,
+            "unscored_pairs": "unknown",
+            "stale_pairs": 0,
+            "unknown_collection_clocks": 0,
+            "oldest_unscored_age_hours": 2.0,
+        },
+    ],
+)
+def test_malformed_scoring_metadata_does_not_drop_other_status_failures(tmp_path, backlog):
+    from src.report.render import read_status
+
+    _write_status(
+        tmp_path,
+        AS_OF - pd.Timedelta(minutes=1),
+        {
+            "news_scores": {
+                "ok": False,
+                "scoring_backlog": backlog,
+                "failures": [{"name": "scoring_continuity", "detail": "overdue"}],
+            },
+        },
+    )
+    notices = []
+    failures, _ = read_status(tmp_path, as_of=AS_OF, scoring_notices=notices)
+    assert failures == ["news_scores/scoring_continuity"]
+    assert notices == []
+
+
 @pytest.mark.parametrize(
     "outcomes, expected", [([], 1), ([False, False], 1), ([True, False], 1), ([True, True], 0)]
 )

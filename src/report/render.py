@@ -44,6 +44,7 @@ from __future__ import annotations
 import datetime as dt
 import gzip
 import json
+import math
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -127,6 +128,7 @@ class ReportInputs:
     articles_seen: int = 0
     collector_failures: Sequence[str] = ()
     research_limitations: Sequence[str] = ()
+    scoring_notices: Sequence[str] = ()
     news_gaps: Sequence[str] = ()
     delivery_failures: Sequence[str] = ()
     # Dates in `us_prices` served by the Tiingo preview rather than the Alpaca
@@ -357,6 +359,7 @@ def header_facts(inputs: ReportInputs) -> tuple[str, str, list[str]]:
         warnings.append(f"⚠ 수집 실패: {', '.join(failures)}")
     for limitation in dict.fromkeys(limitations):
         warnings.append(f"⚠ 학습 제한: {limitation}")
+    warnings.extend(inputs.scoring_notices)
     if inputs.news_gaps:
         warnings.append(f"⚠ 뉴스 유실: {'; '.join(inputs.news_gaps)}")
     if inputs.vendor_disagreements:
@@ -1460,7 +1463,10 @@ def load_inputs(
         day_scores = visible_scores.merge(pair_frame, on=["article_id", "ticker"], how="inner")
     else:
         day_scores = pd.DataFrame(columns=news_scores.columns)
-    status_failures, news_gaps = read_status(root, as_of=as_of, provenance=provenance)
+    scoring_notices: list[str] = []
+    status_failures, news_gaps = read_status(
+        root, as_of=as_of, provenance=provenance, scoring_notices=scoring_notices
+    )
     legacy_sources = sorted({record["source"] for record in provenance if record.get("legacy")})
     research_limitations = (
         ["시점 증거 없음 (학습 제외): " + ", ".join(legacy_sources)] if legacy_sources else []
@@ -1488,6 +1494,7 @@ def load_inputs(
         articles_seen=articles,
         collector_failures=[*failures, *status_failures],
         research_limitations=research_limitations,
+        scoring_notices=scoring_notices,
         news_gaps=news_gaps,
         us_preview_dates=preview_dates,
         vendor_disagreements=disagreements,
@@ -1582,7 +1589,11 @@ def read_calendar_notices(
 
 
 def read_status(
-    root: Path, *, as_of: pd.Timestamp | None = None, provenance: list[dict] | None = None
+    root: Path,
+    *,
+    as_of: pd.Timestamp | None = None,
+    provenance: list[dict] | None = None,
+    scoring_notices: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Check failures and news gaps from the most recent collection run.
 
@@ -1615,6 +1626,12 @@ def read_status(
 
     if provenance is not None:
         provenance.append({**evidence(newest_path), "source": "status"})
+    if scoring_notices is not None:
+        scorer = newest.get("collectors", {}).get("news_scores", {})
+        backlog = scorer.get("scoring_backlog")
+        notice = _scoring_backlog_notice(backlog)
+        if notice:
+            scoring_notices.append(notice)
     counted: dict[str, int] = {}
     gaps: list[str] = []
     for name, outcome in newest.get("collectors", {}).items():
@@ -1632,6 +1649,45 @@ def read_status(
 
     failures = [key if n == 1 else f"{key}×{n}" for key, n in counted.items()]
     return failures, gaps
+
+
+def _scoring_backlog_notice(backlog: object) -> str | None:
+    """Render measured scoring delay separately from raw-news loss.
+
+    Legacy/malformed metadata cannot establish a zero backlog or an age.
+    Existing check failures still travel through the normal status reader.
+    """
+    if (
+        not isinstance(backlog, dict)
+        or type(backlog.get("schema_version")) is not int
+        or backlog["schema_version"] != 1
+    ):
+        return None
+    counts = [
+        backlog.get(key) for key in ("unscored_pairs", "stale_pairs", "unknown_collection_clocks")
+    ]
+    if any(type(count) is not int or count < 0 for count in counts):
+        return None
+    pending, stale, unknown = counts
+    if pending == 0 or stale + unknown > pending:
+        return None
+    age = backlog.get("oldest_unscored_age_hours")
+    if age is not None and (type(age) not in (int, float) or not math.isfinite(age) or age < 0):
+        return None
+    if (age is None) != (unknown == pending):
+        return None
+    parts = []
+    if age is not None:
+        parts.append(f"확인 시점 최장 대기 {age:.1f}시간")
+    if stale:
+        parts.append(f"30시간 초과 {stale}건")
+    if unknown:
+        parts.append(f"대기 시각 미확인 {unknown}건")
+    mark = "⚠" if stale or unknown else "ℹ"
+    return (
+        f"{mark} 뉴스 분석 대기: {pending}건 (기사·종목 기준), {' · '.join(parts)}"
+        " — 이번 뉴스 분석은 일부만 반영했습니다"
+    )
 
 
 _ARCHIVED = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:-v(\d+))?$")

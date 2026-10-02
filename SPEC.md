@@ -72,6 +72,12 @@ The immutable archive Commit step runs even on validation failure.
 
 Poll up to four feeds concurrently, retaining per-feed retries/timeouts and
 configuration-order aggregation. Worker threads never write archive files.
+Calendar construction and schedule calculation are serialized through the shared
+session utility: the calendar library lazily mutates class-wide Korean holiday
+caches, so concurrent cold parsing can otherwise crash every feed's aggregation.
+Network polling remains parallel. No calendar/holiday rule or article timestamp
+is changed. This October 2 fix is local; natural-run acceptance after release
+remains required.
 Every new poll archive has a UTC minute prefix and a UUID suffix, including
 empty polls. Exclusive creation prevents overwrites; independent news/report
 checkouts cannot generate the same minute-only path. Readers retain support
@@ -135,6 +141,14 @@ immutable publication records remain unchanged and exact-version replay retains
 its code/config identity check. The FX observation date comes from the last valid
 USDKRW row, not the latest date across all macro series. Headline returns name
 SPY/QQQ/SMH as ETF proxies; SMH is not labelled SOX.
+
+`ReportInputs.scoring_notices` defaults to empty. The latest visible, fresh
+collection status supplies measured news-analysis backlog counts/ages, shared by
+Markdown and email headers and captured in publication inputs. A fresh backlog is
+informational; overdue or unknown collection clocks warn. Analysis delay is kept
+separate from raw-news loss. Old statuses without metadata establish no backlog
+count; malformed metadata does not erase ordinary check failures. A later empty
+backlog clears the notice. Exact-cutoff/future and stale statuses remain excluded.
 
 ### 2.2 Sections
 
@@ -587,6 +601,25 @@ All three are computable from the day the 3-year backfill lands (§12 step 4), s
 > In multi-dimensional sentiment research, intensity and uncertainty contributed more predictive power than simple polarity alone.
 
 ### 6.3 Prompt discipline
+
+**Bounded scoring backlog disclosure — October 2, local:** retain newest-first
+selection, the four-calendar-day candidate window, 180-pair/180-attempt defaults,
+checkpoint/idempotency rules, retry bounds and golden-check reservation. Every
+still-unscored candidate inside that window, including pair-cap and call-cap
+deferrals and failed/blocked selected pairs, enters `scoring_continuity`. More
+than 30 hours since collection fails; exactly 30 hours remains within tolerance.
+Unknown/naive/malformed/numeric collection clocks fail evidence validation and
+never acquire a fabricated age. Earlier raw archives remain preserved; this
+windowed check cannot establish complete historical scoring coverage.
+
+Successful checks `scoring_budget` and JSON `scoring_backlog` are persisted in
+the `news_scores` collection status, alongside ordinary failures. Backlog schema
+v1 records observation time/window, pair/attempt caps and calls used, scored,
+failed-or-blocked, deferred and total unscored counts, stale/unknown-clock counts,
+and the oldest evidenced collection clock/age. The header describes the age
+measured at that check, not an assumed ongoing age. Fresh deferral alone is not
+a validation failure. Partial reports continue after a stale backlog; no extra
+provider call, catch-up run, threshold change or production rating change occurs.
 
 - The schema is enforced via tool/structured output
 - **Sampling is pinned to the most deterministic setting the vendor still offers**, and where the parameter has been removed, none is sent. Never drop it silently — `litellm.drop_params` would let a run look successful while the setting was never applied.

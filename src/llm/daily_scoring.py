@@ -49,6 +49,7 @@ from src.eval.bakeoff import MAX_RATE_LIMIT_RETRIES, Pacer, examples
 from src.llm.adapter import AdapterError, SchemaError, is_rate_limit, missing_credential
 from src.llm.score import Prompt, load_prompt, out_of_range, score_article
 from src.util.config import load_aliases, load_models, load_watchlist
+from src.util.point_in_time import parse_clocks
 from src.util.session import now_utc, to_utc
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -367,14 +368,23 @@ def check_scoring_continuity(
         return CheckResult("scoring_continuity", True, "no outstanding candidates")
 
     boundary = now - pd.Timedelta(hours=max_age_hours)
-    stale = [c for c in outstanding if to_utc(c["collected_at_utc"]) < boundary]
-    if stale:
+    clocks = parse_clocks(pd.Series([c.get("collected_at_utc") for c in outstanding]))
+    stale = [c for c, clock in zip(outstanding, clocks, strict=True) if clock < boundary]
+    unknown = int(clocks.isna().sum())
+    if stale or unknown:
         shown = ", ".join(f"{c['article_id']}/{c['ticker']}" for c in stale[:5])
         suffix = f" (+{len(stale) - 5} more)" if len(stale) > 5 else ""
+        details = []
+        if stale:
+            details.append(
+                f"{len(stale)} pair(s) unscored past {max_age_hours:.0f}h: {shown}{suffix}"
+            )
+        if unknown:
+            details.append(f"{unknown} unscored pair(s) lack valid collection clocks")
         return CheckResult(
             "scoring_continuity",
             False,
-            f"{len(stale)} pair(s) unscored past {max_age_hours:.0f}h: {shown}{suffix}",
+            "; ".join(details),
         )
     return CheckResult(
         "scoring_continuity",
@@ -486,8 +496,9 @@ def score_new_articles(
     can be attempted without one.
 
     At most ``max_pairs_per_run`` pairs are scored, newest first; a larger
-    backlog has its oldest pairs left for a later run or, if they age out,
-    dropped — see ``MAX_PAIRS_PER_RUN``.
+    backlog has its oldest pairs left for a later run. Every still-unscored
+    pair inside the candidate window, including deferrals, remains subject to
+    the continuity check; older archives are never deleted when the window moves.
     ``max_calls_per_run`` includes failed attempts and retries, reserving one
     attempt for the final golden-set check when enabled.
     """
@@ -537,11 +548,15 @@ def score_new_articles(
     # can be missing) is what `check_scoring_continuity` also keys on.
     _epoch = pd.Timestamp.min.tz_localize("UTC")
 
-    def _collected(candidate: dict) -> pd.Timestamp:
-        raw = candidate.get("collected_at_utc")
-        return to_utc(raw) if raw else _epoch
-
-    todo.sort(key=_collected, reverse=True)
+    collection_clocks = parse_clocks(
+        pd.Series([c.get("collected_at_utc") for c in todo], dtype=object)
+    )
+    ordered = sorted(
+        zip(todo, collection_clocks, strict=True),
+        key=lambda item: item[1] if pd.notna(item[1]) else _epoch,
+        reverse=True,
+    )  # The epoch orders unknown clocks last; it never supplies age evidence.
+    todo = [candidate for candidate, _ in ordered]
     deferred, todo = todo[max_pairs_per_run:], todo[:max_pairs_per_run]
     budget = _CallBudget(max_calls_per_run - int(known_value_check))
 
@@ -620,7 +635,8 @@ def score_new_articles(
         report.add(CheckResult("schema", True, "nothing scored this run"))
         report.add(CheckResult("missing_ratio", True, "nothing scored this run"))
 
-    report.add(check_scoring_continuity(outstanding, now=now))
+    pending = [*outstanding, *deferred]
+    report.add(check_scoring_continuity(pending, now=now))
 
     if known_value_check:
         budget.limit = max_calls_per_run
@@ -633,9 +649,35 @@ def score_new_articles(
         f"{len(deferred)} pair(s) left for a later run — {max_pairs_per_run}/run cap"
     )
     if deferred:
-        oldest_deferred = min(_collected(candidate) for candidate in deferred)
-        oldest_age_hours = max(0.0, (now - oldest_deferred).total_seconds() / 3600)
-        detail += f"; oldest deferred pair is {oldest_age_hours:.1f}h old"
+        deferred_clocks = parse_clocks(pd.Series([c.get("collected_at_utc") for c in deferred]))
+        if deferred_clocks.notna().any():
+            oldest_age_hours = max(0.0, (now - deferred_clocks.min()).total_seconds() / 3600)
+            detail += f"; oldest deferred pair is {oldest_age_hours:.1f}h old"
+        if deferred_clocks.isna().any():
+            detail += f"; {deferred_clocks.isna().sum()} deferred pair(s) lack collection clocks"
     report.add(CheckResult("scoring_budget", True, detail))
+
+    clocks = parse_clocks(pd.Series([c.get("collected_at_utc") for c in pending], dtype=object))
+    oldest = clocks.min()
+    backlog = dict(
+        schema_version=1,
+        observed_at_utc=now.isoformat(),
+        window_days=SCORE_WINDOW_DAYS,
+        max_pairs_per_run=max_pairs_per_run,
+        max_calls_per_run=max_calls_per_run,
+        calls_used=budget.used,
+        scored_pairs=len(written),
+        failed_or_blocked_pairs=len(outstanding),
+        deferred_pairs=len(deferred),
+        unscored_pairs=len(pending),
+        stale_pairs=int(clocks.lt(now - pd.Timedelta(hours=CONTINUITY_MAX_AGE_HOURS)).sum()),
+        unknown_collection_clocks=int(clocks.isna().sum()),
+        oldest_unscored_at_utc=oldest.isoformat() if pd.notna(oldest) else None,
+        oldest_unscored_age_hours=max(0.0, (now - oldest).total_seconds() / 3600)
+        if pd.notna(oldest)
+        else None,
+    )
+    # A notice preserves successful-run limitations; it does not fail a fresh backlog.
+    report.add(CheckResult("scoring_backlog", True, json.dumps(backlog)))
 
     return frame, report

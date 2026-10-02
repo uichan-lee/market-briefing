@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime as dt
 import warnings
 from functools import cache
+from threading import RLock
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -33,6 +34,11 @@ KST = ZoneInfo("Asia/Seoul")
 Market = Literal["KR", "US"]
 
 _CALENDAR_NAMES: dict[str, str] = {"KR": "XKRX", "US": "XNYS"}
+
+# Calendar construction/scheduling lazily mutate shared holiday caches. In
+# particular, KoreanHoliday writes class-wide pandas Series while building KRX
+# holidays. Serialize these library operations; RSS network polling stays parallel.
+_CALENDAR_LOCK = RLock()
 
 # A holiday run long enough to matter: Korean Seollal/Chuseok closures can span
 # five or more calendar days once weekends are included. Lookahead windows below
@@ -141,7 +147,8 @@ _CALENDAR_CORRECTIONS: dict[str, frozenset[dt.date]] = {
 
 
 def _schedule(market: Market, start: dt.date, end: dt.date) -> pd.DataFrame:
-    schedule = _calendar(market).schedule(start_date=start, end_date=end)
+    with _CALENDAR_LOCK:
+        schedule = _calendar(market).schedule(start_date=start, end_date=end)
     wrong = _CALENDAR_CORRECTIONS.get(market)
     if wrong:
         keep = [ts for ts in schedule.index if ts.date() not in wrong]

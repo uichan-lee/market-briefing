@@ -324,6 +324,103 @@ def test_score_new_articles_caps_a_backlog_newest_first(tmp_path, monkeypatch):
     assert "oldest deferred pair is 11.0h old" in budget.detail
 
 
+@pytest.mark.parametrize("cap", ["pairs", "calls", "retries"])
+@pytest.mark.parametrize("age", [30, 31])
+def test_deferred_pairs_keep_their_age_check_and_clear_after_retry(tmp_path, monkeypatch, cap, age):
+    from types import SimpleNamespace
+
+    import src.llm.daily_scoring as scoring
+
+    now = pd.Timestamp("2026-08-21T12:00:00Z")
+    candidates = [
+        dict(
+            _article("old", collected=(now - pd.Timedelta(hours=age)).isoformat()), ticker="005930"
+        ),
+        dict(_article("new", collected=(now - pd.Timedelta(hours=1)).isoformat()), ticker="005930"),
+    ]
+    monkeypatch.setattr(scoring, "resolved_candidates", lambda *a, **k: candidates)
+    monkeypatch.setattr(scoring, "missing_credential", lambda provider: None)
+    calls = []
+
+    class RateLimitError(RuntimeError):
+        pass
+
+    monkeypatch.setattr(scoring, "is_rate_limit", lambda error: isinstance(error, RateLimitError))
+
+    def scorer(article, **kwargs):
+        calls.append(article["article_id"])
+        if cap == "retries":
+            raise RateLimitError("429")
+        return _completion()
+
+    frame, report = score_new_articles(
+        tmp_path,
+        now=now,
+        models=MODELS,
+        scorer=scorer,
+        known_value_check=False,
+        max_pairs_per_run=1 if cap == "pairs" else 180,
+        max_calls_per_run=2 if cap == "retries" else 1,
+        pacer=SimpleNamespace(wait=lambda *a: None, backoff=lambda *a: None),
+    )
+    assert calls == (["new", "new"] if cap == "retries" else ["new"])
+    if cap == "retries":
+        assert frame.empty
+    else:
+        assert frame.article_id.tolist() == ["new"]
+    continuity = next(check for check in report.results if check.name == "scoring_continuity")
+    assert continuity.passed is (age == 30)
+    if age == 31:
+        assert "old/005930" in continuity.detail
+    backlog = json.loads(next(c.detail for c in report.results if c.name == "scoring_backlog"))
+    assert backlog["unscored_pairs"] == (2 if cap == "retries" else 1)
+    assert backlog["deferred_pairs"] == 1
+    assert backlog["oldest_unscored_age_hours"] == age
+    assert backlog["stale_pairs"] == int(age > 30)
+
+    calls.clear()
+
+    def recovered(article, **kwargs):
+        calls.append(article["article_id"])
+        return _completion()
+
+    _, retried = score_new_articles(
+        tmp_path, now=now, models=MODELS, scorer=recovered, known_value_check=False
+    )
+    assert calls == (["new", "old"] if cap == "retries" else ["old"])
+    assert retried.ok, retried.summary()
+    cleared = json.loads(next(c.detail for c in retried.results if c.name == "scoring_backlog"))
+    assert cleared["unscored_pairs"] == 0
+    assert cleared["oldest_unscored_age_hours"] is None
+
+
+@pytest.mark.parametrize("clock", [None, "malformed", "2026-08-21T01:00:00", 1234])
+def test_unknown_deferred_collection_time_is_not_an_invented_age(tmp_path, monkeypatch, clock):
+    import src.llm.daily_scoring as scoring
+
+    now = pd.Timestamp("2026-08-21T12:00:00Z")
+    candidates = [
+        dict(_article("unknown", collected=clock), ticker="005930"),
+        dict(_article("new", collected=now.isoformat()), ticker="005930"),
+    ]
+    monkeypatch.setattr(scoring, "resolved_candidates", lambda *a, **k: candidates)
+    monkeypatch.setattr(scoring, "missing_credential", lambda provider: None)
+    frame, report = score_new_articles(
+        tmp_path,
+        now=now,
+        models=MODELS,
+        scorer=lambda *a, **k: _completion(),
+        known_value_check=False,
+        max_pairs_per_run=1,
+    )
+    assert frame.article_id.tolist() == ["new"]
+    assert not next(c for c in report.results if c.name == "scoring_continuity").passed
+    backlog = json.loads(next(c.detail for c in report.results if c.name == "scoring_backlog"))
+    assert backlog["unknown_collection_clocks"] == 1
+    assert backlog["oldest_unscored_at_utc"] is None
+    assert backlog["oldest_unscored_age_hours"] is None
+
+
 def test_score_new_articles_rejects_a_nonpositive_max_pairs_per_run(tmp_path):
     with pytest.raises(ValueError, match="max_pairs_per_run"):
         score_new_articles(tmp_path, max_pairs_per_run=0)

@@ -536,6 +536,12 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 if notices is not None:
                     outcomes[name]["calendar_notices"] = json.loads(notices)
+            if name == "news_scores":
+                for check in report.results:
+                    if check.name == "scoring_budget":
+                        outcomes[name]["scoring_budget"] = check.detail
+                    elif check.name == "scoring_backlog":
+                        outcomes[name]["scoring_backlog"] = json.loads(check.detail)
         except Exception as exc:  # noqa: BLE001 - one source must not stop the rest
             outcomes[name] = {
                 "ok": False,

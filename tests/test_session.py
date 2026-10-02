@@ -7,6 +7,12 @@ touch the network.
 from __future__ import annotations
 
 import datetime as dt
+import json
+import subprocess
+import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 import pytest
@@ -27,6 +33,76 @@ from src.util.session import (
 )
 
 # --- the DST rule CLAUDE.md singles out ----------------------------------
+
+
+def test_calendar_construction_and_schedule_cannot_overlap_between_threads(monkeypatch):
+    import src.util.session as session
+
+    busy = threading.Lock()
+    started = threading.Barrier(4)
+
+    class Calendar:
+        def schedule(self, *, start_date, end_date):
+            assert busy.acquire(blocking=False), "shared holiday state accessed concurrently"
+            try:
+                time.sleep(0.02)
+                return pd.DataFrame(
+                    {"market_open": [pd.Timestamp(start_date, tz="UTC")]},
+                    index=pd.DatetimeIndex([start_date]),
+                )
+            finally:
+                busy.release()
+
+    def calendar(market):
+        assert busy.acquire(blocking=False), "calendar constructed concurrently"
+        try:
+            time.sleep(0.02)
+            return Calendar()
+        finally:
+            busy.release()
+
+    monkeypatch.setattr(session, "_calendar", calendar)
+
+    def query(index):
+        started.wait(timeout=5)
+        day = dt.date(2026, 8, 3) + dt.timedelta(days=index)
+        return session.session_open_utc("KR" if index % 2 else "US", day)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        opens = list(executor.map(query, range(4)))
+    assert opens == [pd.Timestamp(f"2026-08-0{day}", tz="UTC") for day in range(3, 7)]
+
+
+def test_cold_calendar_parallel_news_opens_match_serial_values():
+    """A fresh process catches the lazy KoreanHoliday cache race hidden by warm tests."""
+    code = """
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from src.util.session import next_tradeable_open
+
+dates = ["2026-10-02T02:00:00Z", "2026-09-30T08:00:00Z",
+         "2026-07-16T03:00:00Z", "2026-02-16T02:00:00Z"] * 2
+started = threading.Barrier(8)
+def query(stamp):
+    started.wait(timeout=5)
+    return next_tradeable_open("KR", stamp).isoformat()
+with ThreadPoolExecutor(max_workers=8) as executor:
+    print(json.dumps(list(executor.map(query, dates))))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr[-3000:]
+    dates = [
+        "2026-10-02T02:00:00Z",
+        "2026-09-30T08:00:00Z",
+        "2026-07-16T03:00:00Z",
+        "2026-02-16T02:00:00Z",
+    ] * 2
+    assert json.loads(result.stdout) == [
+        next_tradeable_open("KR", stamp).isoformat() for stamp in dates
+    ]
 
 
 def test_us_close_is_0500_kst_during_dst():
